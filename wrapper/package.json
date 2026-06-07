@@ -1,0 +1,16 @@
+{
+  "name": "povrayer",
+  "version": "0.1.0",
+  "description": "POV-Ray 3.8 compiled to WebAssembly (pthreads, wasm EH); render() returns PNG bytes",
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "license": "AGPL-3.0-or-later",
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "typescript": "5.8.3"
+  }
+}

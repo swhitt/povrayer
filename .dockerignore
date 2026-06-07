@@ -1,0 +1,14 @@
+# Build context needs only: Dockerfile, patches/, src/, wrapper/ (minus deps).
+# Everything else is excluded so edits there never bust the layer cache.
+.git
+.github
+dist/
+**/node_modules
+*.log
+.DS_Store
+test/
+test-output/
+Makefile
+README.md
+package.json
+package-lock.json

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>povrayer browser test</title>
+</head>
+<body>
+  <p>povrayer browser test harness, driven by <code>browser.test.mjs</code>,
+  or call <code>await window.runRender()</code> from the console.</p>
+  <script type="module">
+    import { render } from '/index.js';
+
+    // Same scene as test/fixtures/basic.pov: exercises the embedded include
+    // library (colors.inc + textures.inc), multithreaded trace, and libpng.
+    const SCENE = `#version 3.8;
+#include "colors.inc"
+#include "textures.inc"
+camera { location <0, 1.5, -4> look_at <0, 0.5, 0> }
+light_source { <3, 5, -3> color White }
+background { color SkyBlue }
+plane { y, 0 pigment { checker color White color Blue scale 0.5 } }
+sphere { <0, 1, 0>, 1 texture { PinkAlabaster } finish { reflection 0.2 } }
+`;
+
+    window.iso = crossOriginIsolated;
+    window.runRender = async () => {
+      const png = await render(SCENE, { width: 320, height: 240 });
+      // First 24 bytes cover the PNG signature plus the IHDR dimensions.
+      return Array.from(png.subarray(0, 24));
+    };
+  </script>
+</body>
+</html>

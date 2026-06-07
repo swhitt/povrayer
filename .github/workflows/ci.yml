@@ -1,0 +1,68 @@
+name: ci
+on:
+  push: { branches: [main] }
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      - name: Build wasm artifact
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: artifact
+          outputs: type=local,dest=dist
+          cache-from: type=gha
+          # cache-to silently no-ops on fork PRs (read-only token) -> expect cold
+          # builds there; harmless.
+          cache-to: type=gha,mode=max
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - name: Install test deps (pinned via root lockfile)
+        run: npm ci
+      - name: Node render test
+        run: node --test test/node/
+      - name: Browser render test
+        run: |
+          npx playwright install --with-deps chromium
+          node test/browser/browser.test.mjs
+      - uses: actions/upload-artifact@v7
+        with: { name: povrayer-dist, path: dist/ }
+
+  publish:
+    needs: build-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v6
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=long
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: runtime
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha

@@ -1,0 +1,11 @@
+--- a/unix/config/ax_check_libjpeg.m4
++++ b/unix/config/ax_check_libjpeg.m4
+@@ -66,7 +66,7 @@
+               ax_check_libjpeg="unknown"
+               AC_MSG_RESULT([$ax_check_libjpeg])
+             ],
+-            [AC_MSG_RESULT([cross-compiling, forced])]
++            [ax_check_libjpeg="ok"; AC_MSG_RESULT([cross-compiling, forced])]
+           )  # AC_RUN_IFELSE
+         ],
+         [ax_check_libjpeg="no headers"]

@@ -1,0 +1,11 @@
+--- a/unix/config/ax_check_lib.m4
++++ b/unix/config/ax_check_lib.m4
+@@ -62,7 +62,7 @@
+               ax_check_lib="unknown"
+               AC_MSG_RESULT([$ax_check_lib])
+             ],
+-            [AC_MSG_RESULT([cross-compiling, forced])]
++            [ax_check_lib="ok"; AC_MSG_RESULT([cross-compiling, forced])]
+           )  # AC_RUN_IFELSE
+         ],
+         [ax_check_lib="no headers"]
