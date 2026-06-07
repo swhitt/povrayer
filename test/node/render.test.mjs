@@ -5,6 +5,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { render, PovrayError } from '../../dist/index.js';
@@ -47,22 +50,35 @@ test('process exits on its own after a render (EXIT_RUNTIME reaps workers)', () 
   // A child process renders once and then does nothing. If leaked pthread
   // workers keep the event loop alive, the child never exits and spawnSync
   // kills it at the timeout (signal !== null).
-  const code = [
-    `const { render } = await import(${JSON.stringify(DIST_URL)});`,
-    `await render(${JSON.stringify(scene)}, { width: 64, height: 48, antialias: false });`,
-  ].join('\n');
-
-  const result = spawnSync(process.execPath, ['--input-type=module', '-e', code], {
-    encoding: 'utf8',
-    timeout: 120_000,
-  });
-
-  assert.equal(
-    result.signal,
-    null,
-    `child did not exit on its own (killed with ${result.signal}); stderr:\n${result.stderr}`
+  //
+  // The child must run from a real .mjs file, NOT `--input-type=module -e`:
+  // emscripten's pthread Workers inherit the child's execArgv, and a Worker
+  // whose entry is a file URL dies with ERR_INPUT_TYPE_NOT_ALLOWED when
+  // --input-type is present (observed on Node 25).
+  const script = join(tmpdir(), `povrayer-exit-test-${process.pid}.mjs`);
+  writeFileSync(
+    script,
+    [
+      `const { render } = await import(${JSON.stringify(DIST_URL)});`,
+      `await render(${JSON.stringify(scene)}, { width: 64, height: 48, antialias: false });`,
+    ].join('\n')
   );
-  assert.equal(result.status, 0, `child exited ${result.status}; stderr:\n${result.stderr}`);
+
+  try {
+    const result = spawnSync(process.execPath, [script], {
+      encoding: 'utf8',
+      timeout: 120_000,
+    });
+
+    assert.equal(
+      result.signal,
+      null,
+      `child did not exit on its own (killed with ${result.signal}); stderr:\n${result.stderr}`
+    );
+    assert.equal(result.status, 0, `child exited ${result.status}; stderr:\n${result.stderr}`);
+  } finally {
+    rmSync(script, { force: true });
+  }
 });
 
 test('honors threads and raw args options', async () => {

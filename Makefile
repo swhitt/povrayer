@@ -13,5 +13,8 @@ shell:  ## interactive builder for debugging
 	docker run -it -v "$$PWD/src:/host-src" povrayer-builder bash
 node_modules: package.json package-lock.json
 	npm ci --no-audit --no-fund && touch node_modules
+# Glob form, not `node --test test/node/`: Node 25 stopped expanding bare
+# directory positionals into their test files (works on 22, fails on 25);
+# the quoted glob is expanded by node itself and works on both.
 test: dist node_modules
-	node --test test/node/ && node test/browser/browser.test.mjs
+	node --test "test/node/*.test.mjs" && node test/browser/browser.test.mjs

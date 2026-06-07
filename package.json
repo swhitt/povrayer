@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test test/node/ && node test/browser/browser.test.mjs",
-    "test:node": "node --test test/node/",
+    "test": "node --test \"test/node/*.test.mjs\" && node test/browser/browser.test.mjs",
+    "test:node": "node --test \"test/node/*.test.mjs\"",
     "test:browser": "node test/browser/browser.test.mjs"
   },
   "devDependencies": {

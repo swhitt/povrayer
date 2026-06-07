@@ -28,7 +28,9 @@ jobs:
       - name: Install test deps (pinned via root lockfile)
         run: npm ci
       - name: Node render test
-        run: node --test test/node/
+        # Quoted glob (expanded by node): bare directory positionals stopped
+        # working in Node 25, and the glob form works on 22 and 25 alike.
+        run: node --test "test/node/*.test.mjs"
       - name: Browser render test
         run: |
           npx playwright install --with-deps chromium
