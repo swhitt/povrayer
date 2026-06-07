@@ -28,13 +28,13 @@ jobs:
       - name: Install test deps (pinned via root lockfile)
         run: npm ci
       - name: Node render test
-        # Quoted glob (expanded by node): bare directory positionals stopped
-        # working in Node 25, and the glob form works on 22 and 25 alike.
-        run: node --test "test/node/*.test.mjs"
+        # Test commands are single-sourced in package.json scripts (see the
+        # Makefile for why they use the quoted-glob form).
+        run: npm run test:node
       - name: Browser render test
         run: |
           npx playwright install --with-deps chromium
-          node test/browser/browser.test.mjs
+          npm run test:browser
       - uses: actions/upload-artifact@v7
         with: { name: povrayer-dist, path: dist/ }
 

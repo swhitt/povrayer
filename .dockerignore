@@ -4,8 +4,8 @@
 .github
 dist/
 **/node_modules
-*.log
-.DS_Store
+**/*.log
+**/.DS_Store
 test/
 test-output/
 Makefile

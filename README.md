@@ -31,6 +31,11 @@ Common options: `-w N` / `-h N` (size), `-o FILE` (output, `-` for stdout),
 and `--` to pass raw POV-Ray switches through verbatim. `--help` has the full
 list.
 
+If the GHCR image isn't pullable (package not public yet, or you're on a
+fork), build it locally with `make image` (or `docker buildx build --target
+runtime -t povrayer .`) and use `povrayer` in place of
+`ghcr.io/swhitt/povrayer` above.
+
 ## Get the wasm bundle
 
 The artifact stage exports the whole bundle:

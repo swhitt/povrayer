@@ -31,10 +31,8 @@ export interface RenderOptions {
      */
     antialias?: boolean | number;
     /**
-     * Worker thread count (`+WT`). Default:
-     * `globalThis.navigator?.hardwareConcurrency ?? 4`, clamped to 1..32.
-     * (NOT bare `navigator`, which is a ReferenceError on Node 20; the
-     * global only exists on Node 21 and later.)
+     * Worker thread count (`+WT`). Default: the environment's reported
+     * hardware concurrency (falling back to 4), clamped to 1..32.
      */
     threads?: number;
     /**
@@ -98,6 +96,8 @@ function loadFactory(): Promise<PovrayFactory> {
 }
 
 function defaultThreads(): number {
+    // globalThis.navigator, NOT bare navigator: the bare identifier is a
+    // ReferenceError on Node 20 (the global only exists on Node 21+).
     const hc = globalThis.navigator?.hardwareConcurrency ?? 4;
     return Math.min(32, Math.max(1, hc));
 }
