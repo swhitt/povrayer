@@ -64,6 +64,10 @@ jobs:
         with:
           context: .
           target: runtime
+          # The expensive stages build once on the runner's native platform
+          # ($BUILDPLATFORM in the Dockerfile); the runtime stage has no RUN
+          # instructions, so arm64 needs no QEMU, just COPYs onto arm64 layers.
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

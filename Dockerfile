@@ -2,7 +2,9 @@
 ARG EMSDK_VERSION=5.0.7
 ARG POVRAY_COMMIT=c3ce13e5bb51892d8f59c1148b5f905a01ef82f3
 
-FROM emscripten/emsdk:${EMSDK_VERSION} AS builder
+# --platform=$BUILDPLATFORM: the wasm output is arch-independent, so this stage
+# always runs natively on the build host; only the runtime stage is per-platform.
+FROM --platform=$BUILDPLATFORM emscripten/emsdk:${EMSDK_VERSION} AS builder
 ARG POVRAY_COMMIT
 # Debug/tuning knobs:
 #   LINK_EXTRA      extra flags appended to the final em++ link
@@ -114,7 +116,8 @@ RUN mkdir -p /out && cd povray && em++ \
       ${LINK_EXTRA} \
       --embed-file distribution/include@/usr/share/povray-3.8/include
 
-FROM node:22-alpine AS wrapper-build
+# Arch-independent JS output; same native-platform treatment as the builder.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS wrapper-build
 WORKDIR /wrapper
 # package-lock.json is committed to the repo; npm ci requires it,
 # and BuildKit fails the COPY without it.
