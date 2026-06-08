@@ -1,14 +1,52 @@
-/* Shared stylesheet for the povrayer UI page (body.ui) and the REPL page.
-   Dark, monospace, no webfonts (COEP + no-CDN rule). */
+/* povrayer "optical bench" design system. Shared by the UI page (body.ui)
+   and the REPL page (body.repl). Monospace only, no webfonts (COEP rule).
+
+   Identity rules this file enforces:
+   - --accent appears ONLY on: the render/run action, the REPL prompt + the
+     result figures' provenance edge, links, the focus ring + progress bar,
+     and the wordmark (orb + "pov" span). Everything else is grey.
+   - Square corners everywhere; the .orb brand mark is the only circle.
+   - The rendered image is the hero: the only shadow, the only textured
+     (checker mat) background.
+   - Every transition/animation declaration lives inside
+     @media (prefers-reduced-motion: no-preference); outside it, states
+     still apply, instantly. */
+
+/* Registering --repl-indent as a <length> absolutizes the ch at the element
+   that declares it (#scrollback, 13px), so the 12px-type error/info blocks
+   inherit the same pixel indent instead of recomputing 4ch at their own
+   font size. Unsupported browsers fall back to per-use-site ch (~2px drift). */
+@property --repl-indent {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
 
 :root {
-  --bg: #111418;
-  --panel: #1a1f26;
-  --text: #d4d8de;
-  --dim: #7d8590;
-  --accent: #6cb6ff;
-  --error: #f47067;
-  --border: #2d333b;
+  --bg:            #0b0d10; /* page */
+  --panel:         #14171c; /* inputs, log, plates, error box bg */
+  --border:        #2b303a; /* decorative hairlines on non-interactive panels */
+  --border-strong: #606a7a; /* form-control + secondary-button boundaries (WCAG 1.4.11) */
+  --text:          #d7dbe0;
+  --dim:           #98a1ab;
+  --accent:        #ffd23f;
+  --accent-ink:    #0b0d10; /* text on accent buttons */
+  --error:         #ff6b5e;
+  --mat-a:         #181b21; /* checker mat squares (decorative) */
+  --mat-b:         #121419;
+
+  /* Type scale: 4 steps, monospace only. */
+  --fs-brand:  20px; /* / 1.2, w700, wordmark only */
+  --fs-body:   13px; /* / 1.45, editor, REPL src+input, controls, status */
+  --fs-out:    12px; /* / 1.5, log, error box, figcaptions */
+  --fs-chrome: 11px; /* / 1.4, footer, #repl-status */
+
+  --t-fast: 120ms; /* color/border on chrome */
+  --t-med:  200ms; /* progress width, image opacity */
+
+  /* The renderer's own alpha-mat convention; shows through transparent
+     pixels. Use as: background: var(--mat) 0 0 / 16px 16px */
+  --mat: repeating-conic-gradient(var(--mat-a) 0% 25%, var(--mat-b) 0% 50%);
 }
 
 * {
@@ -29,8 +67,10 @@ body {
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 13px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Cascadia Mono",
+               "DejaVu Sans Mono", "Liberation Mono", monospace;
+  font-variant-ligatures: none;
+  font-size: var(--fs-body);
   line-height: 1.45;
 }
 
@@ -56,23 +96,53 @@ pre {
 
 header {
   display: flex;
-  align-items: baseline;
-  gap: 16px;
-  padding: 8px 12px;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
   border-bottom: 1px solid var(--border);
 }
 
 header h1 {
-  font-size: 1rem;
-  font-weight: 600;
   margin: 0;
+  font-size: var(--fs-brand);
+  line-height: 1.2;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+header nav {
+  margin-left: auto;
+}
+
+/* Brand mark: a ray-traced sphere. The only circle in the interface. */
+.orb {
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  border-radius: 50%;
+  background: radial-gradient(circle at 33% 28%,
+              #fff 0%, var(--accent) 38%, #15151a 78%);
+}
+
+h1 .orb {
+  margin-right: 8px;
+  vertical-align: -0.08em; /* optically centers the orb on the lowercase wordmark */
+}
+
+.brand-accent {
+  color: var(--accent);
+}
+
+.brand-page {
+  color: var(--dim);
 }
 
 footer {
-  padding: 6px 12px;
+  padding: 8px 12px;
   border-top: 1px solid var(--border);
   color: var(--dim);
-  font-size: 12px;
+  font-size: var(--fs-chrome);
+  line-height: 1.4;
 }
 
 #iso-warning {
@@ -89,21 +159,43 @@ input,
 select,
 textarea {
   font: inherit;
+  border-radius: 0;
+}
+
+input,
+select,
+textarea {
   color: var(--text);
   background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 3px 6px;
+  border: 1px solid var(--border-strong);
+  padding: 4px 8px;
 }
 
+input,
+select {
+  height: 28px; /* the shared control height; one row datum, no wobble */
+}
+
+::placeholder {
+  color: var(--dim);
+  opacity: 1;
+}
+
+/* Secondary button (Cancel, zoom toggle, ...): quiet until hovered. */
 button {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  height: 28px;
+  padding: 0 12px;
   cursor: pointer;
-  padding: 4px 12px;
 }
 
-button:hover:not(:disabled),
-button:focus-visible {
-  border-color: var(--accent);
+/* Hard invert, deliberately instant (no transition on the invert). */
+button:hover:not(:disabled) {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
 }
 
 button:disabled {
@@ -111,24 +203,150 @@ button:disabled {
   cursor: default;
 }
 
+/* Primary action: the only filled-accent, only uppercase element. */
+#render-btn,
+#run-btn {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+#render-btn:hover:not(:disabled),
+#run-btn:hover:not(:disabled) {
+  background: #fff;
+  border-color: #fff;
+  color: var(--accent-ink);
+}
+
+#render-btn:disabled,
+#run-btn:disabled {
+  background: var(--panel);
+  border-color: var(--border-strong);
+  color: var(--dim);
+}
+
+/* Focus ring. Never outline: none. */
+button:focus-visible,
 input:focus,
 select:focus,
 textarea:focus {
-  outline: none;
-  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+a:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 label {
   color: var(--dim);
 }
 
+/* ---- status indicator (#status / #repl-status) ----
+   JS contract: data-state is one of idle|busy|done|error|cancelled. */
+
+#status,
+#repl-status {
+  color: var(--dim);
+}
+
+#status[data-state="done"],
+#repl-status[data-state="done"] {
+  color: var(--text); /* the payoff line stops camouflaging as a label */
+}
+
+#status[data-state="error"],
+#repl-status[data-state="error"],
+#status.error {
+  color: var(--error);
+}
+
+/* Pulsing trailing ellipsis: alive is distinguishable from hung. The busy
+   text already reads "rendering…"; this appends the animated tail. The pulse
+   animation itself is gated in the motion block below. */
+#status[data-state="busy"]::after,
+#repl-status[data-state="busy"]::after,
+figure.result.pending figcaption::after {
+  content: "…";
+}
+
+/* ---- progress bar (#progress / #repl-progress) ----
+   JS contract: `hidden` while idle. Indeterminate sweep by default; once the
+   first percent event arrives, set class .determinate (or
+   data-mode="determinate") and drive --pct (0-100, monotonic per render). */
+
+#progress,
+#repl-progress {
+  position: relative;
+  height: 2px;
+  overflow: hidden;
+}
+
+#progress::before,
+#repl-progress::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 40%;
+  background: var(--accent);
+}
+
+#progress.determinate::before,
+#progress[data-mode="determinate"]::before,
+#repl-progress.determinate::before,
+#repl-progress[data-mode="determinate"]::before {
+  width: calc(var(--pct, 0) * 1%);
+}
+
+/* ---- shared artifact states ---- */
+
+/* Outdated render: applied to #output + #download-btn on error and during
+   re-render; removed on success and on cancel (kept image is legitimate). */
+.stale {
+  opacity: 0.45;
+  filter: saturate(0.6);
+}
+
+/* 1:1 zoom; the plate/figure scrolls. */
+.zoom-1x,
+#output.zoom-1x,
+figure.result img.preview.zoom-1x {
+  max-width: none;
+  image-rendering: pixelated;
+  cursor: zoom-out;
+}
+
+/* ---- disclosure ---- */
+
+summary {
+  color: var(--dim);
+  font-size: var(--fs-out);
+  line-height: 1.5;
+  cursor: pointer; /* marker stays the default UA triangle */
+}
+
 /* ---- UI page (body.ui) ---- */
 
+body.ui {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column; /* pins the footer to the viewport bottom */
+}
+
 body.ui main {
+  flex: 1;
   display: grid;
   grid-template-columns: 1fr;
   gap: 16px;
-  padding: 12px;
+  padding: 16px;
 }
 
 /* Grid items default to min-width auto (= min-content), so a long example
@@ -137,106 +355,186 @@ body.ui main > * {
   min-width: 0;
 }
 
-@media (min-width: 900px) {
-  body.ui main {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
+/* Example row: the shared column datum (28px + 8px, same as #status). */
 #editor-pane > label {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
   margin-bottom: 8px;
 }
 
 #examples {
   max-width: 100%;
+  min-width: 0;
+}
+
+/* Gutter correctness contract: the textarea has wrap="off" (one source line
+   = one visual row), gutter/editor share font, line-height, and padding-top,
+   and JS mirrors the textarea's scrollTop onto the gutter. */
+#editor-wrap {
+  display: flex;
+  align-items: stretch;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+}
+
+#gutter {
+  flex: none;
+  min-width: 3ch;
+  padding: 8px;
+  border-right: 1px solid var(--border);
+  color: var(--dim);
+  text-align: right;
+  white-space: pre;
+  line-height: 1.45;
+  overflow: hidden; /* scroll position driven from the textarea via JS */
+  user-select: none;
+}
+
+#gutter:empty {
+  display: none;
+}
+
+#editor-wrap #editor {
+  border: none; /* the wrap carries the control boundary */
 }
 
 #editor {
   display: block;
+  flex: 1;
+  min-width: 0;
   width: 100%;
-  min-height: 50vh;
+  min-height: 48vh;
   resize: vertical;
   tab-size: 2;
   padding: 8px;
+  line-height: 1.45;
+  overflow: auto; /* wrap="off": horizontal scroll is the honest trade */
 }
 
 #controls {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 8px 18px; /* pair-gap (6px, below) beats group-gap */
   margin-top: 8px;
+}
+
+#controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 #controls input[type="number"] {
   width: 5.5em;
 }
 
-#render-btn {
-  color: var(--accent);
-  border-color: var(--accent);
+/* Render + Cancel wrap as a unit and anchor the row's right edge. */
+.actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
 }
 
-#render-btn:disabled {
-  color: var(--dim);
-  border-color: var(--border);
-}
-
+/* Aligns with the example row so both columns share one top edge. */
 #status {
-  color: var(--dim);
+  height: 28px;
+  line-height: 28px;
+  margin-bottom: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#progress {
   margin-bottom: 8px;
 }
 
-#status.error {
-  color: var(--error);
-}
-
-/* Trimmed failure excerpt; .error sets the text color. */
+/* The error voice; .error supplies the text color on the old markup. */
 #error {
   background: var(--panel);
   border: 1px solid var(--error);
-  border-radius: 3px;
+  color: var(--error);
   padding: 8px;
   margin-bottom: 8px;
-  font-size: 12px;
+  font-size: var(--fs-out);
+  line-height: 1.5;
+}
+
+/* The plate: the one shadow and the one textured background in the app. */
+#output-plate {
+  background: var(--mat) 0 0 / 16px 16px;
+  border: 1px solid var(--border);
+  padding: 12px;
+  box-shadow: 6px 6px 0 rgb(0 0 0 / 0.55);
+  margin-bottom: 16px; /* clears the shadow */
+  overflow: auto; /* 1:1 zoom scrolls inside the plate */
 }
 
 #output {
   display: block;
   max-width: 100%;
   height: auto;
-  border: 1px solid var(--border);
+  margin: 0 auto;
+  cursor: zoom-in; /* pointer shortcut to the fit/1:1 toggle button */
+}
+
+/* Empty state: an aspect-ratio box (JS overrides from the w/h inputs) with
+   one centered dim sentence on the mat. */
+#output-plate .hint {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 4 / 3;
+  margin: 0;
+  padding: 16px;
+  color: var(--dim);
+  text-align: center;
+}
+
+#output-plate:has(img:not([hidden])) .hint {
+  display: none;
+}
+
+/* Download anchor + fit/1:1 zoom toggle. */
+.meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 8px;
 }
 
+/* Secondary-button treatment for the download anchor. */
 #download-btn {
-  display: inline-block;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 4px 12px;
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  color: var(--text);
   text-decoration: none;
-  margin-bottom: 8px;
 }
 
 #download-btn:hover {
-  border-color: var(--accent);
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
 }
 
+/* Diagnostics collapse behind the disclosure; JS unhides #log-details once
+   the first line arrives (an :empty trick dies on the progress node). */
 #log {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 3px;
   padding: 8px;
+  margin-top: 4px;
   color: var(--dim);
-  font-size: 12px;
+  font-size: var(--fs-out);
+  line-height: 1.5;
   max-height: 40vh;
   overflow-y: auto;
-}
-
-/* No render yet: don't show an empty bordered strip. */
-#log:empty {
-  display: none;
+  overflow-wrap: break-word; /* stats columns wrap at spaces, not mid-number */
 }
 
 /* ---- REPL page ---- */
@@ -250,13 +548,17 @@ body:has(#scrollback) {
 }
 
 #scrollback {
+  /* prompt (4ch of the 13px body type) + entry gap (8px); see @property
+     registration at the top of the file */
+  --repl-indent: calc(4ch + 8px);
   flex: 1;
   overflow-y: auto;
   padding: 12px;
 }
 
 #scrollback > * {
-  margin-bottom: 10px;
+  margin-bottom: 12px;
+  max-width: 100ch;
 }
 
 .prompt {
@@ -272,50 +574,212 @@ body:has(#scrollback) {
 
 .entry pre.src {
   flex: 1;
+  min-width: 0;
 }
 
 figure.result {
-  margin: 0 0 10px 2.5em;
+  /* 2px border + 10px padding = 12px: content sits exactly at --repl-indent
+     (under the source text) while the accent edge carries provenance back
+     toward the prompt column. */
+  margin: 0 0 12px calc(var(--repl-indent) - 12px);
+  border-left: 2px solid var(--accent);
+  padding-left: 10px;
 }
 
+/* Small plate treatment: 6px mat, hairline, no shadow at this scale. */
 figure.result img.preview {
   display: block;
   max-width: 100%;
   height: auto;
+  padding: 6px;
   border: 1px solid var(--border);
+  background: var(--mat) 0 0 / 16px 16px;
+  cursor: zoom-in;
+}
+
+figure.result:has(img.zoom-1x) {
+  overflow-x: auto;
 }
 
 figure.result figcaption {
   color: var(--dim);
-  font-size: 12px;
+  font-size: var(--fs-out);
+  line-height: 1.5;
   margin-top: 4px;
 }
 
 #scrollback pre.error,
 #scrollback pre.info {
-  margin-left: 2.5em;
+  margin-left: var(--repl-indent);
+}
+
+/* REPL error block shares the error-box voice. */
+#scrollback pre.error {
+  background: var(--panel);
+  border: 1px solid var(--error);
+  padding: 8px;
+  font-size: var(--fs-out);
+  line-height: 1.5;
+}
+
+/* The transcript never lies about scene state. */
+.rolled-back {
+  opacity: 0.5;
+}
+
+/* Pending result: figure.result.pending wraps a placeholder box (sized from
+   settings by JS, swapped for the img on success) + a "rendering…" caption
+   whose ::after pulses (see the busy-pulse rules above / motion block). */
+figure.result.pending > div {
+  border: 1px dashed var(--border-strong);
+  background: var(--panel);
 }
 
 #input-form {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 12px;
   border-top: 1px solid var(--border);
 }
 
 #input-form .prompt {
-  padding-top: 4px;
+  padding-top: 5px; /* textarea first line: 4px padding + 1px border */
+}
+
+/* Prompt dims while a render is in flight (input goes readOnly, not disabled). */
+#input-form:has(#input[readonly]) .prompt {
+  color: var(--dim);
 }
 
 #input {
   flex: 1;
-  resize: none;
+  min-width: 0;
+  min-height: 28px;
+  resize: none; /* auto-grows via rows from JS */
 }
 
 #repl-status {
-  padding: 6px 12px;
+  padding: 8px 12px;
   border-top: 1px solid var(--border);
-  color: var(--dim);
-  font-size: 12px;
+  font-size: var(--fs-chrome);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- responsive ---- */
+
+@media (min-width: 900px) {
+  body.ui main {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  #editor {
+    min-height: 35vh;
+    max-height: 45vh; /* shrinks the swipe trap */
+  }
+
+  /* The primary CTA becomes a full-width thumb bar on its own stable row. */
+  .actions {
+    width: 100%;
+  }
+
+  #render-btn {
+    flex: 1;
+  }
+}
+
+@media (pointer: coarse) {
+  button,
+  #download-btn {
+    min-height: 44px;
+    padding: 10px 16px;
+  }
+
+  input,
+  select,
+  textarea {
+    font-size: 16px; /* kills iOS focus-zoom */
+    min-height: 40px;
+  }
+
+  /* Must track #editor (a textarea) or the line numbers misalign. */
+  #gutter {
+    font-size: 16px;
+  }
+}
+
+/* ---- motion (the full census: progress, busy pulse, image settle,
+        error entrance, link color) ---- */
+
+@media (prefers-reduced-motion: no-preference) {
+  a {
+    transition: color var(--t-fast) ease-out;
+  }
+
+  #status[data-state="busy"]::after,
+  #repl-status[data-state="busy"]::after,
+  figure.result.pending figcaption::after {
+    animation: pulse 1.2s ease-out infinite;
+  }
+
+  #progress:not(.determinate):not([data-mode="determinate"])::before,
+  #repl-progress:not(.determinate):not([data-mode="determinate"])::before {
+    animation: sweep 0.9s linear infinite;
+  }
+
+  #progress.determinate::before,
+  #progress[data-mode="determinate"]::before,
+  #repl-progress.determinate::before,
+  #repl-progress[data-mode="determinate"]::before {
+    transition: width var(--t-med) linear;
+  }
+
+  /* Settle-in: replays on unhide/insertion (display: none restarts it). */
+  #output,
+  figure.result img.preview {
+    animation: settle 150ms ease-out;
+  }
+
+  /* .stale settles both ways. */
+  #output,
+  #download-btn {
+    transition: opacity 150ms ease-out, filter 150ms ease-out;
+  }
+
+  #error,
+  #scrollback pre.error {
+    animation: rise 160ms ease-out;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Indeterminate mode: a static full-width bar at 40% opacity, no sweep. */
+  #progress:not(.determinate):not([data-mode="determinate"])::before,
+  #repl-progress:not(.determinate):not([data-mode="determinate"])::before {
+    width: 100%;
+    opacity: 0.4;
+  }
+}
+
+@keyframes pulse {
+  50% { opacity: 0.2; }
+}
+
+@keyframes sweep {
+  from { transform: translateX(-100%); }
+  /* 250% of the 40%-wide bar = one full track width */
+  to { transform: translateX(250%); }
+}
+
+@keyframes settle {
+  from { opacity: 0; }
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(-4px); }
 }

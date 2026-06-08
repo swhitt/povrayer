@@ -47,6 +47,18 @@ try {
     timeout: 30_000,
   });
 
+  // Idle-state contract: Cancel is hidden until a render is in flight, and
+  // the status line is a live region.
+  assert.equal(
+    await page.evaluate(() => document.getElementById('cancel-btn').hidden),
+    true,
+    'cancel button should be hidden while idle'
+  );
+  assert.ok(
+    await page.evaluate(() => !!document.querySelector('#status[role=status]')),
+    '#status should carry role="status"'
+  );
+
   // Happy path: small fast render, wait for the decoded blob image.
   await page.fill('#width', '160');
   await page.fill('#height', '120');
@@ -71,6 +83,23 @@ try {
     download.href.startsWith('blob:'),
     `download href should be a blob URL, got: ${download.href}`
   );
+  const downloadName = await page.evaluate(() =>
+    document.getElementById('download-btn').getAttribute('download')
+  );
+  assert.match(
+    downloadName ?? '',
+    /^render-160x120/,
+    `download filename should reflect the render opts, got: ${downloadName}`
+  );
+  // The raw log lives behind a disclosure whose summary carries the line count.
+  const logSummary = await page.evaluate(
+    () => document.getElementById('log-summary').textContent
+  );
+  assert.match(
+    logSummary,
+    /render log \(\d+ lines\)/,
+    `unexpected log summary after a successful render: ${logSummary}`
+  );
 
   // Cancel path: start a deliberately slow render (big frame, tight AA),
   // abort it, and require the 'cancelled' status. Only the AbortError branch
@@ -84,6 +113,8 @@ try {
     null,
     { timeout: 10_000 }
   );
+  // The progress bar only exists while a render is in flight.
+  await page.waitForSelector('#progress', { state: 'visible', timeout: 10_000 });
   await page.click('#cancel-btn');
   await page.waitForFunction(
     () => document.getElementById('status').textContent === 'cancelled',
@@ -117,4 +148,4 @@ if (failure) {
 }
 
 clearTimeout(watchdog);
-console.log('ui test passed (160x120 render, download link, cancel path)');
+console.log('ui test passed (160x120 render, download link, log summary, progress, cancel path)');

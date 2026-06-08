@@ -2,24 +2,32 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
   <title>povrayer, POV-Ray in the browser</title>
-  <link rel="icon" href="data:,"><!-- no favicon; suppress the 404 -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3CradialGradient id='g' cx='.33' cy='.28' r='.75'%3E%3Cstop offset='0' stop-color='%23fff'/%3E%3Cstop offset='.38' stop-color='%23ffd23f'/%3E%3Cstop offset='.78' stop-color='%2315151a'/%3E%3C/radialGradient%3E%3Ccircle cx='8' cy='8' r='8' fill='url(%23g)'/%3E%3C/svg%3E">
   <script src="./coi-serviceworker.js"></script>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body class="ui">
-<header><h1>povrayer</h1><nav><a href="./repl.html">REPL</a></nav></header>
-<div id="iso-warning" hidden>Not cross-origin isolated: SharedArrayBuffer is unavailable and rendering can't start. If this is the first visit, the service worker is installing and the page will reload itself; if it doesn't, refresh manually.</div>
+<header>
+  <h1><span class="orb" aria-hidden="true"></span><span class="brand-accent">pov</span>rayer</h1>
+  <nav><a href="./repl.html">repl</a></nav>
+</header>
+<div id="iso-warning" role="alert" hidden>Not cross-origin isolated: SharedArrayBuffer is unavailable and rendering can't start. If this is the first visit, the service worker is installing and the page will reload itself; if it doesn't, refresh manually.</div>
 <main>
   <section id="editor-pane">
     <label>example <select id="examples"></select></label>
-    <textarea id="editor" spellcheck="false"></textarea>
+    <div id="editor-wrap">
+      <pre id="gutter" aria-hidden="true"></pre>
+      <textarea id="editor" wrap="off" spellcheck="false" autocapitalize="off" autocorrect="off"
+        autocomplete="off" aria-label="POV-Ray scene source" aria-describedby="status"
+        title="Tab indents; Esc then Tab moves focus"></textarea>
+    </div>
     <div id="controls">
-      <label title="width (pixels)">w <input id="width" type="number" min="8" max="2048" value="512"></label>
-      <label title="height (pixels)">h <input id="height" type="number" min="8" max="2048" value="384"></label>
-      <label title="render quality, 0..11 (lower is faster)">q <select id="quality">
-        <option value="" selected>default</option>
+      <label title="width (pixels)">width <input id="width" type="number" min="8" max="2048" value="512"></label>
+      <label title="height (pixels)">height <input id="height" type="number" min="8" max="2048" value="384"></label>
+      <label title="render quality, 0..11 (lower is faster)">quality <select id="quality">
+        <option value="" selected>9 (default)</option>
         <option>0</option>
         <option>1</option>
         <option>2</option>
@@ -40,19 +48,31 @@
         <option value="0.05">0.05</option>
       </select></label>
       <label title="worker threads (auto = hardware concurrency)">threads <input id="threads" type="number" min="1" max="32" placeholder="auto"></label>
-      <button id="render-btn" type="button" title="Ctrl/Cmd+Enter">Render</button>
-      <button id="cancel-btn" type="button" disabled>Cancel</button>
+      <span class="actions">
+        <button id="render-btn" type="button" title="Ctrl/Cmd+Enter">Render</button>
+        <button id="cancel-btn" type="button" title="Esc" hidden>Cancel</button>
+      </span>
     </div>
   </section>
   <section id="output-pane">
-    <div id="status">idle</div>
-    <pre id="error" class="error" hidden></pre>
-    <img id="output" alt="render output" hidden>
-    <a id="download-btn" hidden download="render.png">Download PNG</a>
-    <pre id="log"></pre>
+    <div id="status" role="status" data-state="idle">no render yet</div>
+    <div id="progress" hidden></div>
+    <pre id="error" class="error" role="alert" hidden></pre>
+    <div id="output-plate">
+      <img id="output" alt="render output" hidden>
+      <p class="hint">Describe a 3D scene in text; POV-Ray ray-traces it in your browser. Ctrl/Cmd+Enter renders.</p>
+    </div>
+    <div class="meta-row">
+      <a id="download-btn" hidden download="render.png">Download PNG</a>
+      <button class="zoom-toggle" type="button" title="Toggle fit / 1:1 pixel view" hidden>fit</button>
+    </div>
+    <details id="log-details" hidden>
+      <summary id="log-summary">render log</summary>
+      <pre id="log" tabindex="0" aria-label="render log"></pre>
+    </details>
   </section>
 </main>
-<footer><a href="https://github.com/swhitt/povrayer">source</a></footer>
+<footer><a href="https://github.com/swhitt/povrayer">source</a> · <a href="https://www.povray.org/documentation/">scene docs</a></footer>
 <script type="module" src="./ui.js"></script>
 </body>
 </html>
