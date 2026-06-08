@@ -150,3 +150,124 @@ test('a write failure after a successful render is a generic error (exit 1)', ()
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// --- animation (--frames) ----------------------------------------------------
+
+test('--help documents the animation flags and naming', () => {
+  const r = runCli(['--help']);
+  assert.equal(r.status, 0, `stderr: ${r.stderr}`);
+  const help = r.stdout.toString();
+  assert.match(help, /--frames N/, '--help should document --frames');
+  assert.match(help, /--clock-initial/, '--help should document --clock-initial');
+  assert.match(help, /--clock-final/, '--help should document --clock-final');
+});
+
+test("'-o -' with --frames is a usage error before any render (exit 2)", () => {
+  // The stdout-with-frames guard runs before stdin is read, so this never
+  // touches the renderer.
+  const r = runCli(['-', '-o', '-', '--frames', '2']);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr.toString(), /cannot write animation frames to stdout/);
+});
+
+test('--frames with a non-number is a usage error (exit 2)', () => {
+  const r = runCli(['-', '--frames', 'abc']);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr.toString(), /--frames expects a number/);
+});
+
+test('--frames 0 and --frames 2.5 fail the integer>=1 check (exit 2)', () => {
+  for (const bad of ['0', '2.5']) {
+    const r = runCli(['-', '--frames', bad]);
+    assert.equal(r.status, 2, `--frames ${bad} should be a usage error`);
+    assert.match(r.stderr.toString(), /--frames expects an integer >= 1/);
+  }
+});
+
+test('file mode, no -o: writes <scene>NN.png next to the scene, honors clock flags', () => {
+  const dir = tmp();
+  try {
+    const scenePath = join(dir, 'myscene.pov');
+    writeFileSync(scenePath, SCENE);
+    const r = runCli([
+      scenePath,
+      '-w',
+      '32',
+      '-h',
+      '24',
+      '--frames',
+      '2',
+      '--clock-initial',
+      '0',
+      '--clock-final',
+      '1',
+    ]);
+    assert.equal(r.status, 0, `stderr: ${r.stderr}`);
+    assert.match(r.stderr.toString(), /wrote 2 frames/);
+    assertPng(readFileSync(join(dir, 'myscene1.png')), 'frame 1');
+    assertPng(readFileSync(join(dir, 'myscene2.png')), 'frame 2');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("-o with a '#' run replaces it with the zero-padded frame number", () => {
+  const dir = tmp();
+  try {
+    // 'frame###.png' pads to max(padWidth=1, runLength=3) = 3 digits.
+    const r = runCli(
+      ['-', '-w', '32', '-h', '24', '-o', join(dir, 'frame###.png'), '--frames', '2'],
+      {
+        input: SCENE,
+      }
+    );
+    assert.equal(r.status, 0, `stderr: ${r.stderr}`);
+    assertPng(readFileSync(join(dir, 'frame001.png')), 'hash frame 1');
+    assertPng(readFileSync(join(dir, 'frame002.png')), 'hash frame 2');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('-o PATH.png inserts the frame number before the extension', () => {
+  const dir = tmp();
+  try {
+    const r = runCli(['-', '-w', '32', '-h', '24', '-o', join(dir, 'shot.png'), '--frames', '2'], {
+      input: SCENE,
+    });
+    assert.equal(r.status, 0, `stderr: ${r.stderr}`);
+    assertPng(readFileSync(join(dir, 'shot1.png')), 'ext frame 1');
+    assertPng(readFileSync(join(dir, 'shot2.png')), 'ext frame 2');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('stdin mode, no -o: writes frameNN.png in the working directory', () => {
+  // No scene file and no -o, so the namer base is the literal 'frame' (the
+  // scene === '-' arm); the frames land relative to the process cwd.
+  const dir = tmp();
+  try {
+    const r = runCli(['-', '-w', '32', '-h', '24', '--frames', '2'], { input: SCENE, cwd: dir });
+    assert.equal(r.status, 0, `stderr: ${r.stderr}`);
+    assert.match(r.stderr.toString(), /wrote 2 frames/);
+    assertPng(readFileSync(join(dir, 'frame1.png')), 'stdin frame 1');
+    assertPng(readFileSync(join(dir, 'frame2.png')), 'stdin frame 2');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a parse-error animation maps the PovrayError exit code to the process', () => {
+  const dir = tmp();
+  try {
+    const r = runCli(['-', '-w', '32', '-h', '24', '-o', join(dir, 'bad.png'), '--frames', '2'], {
+      input: 'sphere {',
+    });
+    assert.notEqual(r.status, 0);
+    assert.notEqual(r.status, 2, 'render failure must not look like a usage error');
+    assert.match(r.stderr.toString(), /render failed \(exit code \d+\)/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

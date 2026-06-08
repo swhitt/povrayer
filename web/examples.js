@@ -620,6 +620,118 @@ Bokeh(<1.9, 2.4, 12>,  <1.0, 0.7, 0.3>)   Bokeh(<-1.6, 0.5, 7>,  <1.0, 0.6, 0.25
 Bokeh(<3.2, 1.6, 10>,  <1.0, 0.75, 0.35>) Bokeh(<2.6, 0.8, 8>,   <0.45, 0.85, 1.0>)
 `,
   },
+  {
+    name: 'orbit-moons',
+    title: 'Orbit (two moons, clock-driven)',
+    source: `// Orbit -- two moons circling a banded planet.
+// clock (0..1) drives one full orbit via rotate y*(clock*360).
+// Animate it (4+ frames) to watch them swing around; at clock=0 it's a
+// clean still. Tweak the orbit radii, tilts, or the planet bands.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+#declare RadA  = 4.2;   // moon orbit radii
+#declare RadB  = 6.0;
+#declare TiltA = 18;    // orbital-plane leans (degrees)
+#declare TiltB = -34;
+
+camera { location <0, 5.5, -13> look_at <0, 0.2, 0> angle 46 }
+
+// warm sun key, cool space fill
+light_source { <-16, 10, -11> rgb <1.28, 1.14, 0.96> }
+light_source { <14, 4, 8> rgb <0.12, 0.18, 0.32> shadowless }
+
+// starfield: dark sky speckled with a sparse granite of bright points
+sky_sphere {
+  pigment { granite color_map {
+    [0.00 rgb <0.01, 0.01, 0.03>] [0.86 rgb <0.01, 0.01, 0.03>]
+    [0.92 rgb <0.35, 0.40, 0.55>] [1.00 rgb <1, 1, 1>]
+  } scale 0.5 }
+}
+
+// the planet: a turbulent blue-banded marble world
+sphere { 0, 2.4
+  texture {
+    pigment { gradient y turbulence 0.35 color_map {
+      [0.0 rgb <0.03, 0.18, 0.42>] [0.40 rgb <0.06, 0.45, 0.62>]
+      [0.55 rgb <0.85, 0.90, 0.95>] [0.70 rgb <0.06, 0.45, 0.62>]
+      [1.0 rgb <0.03, 0.18, 0.42>]
+    } scale <1, 0.5, 1> }
+    finish { ambient 0.04 diffuse 0.9 specular 0.25 roughness 0.05 }
+  }
+}
+// thin emissive shell = soft atmosphere rim against the stars
+sphere { 0, 2.62 hollow
+  pigment { rgbt <0.30, 0.60, 1.0, 0.78> }
+  finish { emission 0.55 diffuse 0 } no_shadow
+}
+
+// a moon parked on +x, swung around y by clock, then the plane is tilted.
+// Phase spreads the two moons apart; Spin sets orbit direction.
+#macro Moon(Rad, Tilt, Phase, Spin, Col)
+  sphere { <Rad, 0, 0>, 0.55
+    texture {
+      pigment { rgb Col }
+      normal { bumps 0.6 scale 0.18 }
+      finish { ambient 0.03 diffuse 0.85 specular 0.15 roughness 0.06 }
+    }
+    rotate y*(clock*360*Spin + Phase)   // <-- the animated swing
+    rotate z*Tilt                       // lean the orbital plane
+  }
+#end
+Moon(RadA, TiltA,  40,  1, <0.80, 0.76, 0.70>)  // pale moon, prograde
+Moon(RadB, TiltB, 210, -1, <0.72, 0.46, 0.30>)  // rust moon, retrograde
+`,
+  },
+  {
+    name: 'pulse-grid',
+    title: 'Pulse grid (traveling wave, clock-driven)',
+    source: `// Pulse grid -- a lattice of spheres breathing in a traveling ring wave.
+// Each sphere's radius + glow follow sin(clock*2*pi - dist), so a pulse
+// radiates from the center as clock sweeps 0..1. Animate for the full loop;
+// a still just freezes one phase. Tweak N, Spacing, or the two glow colors.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+#declare N       = 5;      // grid is (2N+1) x (2N+1) spheres
+#declare Spacing = 1.15;
+#declare TwoPi   = 2 * pi;
+
+camera { location <0, 13, -15> look_at <0, -0.4, 0> angle 44 }
+
+light_source { <-12, 18, -10> rgb <0.50, 0.55, 0.70> }
+light_source { <10, 6, -6> rgb <0.20, 0.15, 0.30> shadowless }
+
+// near-black void with the faintest cool gradient
+sky_sphere { pigment { gradient y color_map {
+  [0 rgb <0.004, 0.004, 0.010>] [1 rgb <0.02, 0.03, 0.06>]
+} } }
+
+// dark mirror floor catches the glow
+plane { y, -1.2
+  pigment { rgb <0.01, 0.01, 0.02> }
+  finish { reflection { 0.30, 0.6 } specular 0.3 roughness 0.02 diffuse 0.1 }
+}
+
+// glow color ramp: cool troughs -> hot crests
+#declare ColdCol = <0.05, 0.35, 0.90>;
+#declare HotCol  = <1.00, 0.55, 0.10>;
+
+#for (Ix, -N, N)
+  #for (Iz, -N, N)
+    #local Dist = sqrt(Ix * Ix + Iz * Iz);
+    // traveling wave, normalized 0..1; phase lags with distance from center
+    #local Wave = (1 + sin(clock * TwoPi - Dist * 0.9)) / 2;
+    #local Rad  = 0.18 + 0.32 * Wave;             // breathe the radius
+    sphere { <Ix * Spacing, 0, Iz * Spacing>, Rad
+      pigment { rgb (ColdCol + (HotCol - ColdCol) * Wave) }
+      finish { ambient 0.05 diffuse 0.3
+               emission (0.15 + 2.2 * Wave * Wave) }  // crests glow hot
+    }
+  #end
+#end
+`,
+  },
 ];
 
 export function getExample(name) {

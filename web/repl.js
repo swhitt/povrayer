@@ -1,7 +1,13 @@
 // povrayer REPL: each submitted SDL entry appends to an accumulating scene
 // and auto-renders; failed entries roll back automatically. ':' commands
 // inspect or mutate the scene and render settings. See :help.
-import { renderScene, isAbortError, formatError, parseStats } from './render-client.js';
+import {
+  renderScene,
+  renderAnimation,
+  isAbortError,
+  formatError,
+  parseStats,
+} from './render-client.js';
 import { EXAMPLES, getExample } from './examples.js';
 
 const isoWarning = document.getElementById('iso-warning');
@@ -64,6 +70,11 @@ const HISTORY_MAX = 100;
 let historyIndex = 0; // === history.length means "not recalling"
 let draft = ''; // unsubmitted input stashed while recalling history
 const SCROLLBACK_CAP = 300;
+
+// :anim N renders N frames over clock 0..1 and plays them inline. N is clamped
+// to this ceiling; the inline player starts at this many frames per second.
+const ANIM_FRAMES_MAX = 240;
+const ANIM_FPS_DEFAULT = 12;
 
 let lastLog = ''; // raw unfiltered log of the last render (success or failure), for :log
 let renderPct = -1; // last confirmed percent of the in-flight render (-1 = none yet)
@@ -198,6 +209,9 @@ function appendNode(node) {
   while (scrollback.children.length > SCROLLBACK_CAP) {
     const oldest = scrollback.firstElementChild;
     for (const img of oldest.querySelectorAll('img.preview')) URL.revokeObjectURL(img.src);
+    // Inline animation players hold ImageBitmaps + blob URLs that live outside
+    // any <img>, so they expose a destroy hook for the eviction path to free.
+    oldest.__animDestroy?.();
     oldest.remove();
   }
   scrollback.scrollTop = scrollback.scrollHeight;
@@ -472,6 +486,303 @@ async function runRender({ rollback, echoNode, entrySource } = {}) {
   }
 }
 
+// --- animation (:anim) -------------------------------------------------------
+
+// Mirrors runRender for the multi-frame path: same busy/cancel/progress/status
+// machinery, but drives render-client's renderAnimation and, on success, mounts
+// an inline player (canvas + transport) instead of a single image. Like :render
+// it keeps scene state on failure, so it takes no rollback hook.
+async function runAnimRender(frames) {
+  abortCtl = new AbortController();
+  input.readOnly = true; // readOnly, not disabled: focus and caret survive
+  cancelBtn.hidden = false;
+  startProgress();
+  updateStatus();
+  const w = settings.width;
+  const h = settings.height;
+  const fig = appendPending(w, h);
+  // Live per-frame counter in the pending caption; the .pending ::after still
+  // owns the animated ellipsis, so this reads "rendering frame 2/4…".
+  const pendingCap = fig.querySelector('figcaption');
+  try {
+    const opts = {
+      width: w,
+      height: h,
+      antialias: settings.antialias,
+      frames,
+      initialClock: 0,
+      finalClock: 1,
+      signal: abortCtl.signal,
+      onEvent: (ev) => {
+        if (ev.kind === 'frame') pendingCap.textContent = `rendering frame ${ev.index}/${ev.total}`;
+        else handleRenderEvent(ev);
+      },
+    };
+    if (settings.quality !== undefined) opts.quality = settings.quality;
+    if (settings.threads !== undefined) opts.threads = settings.threads;
+    if (settings.args !== undefined) opts.args = settings.args.split(/\s+/).filter(Boolean);
+    const result = await renderAnimation(assembleScene(), opts);
+    lastLog = typeof result.log === 'string' ? result.log : '';
+    completeAnimResult(fig, result, w, h);
+  } catch (err) {
+    if (typeof err?.log === 'string') lastLog = err.log; // PovrayError keeps the raw log
+    // describeError maps AbortError to 'render cancelled'.
+    replaceWithBlock(fig, isAbortError(err) ? 'info' : 'error', describeError(err));
+  } finally {
+    abortCtl = null;
+    input.readOnly = false;
+    cancelBtn.hidden = true;
+    stopProgress();
+    clearTimeout(hintTimer);
+    hintTimer = null;
+    updateStatus();
+    saveState();
+    input.focus();
+  }
+}
+
+// WebM mimes tried in preference order; the first MediaRecorder-supported one
+// wins, null (no MediaRecorder or no WebM codec) falls back to per-frame PNGs.
+const ANIM_EXPORT_MIMES = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+
+function pickExportMime() {
+  for (const mime of ANIM_EXPORT_MIMES) {
+    if (window.MediaRecorder?.isTypeSupported?.(mime)) return mime;
+  }
+  return null;
+}
+
+function clampFps(value) {
+  if (!Number.isFinite(value)) return ANIM_FPS_DEFAULT;
+  return Math.min(60, Math.max(1, Math.round(value)));
+}
+
+const animDelay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function triggerDownload(href, name) {
+  const a = document.createElement('a');
+  a.href = href;
+  a.download = name;
+  a.click();
+}
+
+// Swaps the pending figure for the inline animation player: a canvas hero plus
+// a transport row (play/pause · scrubber · frame counter · loop · fps ·
+// export). Caption mirrors the still figcaption voice:
+// `anim #K · W×H · N frames · Xs`.
+function completeAnimResult(fig, result, w, h) {
+  renderCounter += 1;
+  const { bitmaps, blobUrls } = result;
+  const total = bitmaps.length;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  canvas.setAttribute('aria-label', `animation #${renderCounter}, ${w}×${h}, ${total} frames`);
+  // Small-plate treatment matching figure.result img.preview (mat + hairline).
+  Object.assign(canvas.style, {
+    display: 'block',
+    maxWidth: '100%',
+    height: 'auto',
+    padding: '6px',
+    border: '1px solid var(--border)',
+    background: 'var(--mat) 0 0 / 16px 16px',
+  });
+  const ctx = canvas.getContext('2d');
+
+  const controls = document.createElement('div');
+  Object.assign(controls.style, {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '8px',
+    marginTop: '8px',
+  });
+
+  const playBtn = document.createElement('button');
+  playBtn.type = 'button';
+  playBtn.textContent = 'play';
+  playBtn.setAttribute('aria-pressed', 'false');
+
+  const scrubber = document.createElement('input');
+  scrubber.type = 'range';
+  scrubber.min = '0';
+  scrubber.max = String(total - 1);
+  scrubber.step = '1';
+  scrubber.value = '0';
+  scrubber.setAttribute('aria-label', 'frame');
+  Object.assign(scrubber.style, { flex: '1', minWidth: '80px' });
+
+  const frameLabel = document.createElement('span');
+  Object.assign(frameLabel.style, {
+    color: 'var(--dim)',
+    fontSize: 'var(--fs-out)',
+    minWidth: '4.5ch',
+  });
+  frameLabel.textContent = `1/${total}`;
+
+  const loopLabel = document.createElement('label');
+  Object.assign(loopLabel.style, { display: 'inline-flex', alignItems: 'center', gap: '6px' });
+  const loopBox = document.createElement('input');
+  loopBox.type = 'checkbox';
+  loopBox.checked = true;
+  // Undo the global form-control sizing so this renders as a native checkbox.
+  Object.assign(loopBox.style, {
+    height: 'auto',
+    minHeight: '0',
+    width: 'auto',
+    padding: '0',
+    margin: '0',
+  });
+  loopLabel.append(loopBox, document.createTextNode('loop'));
+
+  const fpsLabel = document.createElement('label');
+  Object.assign(fpsLabel.style, { display: 'inline-flex', alignItems: 'center', gap: '6px' });
+  const fpsBox = document.createElement('input');
+  fpsBox.type = 'number';
+  fpsBox.min = '1';
+  fpsBox.max = '60';
+  fpsBox.value = String(ANIM_FPS_DEFAULT);
+  fpsBox.style.width = '4.5em';
+  fpsLabel.append(document.createTextNode('fps'), fpsBox);
+
+  const exportBtn = document.createElement('button');
+  exportBtn.type = 'button';
+  exportBtn.textContent = 'export webm';
+
+  controls.append(playBtn, scrubber, frameLabel, loopLabel, fpsLabel, exportBtn);
+
+  // --- player state + transport ---
+  let index = 0;
+  let playing = false;
+  let looping = true;
+  let fps = ANIM_FPS_DEFAULT;
+  let rafId = 0;
+  let destroyed = false;
+
+  const draw = (i) => {
+    index = i;
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(bitmaps[i], 0, 0);
+    scrubber.value = String(i);
+    frameLabel.textContent = `${i + 1}/${total}`;
+  };
+
+  const pause = () => {
+    if (!playing) return;
+    playing = false;
+    playBtn.textContent = 'play';
+    playBtn.setAttribute('aria-pressed', 'false');
+    cancelAnimationFrame(rafId);
+  };
+
+  // rAF loop ticking once per 1000/fps ms; loop wraps at the end, else parks on
+  // the last frame. A single-frame anim has nothing to play.
+  const play = () => {
+    if (playing || total < 2) return;
+    playing = true;
+    playBtn.textContent = 'pause';
+    playBtn.setAttribute('aria-pressed', 'true');
+    let last = performance.now();
+    const tick = (now) => {
+      if (!playing) return;
+      if (now - last >= 1000 / fps) {
+        last = now;
+        let next = index + 1;
+        if (next >= total) {
+          if (!looping) {
+            pause();
+            return;
+          }
+          next = 0;
+        }
+        draw(next);
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+  };
+
+  // Best-effort WebM via MediaRecorder; PNG-per-frame fallback when unavailable.
+  async function exportAnim() {
+    const mime = pickExportMime();
+    if (!mime) {
+      blobUrls.forEach((url, i) =>
+        triggerDownload(url, `frame${String(i + 1).padStart(3, '0')}.png`)
+      );
+      return;
+    }
+    pause();
+    exportBtn.disabled = true;
+    try {
+      const stream = canvas.captureStream(fps);
+      const recorder = new MediaRecorder(stream, { mimeType: mime });
+      const chunks = [];
+      recorder.ondataavailable = (e) => chunks.push(e.data);
+      const stopped = new Promise((resolve) => {
+        recorder.onstop = resolve;
+      });
+      recorder.start();
+      for (let i = 0; i < total; i++) {
+        draw(i);
+        await animDelay(1000 / fps);
+      }
+      recorder.stop();
+      await stopped;
+      const url = URL.createObjectURL(new Blob(chunks, { type: mime }));
+      triggerDownload(url, `anim-${w}x${h}.webm`);
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } finally {
+      exportBtn.disabled = false;
+    }
+  }
+
+  playBtn.addEventListener('click', () => {
+    if (playing) {
+      pause();
+      return;
+    }
+    if (index >= total - 1) draw(0); // replay from the top when parked on the last frame
+    play();
+  });
+  scrubber.addEventListener('input', () => {
+    pause();
+    draw(Number(scrubber.value));
+  });
+  loopBox.addEventListener('change', () => {
+    looping = loopBox.checked;
+  });
+  fpsBox.addEventListener('change', () => {
+    fps = clampFps(Number(fpsBox.value));
+    fpsBox.value = String(fps);
+  });
+  exportBtn.addEventListener('click', () => {
+    exportAnim();
+  });
+
+  // Eviction hook (appendNode): stop the loop and free the GPU/blob assets the
+  // caller owns. Idempotent so a double-free can't blow up.
+  fig.__animDestroy = () => {
+    if (destroyed) return;
+    destroyed = true;
+    pause();
+    for (const url of blobUrls) URL.revokeObjectURL(url);
+    for (const bmp of bitmaps) bmp.close();
+  };
+
+  const cap = document.createElement('figcaption');
+  cap.textContent = `anim #${renderCounter} · ${w}×${h} · ${total} frames · ${(result.elapsedMs / 1000).toFixed(1)}s`;
+
+  fig.replaceChildren(canvas, controls, cap);
+  fig.classList.remove('pending');
+
+  draw(0);
+  // Playback is user-driven; autoplay-on-complete only when motion is welcome.
+  if (total > 1 && window.matchMedia('(prefers-reduced-motion: no-preference)').matches) play();
+
+  scrollback.scrollTop = scrollback.scrollHeight;
+}
+
 // --- commands ----------------------------------------------------------------
 
 // One array drives the dispatcher's unknown-command suggestions, the :help
@@ -485,6 +796,11 @@ const COMMANDS = [
   { name: 'undo', usage: ':undo', desc: 'remove the last entry' },
   { name: 'del', usage: ':del N', desc: 'remove entry N' },
   { name: 'render', usage: ':render', desc: 're-render the current scene' },
+  {
+    name: 'anim',
+    usage: ':anim N',
+    desc: 'render the current scene as N frames and play them inline',
+  },
   { name: 'size', usage: ':size WxH', desc: 'render size (each 8..2048)' },
   { name: 'q', usage: ':q N', desc: 'quality 0..11 (default 9)' },
   { name: 'aa', usage: ':aa [threshold|off]', desc: 'antialias (no arg = 0.3)' },
@@ -515,6 +831,7 @@ const HELP_NOTES = [
   'a fresh entry that fails or is cancelled rolls back automatically; :undo/:del/:edit/:render/:example keep their state on failure.',
   'the assembled scene always starts with #version 3.8; missing global_settings/camera/light_source/background are injected with defaults. error line numbers refer to the assembled scene (:source shows it).',
   'settings (:size/:q/:aa/:threads/:args) take effect on the next render.',
+  'an :anim N render plays inline; drag the scrubber, play/pause, loop, or export webm (falls back to PNG frames).',
   'scene, settings, and history persist in this browser; :reset clears them.',
 ];
 
@@ -820,6 +1137,20 @@ function dispatchCommand(text) {
       if (!entries.length) appendBlock('error', 'scene empty, add something first');
       else runRender();
       break;
+
+    case 'anim': {
+      const n = parseIntStrict(arg);
+      if (!Number.isInteger(n) || n < 1 || n > ANIM_FRAMES_MAX) {
+        appendBlock('error', `usage: :anim N (1..${ANIM_FRAMES_MAX})`);
+        break;
+      }
+      if (!entries.length) {
+        appendBlock('error', 'scene empty, add something first');
+        break;
+      }
+      runAnimRender(n);
+      break;
+    }
 
     case 'example': {
       if (!arg) {

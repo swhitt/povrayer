@@ -2,6 +2,7 @@
 // Side-effect module, no exports. All rendering goes through ./render-client.js.
 import {
   renderScene,
+  renderAnimation,
   isBusy,
   isAbortError,
   formatError,
@@ -54,8 +55,29 @@ const progressBar = document.getElementById('progress');
 const plateHint = document.querySelector('#output-plate .hint');
 const zoomBtn = document.querySelector('#output-pane .zoom-toggle');
 
+// Animate-mode controls + the inline frame player.
+const modeStillBtn = document.getElementById('mode-still');
+const modeAnimateBtn = document.getElementById('mode-animate');
+const framesInput = document.getElementById('frames');
+const fpsInput = document.getElementById('fps');
+const playerCanvas = document.getElementById('player-canvas');
+const playerControls = document.getElementById('player-controls');
+const playBtn = document.getElementById('play-btn');
+const scrubber = document.getElementById('scrubber');
+const frameReadout = document.getElementById('frame-readout');
+const fpsReadout = document.getElementById('fps-readout');
+const loopBtn = document.getElementById('loop-btn');
+const exportBtn = document.getElementById('export-btn');
+
 const STORAGE_KEY = 'povrayer.ui.v1';
 const STASH_KEY = 'povrayer.ui.stash';
+
+// 'still' renders a single frame; 'animate' drives POV-Ray's clock loop and
+// plays the frames back in #player-canvas. Restored from saved state below.
+let mode = 'still';
+// True once a still render has produced an image: lets a mode switch back to
+// 'still' re-show that image instead of the empty-state hint.
+let hasStillImage = false;
 
 // ---- examples + persisted state ----
 
@@ -96,6 +118,9 @@ function saveState() {
         antialias: antialiasSelect.value,
         threads: threadsInput.value,
         example: examplesSelect.value,
+        mode,
+        frames: framesInput.value,
+        fps: fpsInput.value,
       })
     );
   } catch {
@@ -137,6 +162,15 @@ let lastLoadedSource = '';
       antialiasSelect.value = saved.antialias;
     }
     if (typeof saved.threads === 'string') threadsInput.value = saved.threads;
+    if (saved.mode === 'still' || saved.mode === 'animate') mode = saved.mode;
+    const savedFrames = parseInt(saved.frames, 10);
+    if (Number.isInteger(savedFrames) && savedFrames >= 1 && savedFrames <= 240) {
+      framesInput.value = String(savedFrames);
+    }
+    const savedFps = parseInt(saved.fps, 10);
+    if (Number.isInteger(savedFps) && savedFps >= 1 && savedFps <= 60) {
+      fpsInput.value = String(savedFps);
+    }
   }
 }
 
@@ -270,9 +304,25 @@ function collectOptions() {
   return { width, height, quality, antialias, threads };
 }
 
-for (const el of [widthInput, heightInput, qualitySelect, antialiasSelect, threadsInput]) {
+for (const el of [
+  widthInput,
+  heightInput,
+  qualitySelect,
+  antialiasSelect,
+  threadsInput,
+  framesInput,
+  fpsInput,
+]) {
   el.addEventListener('change', scheduleSave);
 }
+
+// fps is a playback control, not a render setting: changing it retunes the
+// player live (no re-render needed). Only valid in-range values apply; an
+// out-of-range or mid-typing value is left alone until render clamps it.
+fpsInput.addEventListener('input', () => {
+  const n = parseInt(fpsInput.value, 10);
+  if (Number.isInteger(n) && n >= 1 && n <= 60) player.setFps(n);
+});
 
 // Empty-state plate: an aspect-ratio box matching the current w/h inputs.
 function updateHintAspect() {
@@ -547,6 +597,14 @@ async function startRender() {
     return;
   }
 
+  // Animate mode drives a different engine entry point and playback target; it
+  // owns the same abortCtl/cancel/progress/status plumbing so cancel and the
+  // busy guards keep working across both paths.
+  if (mode === 'animate') {
+    runAnimateRender();
+    return;
+  }
+
   const opts = collectOptions();
   resetLog();
   errorBox.hidden = true;
@@ -603,6 +661,8 @@ async function startRender() {
     lastUrl = blobUrl;
     output.src = blobUrl;
     output.hidden = false;
+    playerCanvas.hidden = true;
+    hasStillImage = true;
     output.alt = `render output, ${sceneName()}, ${opts.width}×${opts.height}`;
     output.classList.remove('stale');
     plateHint.hidden = true;
@@ -654,6 +714,351 @@ async function startRender() {
   }
 }
 
+// ---- animate mode ----
+
+// Read + clamp the animate-only controls, writing the clamped values back so
+// the UI always reflects what was used (mirrors collectOptions).
+function collectAnimOptions() {
+  let frames = parseInt(framesInput.value, 10);
+  if (Number.isNaN(frames)) frames = 24;
+  frames = clamp(frames, 1, 240);
+  framesInput.value = String(frames);
+
+  let fps = parseInt(fpsInput.value, 10);
+  if (Number.isNaN(fps)) fps = 12;
+  fps = clamp(fps, 1, 60);
+  fpsInput.value = String(fps);
+
+  return { frames, fps };
+}
+
+// done in 1.84s · 256×192 · 12 frames
+function animDoneLine(elapsedMs, opts, frameCount) {
+  return `done in ${(elapsedMs / 1000).toFixed(2)}s · ${opts.width}×${opts.height} · ${frameCount} frames`;
+}
+
+// Drive the bar as a determinate fraction (used for per-frame progress in
+// animate mode, where completed frames are the meaningful unit).
+function progressDeterminate(pct) {
+  progressBar.classList.remove('indeterminate');
+  progressBar.classList.add('determinate');
+  progressBar.style.setProperty('--pct', String(pct));
+}
+
+async function runAnimateRender() {
+  const opts = collectOptions();
+  const { frames, fps } = collectAnimOptions();
+  resetLog();
+  errorBox.hidden = true;
+  errorBox.textContent = '';
+  progressStart();
+  setStatus(engineSeen ? 'rendering… parsing' : 'rendering… loading engine', 'busy');
+
+  // Same focus handoff as the still path: capture before disabling Render.
+  const focusFromRender = document.activeElement === renderBtn;
+  renderBtn.disabled = true;
+  cancelBtn.hidden = false;
+  if (focusFromRender) cancelBtn.focus();
+
+  abortCtl = new AbortController();
+  const ctl = abortCtl;
+  let sawLine = engineSeen;
+  let tracing = false;
+
+  try {
+    const result = await renderAnimation(editor.value, {
+      ...opts,
+      frames,
+      initialClock: 0,
+      finalClock: 1,
+      signal: ctl.signal,
+      onEvent: (ev) => {
+        if (ctl.signal.aborted) return; // never overwrite 'cancelled'
+        engineSeen = true;
+        if (ev.kind === 'frame') {
+          // The frame counter is the headline progress signal: the bar steps
+          // 1/N..N/N and the status reads "frame i/N".
+          progressDeterminate(Math.round((ev.index / ev.total) * 100));
+          setBusyStatus(`rendering… frame ${ev.index}/${ev.total}`);
+        } else if (ev.kind === 'progress') {
+          setProgressLine(ev.text);
+        } else if (ev.kind === 'line') {
+          if (!tracing && /^==== \[Rendering/.test(ev.text)) {
+            tracing = true;
+            setBusyStatus('rendering');
+          } else if (!tracing && !sawLine) {
+            sawLine = true;
+            setBusyStatus('rendering… parsing');
+          }
+          appendLogLine(ev.text);
+        }
+      },
+    });
+    commitProgressLine();
+
+    player.load(result, fps);
+    refreshPlate();
+    setStatus(animDoneLine(result.elapsedMs, opts, frames), 'done');
+    logSummary.textContent = summaryWithCount('render log');
+    if (!matchMedia('(min-width: 900px)').matches) {
+      playerCanvas.scrollIntoView({ block: 'nearest' });
+    }
+  } catch (err) {
+    commitProgressLine();
+    if (isAbortError(err)) {
+      setStatus('cancelled', 'cancelled');
+    } else {
+      setStatus('error', 'error');
+      const message = formatError(err);
+      errorBox.textContent = message;
+      errorBox.hidden = false;
+      errorBox.scrollIntoView({ block: 'nearest' });
+      const lineMatch = /^line (\d+)\b/.exec(message);
+      if (lineMatch) selectEditorLine(Number(lineMatch[1]));
+      logSummary.textContent =
+        err instanceof PovrayError
+          ? summaryWithCount(`render log · exit ${err.exitCode}`)
+          : summaryWithCount('render log');
+    }
+  } finally {
+    abortCtl = null;
+    progressStop();
+    renderBtn.disabled = false;
+    if (document.activeElement === cancelBtn) renderBtn.focus();
+    cancelBtn.hidden = true;
+  }
+}
+
+// ---- inline frame player ----
+// Page-agnostic-ish playback over the bitmaps render-client hands back: a
+// canvas, scrubber, play/pause, loop, fps, and WebM/PNG export. It owns the
+// playback assets and frees them (revoke blobUrls, close bitmaps) on the next
+// load().
+function createPlayer() {
+  const ctx = playerCanvas.getContext('2d');
+  let bitmaps = [];
+  let urls = [];
+  let idx = 0;
+  let fps = 12;
+  let loop = true;
+  let playing = false;
+  let rafHandle = null;
+  let lastAdvance = 0;
+
+  function draw(i) {
+    idx = i;
+    ctx.drawImage(bitmaps[i], 0, 0);
+    scrubber.value = String(i);
+    frameReadout.textContent = `${i + 1} / ${bitmaps.length}`;
+  }
+
+  function setPlayLabel() {
+    playBtn.textContent = playing ? 'Pause' : 'Play';
+    playBtn.setAttribute('aria-pressed', String(playing));
+  }
+
+  function pause() {
+    if (rafHandle !== null) {
+      cancelAnimationFrame(rafHandle);
+      rafHandle = null;
+    }
+    playing = false;
+    setPlayLabel();
+  }
+
+  function tick(now) {
+    if (!playing) return;
+    if (now - lastAdvance >= 1000 / fps) {
+      lastAdvance = now;
+      let next = idx + 1;
+      if (next >= bitmaps.length) {
+        if (!loop) {
+          pause();
+          return;
+        }
+        next = 0;
+      }
+      draw(next);
+    }
+    rafHandle = requestAnimationFrame(tick);
+  }
+
+  function play() {
+    if (!bitmaps.length || playing) return;
+    // Restart from the top when paused on the last frame of a non-looping clip.
+    if (!loop && idx >= bitmaps.length - 1) draw(0);
+    playing = true;
+    setPlayLabel();
+    lastAdvance = performance.now();
+    rafHandle = requestAnimationFrame(tick);
+  }
+
+  function toggle() {
+    if (playing) pause();
+    else play();
+  }
+
+  function seek(i) {
+    if (!bitmaps.length) return;
+    pause();
+    draw(clamp(i, 0, bitmaps.length - 1));
+  }
+
+  function setFps(n) {
+    fps = n;
+    fpsReadout.textContent = `${n} fps`;
+  }
+
+  function setLoop(on) {
+    loop = on;
+    loopBtn.setAttribute('aria-pressed', String(on));
+  }
+
+  function destroy() {
+    pause();
+    for (const u of urls) URL.revokeObjectURL(u);
+    for (const b of bitmaps) b.close();
+    urls = [];
+    bitmaps = [];
+  }
+
+  function load(result, playbackFps) {
+    destroy();
+    bitmaps = result.bitmaps;
+    urls = result.blobUrls;
+    idx = 0;
+    setFps(playbackFps);
+    playerCanvas.width = bitmaps[0].width;
+    playerCanvas.height = bitmaps[0].height;
+    scrubber.max = String(bitmaps.length - 1);
+    scrubber.value = '0';
+    draw(0);
+    playerControls.hidden = false;
+    // Autoplay only when motion is welcome; otherwise wait for the play button.
+    if (matchMedia('(prefers-reduced-motion: no-preference)').matches) play();
+    else setPlayLabel();
+  }
+
+  function triggerDownload(url, name) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  // No MediaRecorder/codec: fall back to saving the frames as sequential PNGs.
+  function downloadFramesAsPng() {
+    urls.forEach((url, i) => {
+      triggerDownload(url, `frame${String(i + 1).padStart(3, '0')}.png`);
+    });
+  }
+
+  // Step through every frame once, holding each for one fps interval, so the
+  // captureStream recorder sees real canvas updates over wall-clock time.
+  function playOnce() {
+    return new Promise((resolve) => {
+      let i = 0;
+      const step = () => {
+        if (i >= bitmaps.length) {
+          resolve();
+          return;
+        }
+        draw(i);
+        i += 1;
+        setTimeout(step, 1000 / fps);
+      };
+      step();
+    });
+  }
+
+  function pickMime() {
+    const candidates = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+    return candidates.find((t) => window.MediaRecorder?.isTypeSupported?.(t)) ?? null;
+  }
+
+  async function exportVideo() {
+    if (!bitmaps.length) return;
+    const mime = pickMime();
+    if (!mime) {
+      downloadFramesAsPng();
+      return;
+    }
+    pause();
+    const stream = playerCanvas.captureStream(fps);
+    const recorder = new MediaRecorder(stream, { mimeType: mime });
+    const chunks = [];
+    recorder.ondataavailable = (e) => chunks.push(e.data);
+    const stopped = new Promise((resolve) => {
+      recorder.onstop = resolve;
+    });
+    recorder.start();
+    await playOnce();
+    recorder.stop();
+    await stopped;
+    const url = URL.createObjectURL(new Blob(chunks, { type: mime }));
+    triggerDownload(url, 'animation.webm');
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+
+  function hasFrames() {
+    return bitmaps.length > 0;
+  }
+
+  return { load, toggle, play, pause, seek, setFps, setLoop, exportVideo, destroy, hasFrames };
+}
+const player = createPlayer();
+
+// ---- mode toggle + plate routing ----
+
+function setMode(next) {
+  if (next === mode) return;
+  if (abortCtl || isBusy()) return; // don't switch mid-render
+  mode = next;
+  applyMode();
+  scheduleSave();
+}
+
+function applyMode() {
+  document.body.dataset.mode = mode;
+  modeStillBtn.setAttribute('aria-pressed', String(mode === 'still'));
+  modeAnimateBtn.setAttribute('aria-pressed', String(mode === 'animate'));
+  if (mode === 'still') player.pause();
+  refreshPlate();
+}
+
+// Show the right thing in #output-plate for the current mode: the player
+// canvas (animate, once frames exist), the still image (still, once rendered),
+// or the empty-state hint.
+function refreshPlate() {
+  if (mode === 'animate') {
+    output.hidden = true;
+    const showPlayer = player.hasFrames();
+    playerCanvas.hidden = !showPlayer;
+    plateHint.hidden = showPlayer;
+  } else {
+    playerCanvas.hidden = true;
+    output.hidden = !hasStillImage;
+    plateHint.hidden = hasStillImage;
+  }
+  updateZoomLabel();
+}
+
+modeStillBtn.addEventListener('click', () => setMode('still'));
+modeAnimateBtn.addEventListener('click', () => setMode('animate'));
+playBtn.addEventListener('click', () => player.toggle());
+scrubber.addEventListener('input', () => player.seek(Number(scrubber.value)));
+loopBtn.addEventListener('click', () => {
+  player.setLoop(loopBtn.getAttribute('aria-pressed') !== 'true');
+});
+exportBtn.addEventListener('click', () => player.exportVideo());
+
+// Seed the player fps from the (restored) input and route the plate for the
+// restored mode.
+player.setFps(Number(fpsInput.value));
+applyMode();
+
 renderBtn.addEventListener('click', startRender);
 cancelBtn.addEventListener('click', () => abortCtl?.abort());
 
@@ -669,7 +1074,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 // Plain Enter inside the number inputs renders too.
-for (const el of [widthInput, heightInput, threadsInput]) {
+for (const el of [widthInput, heightInput, threadsInput, framesInput, fpsInput]) {
   el.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();

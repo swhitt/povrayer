@@ -547,6 +547,104 @@ body.ui main > * {
   overflow-wrap: break-word; /* stats columns wrap at spaces, not mid-number */
 }
 
+/* ---- animate mode: mode toggle, frame/fps inputs, the player ----
+   data-mode lives on <body> (seeded in the markup so nothing flashes before
+   ui.js runs). The two chrome sets are mutually exclusive: still mode hides
+   the player + frame/fps inputs, animate mode hides the PNG download/zoom row.
+   These display rules must not beat the `hidden` attribute (the JS gates the
+   player and its inputs further), hence the same !important the base rule uses. */
+body.ui[data-mode='still'] .animate-only {
+  display: none !important;
+}
+
+body.ui[data-mode='animate'] .still-only {
+  display: none !important;
+}
+
+/* Segmented toggles (still/animate, loop). Grey + square, butted together;
+   the pressed segment inverts to read as selected WITHOUT borrowing the
+   accent (identity rule 1: accent stays on Render). Scoped to .toggle-btn so
+   the aria-pressed zoom toggle keeps its quiet treatment. */
+.seg-group {
+  display: inline-flex;
+}
+
+.seg-group .toggle-btn + .toggle-btn {
+  margin-left: -1px; /* collapse the shared 1px border into one hairline */
+}
+
+.toggle-btn[aria-pressed='true'] {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
+}
+
+/* The player canvas is the animate-mode hero, drawn into the same #output-plate
+   (mat + shadow) the still image uses. Scales down to fit like #output. */
+#player-canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+#player-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px; /* clears the plate shadow, like .meta-row */
+}
+
+/* Scrubber: a 2px track echoing the progress bar, with a small square grey
+   thumb (no rounded corners, no accent). The base input:focus accent ring
+   still applies. */
+#scrubber {
+  flex: 1;
+  min-width: 8em;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+#scrubber::-webkit-slider-runnable-track {
+  height: 2px;
+  background: var(--border-strong);
+}
+
+#scrubber::-moz-range-track {
+  height: 2px;
+  background: var(--border-strong);
+}
+
+#scrubber::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 16px;
+  margin-top: -7px; /* center the 16px thumb on the 2px track */
+  background: var(--text);
+  border: none;
+}
+
+#scrubber::-moz-range-thumb {
+  width: 10px;
+  height: 16px;
+  background: var(--text);
+  border: none;
+  border-radius: 0;
+}
+
+.player-readout {
+  color: var(--dim);
+  font-size: var(--fs-out);
+  white-space: nowrap;
+}
+
 /* ---- REPL page ---- */
 
 body.repl,

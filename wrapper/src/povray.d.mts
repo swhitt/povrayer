@@ -20,6 +20,8 @@ export interface PovrayFS {
    * callers must copy before handing the bytes to anyone else.
    */
   readFile(path: string): Uint8Array;
+  /** Lists the entries in a directory (includes "." and ".."). */
+  readdir(path: string): string[];
 }
 
 /** Subset of one instantiated povray module the wrapper uses. */

@@ -1,8 +1,9 @@
 /**
  * povrayer: POV-Ray 3.8 compiled to WebAssembly.
  *
- * The only public API is {@link render}: it stages a scene into the module's
- * in-memory filesystem, runs POV-Ray, and resolves with the PNG bytes.
+ * The public API is {@link render} (one PNG) and {@link renderAnimation} (a
+ * clock-driven sequence of PNGs). Both stage a scene into the module's
+ * in-memory filesystem, run POV-Ray, and resolve with the PNG bytes.
  *
  * Browser requirements:
  * - The page must be cross-origin isolated (pthreads need SharedArrayBuffer):
@@ -141,21 +142,31 @@ function abortError(signal: AbortSignal | undefined): Error {
 // view of wasm memory across calls. With ALLOW_MEMORY_GROWTH plus shared
 // memory the underlying buffer is replaced on growth and stale views read
 // garbage. This wrapper deliberately never touches HEAP* at all:
-// FS.writeFile/FS.readFile plus the Uint8Array.from copy in render() are the
-// only data paths in or out of the instance.
+// FS.writeFile/FS.readFile plus the Uint8Array.from copies in the runEngine
+// collect callbacks are the only data paths in or out of the instance.
 
 /**
- * Render a POV-Ray scene to a PNG.
+ * Runs the engine once and returns whatever `collect` extracts from the
+ * resulting MEMFS. This is the shared core behind {@link render} and
+ * {@link renderAnimation}: all the log capture, instantiation, abort/teardown,
+ * and exit-code plumbing lives here exactly once.
  *
- * @param source  POV-Ray SDL scene text (staged as `/work/scene.pov`).
- * @param options See {@link RenderOptions}.
- * @returns PNG bytes in a fresh, non-shared buffer (safe to transfer or
- *          hold indefinitely; never a view into wasm memory).
- * @throws {PovrayError} when POV-Ray exits non-zero (parse error, render
- *         failure) or the wasm runtime aborts; `AbortError` when cancelled
- *         via `options.signal`.
+ * `extraArgs` is spliced into argv right after the antialias flag and before
+ * the include path and caller `args`. With `extraArgs === []` the argv is
+ * byte-identical to a plain still render, so {@link render} drives this with
+ * the same behavior it always had.
+ *
+ * `collect` runs only on a clean exit (code 0) with the instance still alive,
+ * inside the `try`, so it can read output PNGs out of FS before the `finally`
+ * reaps the workers. Errors propagate from here: non-zero exit -> PovrayError,
+ * aborted signal -> AbortError.
  */
-export async function render(source: string, options: RenderOptions = {}): Promise<Uint8Array> {
+async function runEngine<T>(
+    source: string,
+    options: RenderOptions,
+    extraArgs: string[],
+    collect: (fs: PovrayFS) => T,
+): Promise<T> {
     const {
         width = 800,
         height = 600,
@@ -181,7 +192,7 @@ export async function render(source: string, options: RenderOptions = {}): Promi
         resolveExit = resolve;
         rejectExit = reject;
     });
-    // The abort path can reject `exited` after render() has already thrown
+    // The abort path can reject `exited` after the caller has already thrown
     // (e.g. a staging error); mark it observed so that never surfaces as an
     // unhandled rejection. The real `await exited` below still sees the state.
     exited.catch(() => {});
@@ -277,6 +288,9 @@ export async function render(source: string, options: RenderOptions = {}): Promi
         if (antialias === false) argv.push("-A");
         else if (antialias === true) argv.push("+A0.3");
         else argv.push(`+A${antialias}`);
+        // Animation flags (+KFI/+KFF/+KI/+KF) go here, between the antialias
+        // flag and the include path, so they precede any caller-supplied args.
+        argv.push(...extraArgs);
         // Explicit even though the compiled-in POVLIBDIR fallback covers it.
         argv.push("+L/usr/share/povray-3.8/include");
         argv.push(...args);
@@ -293,9 +307,10 @@ export async function render(source: string, options: RenderOptions = {}): Promi
             );
         }
 
-        // Explicit copy into a fresh, non-shared buffer: callers must never
-        // hold a view into (growable, shared) wasm memory.
-        return Uint8Array.from(FS.readFile("/work/out.png"));
+        // Collect runs with the instance still alive: it copies the output
+        // PNG(s) into fresh, non-shared buffers (callers must never hold a
+        // view into growable, shared wasm memory) before `finally` reaps it.
+        return collect(FS);
     } finally {
         signal?.removeEventListener("abort", onSignalAbort);
         // Safety net on every exit path: a no-op after a clean EXIT_RUNTIME
@@ -308,4 +323,111 @@ export async function render(source: string, options: RenderOptions = {}): Promi
             // runtime already torn down
         }
     }
+}
+
+/**
+ * Render a POV-Ray scene to a PNG.
+ *
+ * @param source  POV-Ray SDL scene text (staged as `/work/scene.pov`).
+ * @param options See {@link RenderOptions}.
+ * @returns PNG bytes in a fresh, non-shared buffer (safe to transfer or
+ *          hold indefinitely; never a view into wasm memory).
+ * @throws {PovrayError} when POV-Ray exits non-zero (parse error, render
+ *         failure) or the wasm runtime aborts; `AbortError` when cancelled
+ *         via `options.signal`.
+ */
+export async function render(source: string, options: RenderOptions = {}): Promise<Uint8Array> {
+    return runEngine(source, options, [], (fs) => Uint8Array.from(fs.readFile("/work/out.png")));
+}
+
+/** Options for {@link renderAnimation}. Extends {@link RenderOptions}. */
+export interface AnimationOptions extends RenderOptions {
+    /** Number of frames to render. Required; must be an integer >= 1. */
+    frames: number;
+    /** Clock value at the first frame (`+KI`). Default 0. */
+    initialClock?: number;
+    /** Clock value at the final frame (`+KF`). Default 1. */
+    finalClock?: number;
+    /**
+     * Called once per completed frame, in order (1-based), all before the
+     * returned promise resolves. A throwing callback is swallowed so it can
+     * never corrupt the render.
+     */
+    onFrame?: (index: number, total: number) => void;
+}
+
+// POV-Ray prints exactly one "Trace Time:" line per completed frame (the
+// final one for each frame is flushed before onExit resolves), so counting
+// these lines is the reliable per-frame completion signal. The "Rendering
+// frame N of M" banner is doubled for frame 1 (print + printErr both capture
+// startup), so it is deliberately NOT used here.
+const TRACE_DONE = /^\s*Trace Time:/;
+
+// Frame PNGs the engine writes under +KFI/+KFF for a MULTI-frame run:
+// out<N>.png, where N is zero-padded to the digit width of the final frame. The
+// `\d+` capture excludes scene.pov. A single-frame run (+KFF1) is the lone
+// exception: POV-Ray writes a bare out.png with no frame number, handled by the
+// fallback in the collector below.
+const FRAME_PNG = /^out(\d+)\.png$/;
+
+/**
+ * Render a POV-Ray scene as an animation: drives POV-Ray's native clock loop
+ * (`+KFI1 +KFF{frames} +KI{initialClock} +KF{finalClock}`) and returns one PNG
+ * per frame, in frame order.
+ *
+ * @param source  POV-Ray SDL scene text (staged as `/work/scene.pov`). Use the
+ *                `clock` identifier (it sweeps `initialClock`..`finalClock`).
+ * @param options See {@link AnimationOptions}; `frames` is required.
+ * @returns One PNG per frame, each in a fresh, non-shared buffer, ordered by
+ *          frame number (numeric, so frame 2 precedes frame 10).
+ * @throws Error synchronously when `frames` is not an integer >= 1.
+ * @throws {PovrayError} when POV-Ray exits non-zero; `AbortError` when
+ *         cancelled via `options.signal`.
+ */
+export async function renderAnimation(
+    source: string,
+    options: AnimationOptions,
+): Promise<Uint8Array[]> {
+    const { frames, initialClock = 0, finalClock = 1, onFrame, onProgress } = options;
+
+    if (!Number.isInteger(frames) || frames < 1) {
+        throw new Error("frames must be an integer >= 1");
+    }
+
+    const extraArgs = ["+KFI1", `+KFF${frames}`, `+KI${initialClock}`, `+KF${finalClock}`];
+
+    let framesDone = 0;
+    const fireOnFrame = (index: number, total: number) => {
+        if (!onFrame) return;
+        try {
+            onFrame(index, total);
+        } catch {
+            // Mirror append's swallow: a throwing frame callback must never
+            // corrupt the render.
+        }
+    };
+
+    return runEngine(
+        source,
+        {
+            ...options,
+            onProgress: (line) => {
+                if (TRACE_DONE.test(line)) fireOnFrame(++framesDone, frames);
+                onProgress?.(line);
+            },
+        },
+        extraArgs,
+        // Bytes only, each copied into a fresh non-shared buffer. A multi-frame
+        // run writes out1.png, out2.png, ... (numeric sort so out2 precedes
+        // out10); a single-frame run writes a bare out.png with no number, so
+        // fall back to it when no numbered frames exist.
+        (fs) => {
+            const numbered = fs
+                .readdir("/work")
+                .filter((name) => FRAME_PNG.test(name))
+                .sort((a, b) => Number(FRAME_PNG.exec(a)![1]) - Number(FRAME_PNG.exec(b)![1]));
+            const names = numbered.length > 0 ? numbered : ["out.png"];
+            return names.map((name) => Uint8Array.from(fs.readFile("/work/" + name)));
+        },
+    );
 }

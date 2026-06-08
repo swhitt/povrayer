@@ -320,6 +320,233 @@ try {
   await submitRender(WARN_ENTRY); // now 2 entries -> 2 warnings -> plural caption
   await runCmd(':log'); // 2 warnings -> plural
 
+  // ===========================================================================
+  // PART 3.5: :anim multi-frame render, the inline player transport, and the
+  // WebM/PNG export paths. The player figure created here survives until the
+  // PART 5 eviction sweep, which exercises appendNode's __animDestroy hook.
+  // ===========================================================================
+  const lastErrText = () =>
+    page.evaluate(() => {
+      const errs = document.querySelectorAll('#scrollback .error');
+      return errs[errs.length - 1]?.textContent ?? '';
+    });
+  const animCanvasCount = () =>
+    page.evaluate(() => document.querySelectorAll('#scrollback figure.result canvas').length);
+  const submitAnim = async (text) => {
+    const before = await animCanvasCount();
+    await submit(page, text);
+    await page.waitForFunction(
+      (n) => document.querySelectorAll('#scrollback figure.result canvas').length > n,
+      before,
+      { timeout: 120_000 }
+    );
+  };
+  // Run a callback against the most recent inline animation player figure.
+  const onAnim = (body) =>
+    page.evaluate((src) => {
+      const fig = [...document.querySelectorAll('#scrollback figure.result')]
+        .filter((f) => f.querySelector('canvas'))
+        .pop();
+      const p = {
+        fig,
+        playBtn: fig.querySelectorAll('button')[0],
+        exportBtn: fig.querySelectorAll('button')[1],
+        scrubber: fig.querySelector('input[type=range]'),
+        loopBox: fig.querySelector('input[type=checkbox]'),
+        fpsBox: fig.querySelector('input[type=number]'),
+      };
+      return new Function('p', src)(p);
+    }, `return (${body.toString()})(p);`);
+  const animPaused = () =>
+    page.waitForFunction(
+      () => {
+        const fig = [...document.querySelectorAll('#scrollback figure.result')]
+          .filter((f) => f.querySelector('canvas'))
+          .pop();
+        return fig.querySelectorAll('button')[0].textContent === 'play';
+      },
+      null,
+      { timeout: 5_000 }
+    );
+
+  // Validation guards (no render): bad/missing N, then a valid N on an empty scene.
+  await runCmd(':reset');
+  await runCmd(':anim'); // no arg -> usage
+  assert.match(await lastErrText(), /:anim N \(1\.\.240\)/, ':anim with no arg should show usage');
+  await runCmd(':anim abc'); // non-numeric -> usage
+  await runCmd(':anim 0'); // < 1 -> usage
+  await runCmd(':anim 999'); // > 240 -> usage
+  await runCmd(':anim 3'); // valid N but scene empty
+  assert.match(await lastErrText(), /scene empty/, ':anim on an empty scene should report it');
+
+  // :help lists :anim; Tab completes ':an' -> ':anim '.
+  await runCmd(':help');
+  assert.ok(
+    await page.evaluate(() =>
+      [...document.querySelectorAll('#scrollback .help dt')].some((dt) =>
+        dt.textContent.includes(':anim')
+      )
+    ),
+    ':help grid should document :anim'
+  );
+  await page.fill('#input', ':an');
+  await page.keyboard.press('Tab');
+  assert.equal(await inputVal(), ':anim ', "Tab should complete ':an' to ':anim '");
+  await page.evaluate(() => {
+    document.getElementById('input').value = '';
+  });
+
+  // First anim render: default settings (covers the absent quality/threads/args
+  // arms in runAnimRender) and autoplay (3 frames, no-preference).
+  await runCmd(':size 48x32');
+  await submitRender('sphere { 0, 1 pigment { rgb <1,0,0> } }'); // add an entry
+  await submitAnim(':anim 3');
+  const animCap = await page.evaluate(
+    () =>
+      [...document.querySelectorAll('#scrollback figure.result')]
+        .filter((f) => f.querySelector('canvas'))
+        .pop()
+        .querySelector('figcaption').textContent
+  );
+  assert.match(
+    animCap,
+    /anim #\d+ · \d+×\d+ · 3 frames · \d+\.\ds/,
+    `unexpected anim figcaption: ${animCap}`
+  );
+
+  // Let the looping autoplay run a couple cycles so tick wraps off the end
+  // (next = 0) before we change anything.
+  await page.waitForTimeout(500);
+  // Transport: uncheck loop and let the autoplay run off the end (tick's
+  // no-loop pause); then play from the parked last frame (the redraw branch).
+  await onAnim((p) => {
+    p.loopBox.checked = false;
+    p.loopBox.dispatchEvent(new Event('change'));
+  });
+  await animPaused();
+  await onAnim((p) => p.playBtn.click()); // paused at last frame -> draw(0) + play
+  await animPaused();
+
+  // Re-enable loop, play, then pause via a second click (the 'if playing' arm).
+  await onAnim((p) => {
+    p.loopBox.checked = true;
+    p.loopBox.dispatchEvent(new Event('change'));
+    p.playBtn.click(); // paused -> play
+  });
+  await onAnim((p) => p.playBtn.click()); // playing -> pause
+  await animPaused();
+
+  // Scrubber seek (pauses an already-paused player) and fps retune (finite +
+  // non-finite, the latter via a text-coerced value so clampFps sees NaN).
+  await onAnim((p) => {
+    p.scrubber.value = '1';
+    p.scrubber.dispatchEvent(new Event('input'));
+    p.fpsBox.value = '30';
+    p.fpsBox.dispatchEvent(new Event('change')); // clampFps finite
+    p.fpsBox.type = 'text';
+    p.fpsBox.value = 'abc';
+    p.fpsBox.dispatchEvent(new Event('change')); // clampFps non-finite -> default
+  });
+
+  // Export WebM via a stubbed MediaRecorder: a .webm download anchor is clicked.
+  await onAnim((p) => {
+    window.__dl = [];
+    window.__origAClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () {
+      window.__dl.push(this.download);
+    };
+    class FakeRecorder {
+      start() {
+        this.ondataavailable?.({ data: new Blob(['x'], { type: 'video/webm' }) });
+      }
+      stop() {
+        this.onstop?.();
+      }
+      static isTypeSupported() {
+        return true;
+      }
+    }
+    window.__origMR = window.MediaRecorder;
+    window.MediaRecorder = FakeRecorder;
+    p.exportBtn.click();
+  });
+  await page.waitForFunction(() => (window.__dl ?? []).some((n) => /\.webm$/.test(n)), null, {
+    timeout: 15_000,
+  });
+
+  // Export fallback (no MediaRecorder): N sequential frameNNN.png downloads.
+  await onAnim((p) => {
+    HTMLAnchorElement.prototype.click = window.__origAClick;
+    delete window.MediaRecorder;
+    window.__dl2 = [];
+    HTMLAnchorElement.prototype.click = function () {
+      window.__dl2.push(this.download);
+    };
+    p.exportBtn.click();
+  });
+  await page.waitForFunction(
+    () => (window.__dl2 ?? []).filter((n) => /frame\d+\.png/.test(n)).length >= 3,
+    null,
+    { timeout: 5_000 }
+  );
+  await page.evaluate(() => {
+    HTMLAnchorElement.prototype.click = window.__origAClick;
+    if (window.__origMR) window.MediaRecorder = window.__origMR;
+  });
+
+  // __animDestroy is idempotent: a second call is a no-op (the destroyed guard).
+  await onAnim((p) => {
+    p.fig.__animDestroy();
+    p.fig.__animDestroy();
+  });
+
+  // Settings present-side render + reduced-motion (no autoplay): covers the
+  // quality/threads/args arms in runAnimRender and the autoplay short-circuit.
+  await runCmd(':q 5');
+  await runCmd(':threads 2');
+  await runCmd(':args +UA');
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await submitAnim(':anim 2');
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await runCmd(':args'); // clear
+
+  // Single-frame anim: total<2 means no autoplay and play() bails on click.
+  await submitAnim(':anim 1');
+  await onAnim((p) => p.playBtn.click()); // play() returns on total<2
+
+  // Cancel an in-flight :anim via Escape -> info 'render cancelled', kept in place.
+  await runCmd(':size 500x500');
+  await submit(page, ':anim 4');
+  await page.waitForFunction(() => document.getElementById('input').readOnly === true, null, {
+    timeout: 60_000,
+  });
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll('#scrollback .info')].some((el) =>
+        el.textContent.includes('cancelled')
+      ),
+    null,
+    { timeout: 30_000 }
+  );
+
+  // A failing :anim (bad raw args) -> error block in place (no rollback).
+  await runCmd(':size 48x32');
+  await runCmd(':args +ZZZ');
+  {
+    const before = await sbCount();
+    await submit(page, ':anim 2');
+    await page.waitForFunction(
+      (n) =>
+        [...document.getElementById('scrollback').children]
+          .slice(n)
+          .some((el) => el.classList.contains('error')),
+      before,
+      { timeout: 60_000 }
+    );
+  }
+  await runCmd(':args'); // clear the bad args
+
   // --- PART 4: cancel + flashHint (slow renders via cornell-mood) ------------
   // flashHint: submit while a >2s render is in flight; the 2s restore timer
   // fires mid-render.

@@ -6,7 +6,7 @@
 // web/ flat into one root, so the relative import only resolves in the
 // served/assembled site, never from web/ on disk.
 
-import { render, PovrayError } from './index.js';
+import { render, renderAnimation as wrapperRenderAnimation, PovrayError } from './index.js';
 
 export { PovrayError };
 
@@ -97,6 +97,59 @@ export async function renderScene(source, opts = {}) {
     const elapsedMs = performance.now() - start;
     const blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }));
     return { bytes, blobUrl, elapsedMs, log: rawLines.join('\n') };
+  } finally {
+    busy = false;
+  }
+}
+
+/**
+ * Wraps the wrapper's renderAnimation() for the page. Like renderScene it is
+ * the only animation entry point, shares the same `busy` singleton + backstop
+ * (still and animated renders never overlap), and stays DOM-free: it produces
+ * playback assets but mounts nothing.
+ *
+ * opts: { width, height, quality, antialias, threads, files, args, signal,
+ * frames, initialClock, finalClock, onProgress, onEvent, onFrame }. The render
+ * options pass straight through to the wrapper. onProgress keeps the raw-line
+ * contract; onEvent receives the same normalized progress/line events as
+ * renderScene PLUS a frame channel: { kind: 'frame', index, total } fired once
+ * per completed frame. onFrame(index, total) is forwarded too. Per-frame
+ * percent resets each frame, so a consumer driving an overall bar computes
+ * overall = (completedFrames + framePercent / 100) / total.
+ *
+ * Resolves { frames: Uint8Array[], blobUrls: string[], bitmaps: ImageBitmap[],
+ * elapsedMs, log }. `frames` is the raw PNG bytes; `blobUrls`/`bitmaps` are
+ * ready-to-play assets, one per frame, in frame order. `log` is the raw,
+ * unfiltered output. THE CALLER OWNS the playback assets: revoke every blobUrl
+ * (URL.revokeObjectURL) and close every bitmap (ImageBitmap.close) when done.
+ */
+export async function renderAnimation(source, opts = {}) {
+  if (busy) throw new Error('render already in progress');
+  busy = true;
+  const { onEvent, onProgress, onFrame, frames, initialClock, finalClock, ...rest } = opts;
+  const rawLines = [];
+  try {
+    const start = performance.now();
+    const pngs = await wrapperRenderAnimation(source, {
+      ...rest,
+      frames,
+      initialClock,
+      finalClock,
+      onProgress: (line) => {
+        rawLines.push(line);
+        onProgress?.(line);
+        if (onEvent) emitEvents(line, onEvent);
+      },
+      onFrame: (index, total) => {
+        onEvent?.({ kind: 'frame', index, total });
+        onFrame?.(index, total);
+      },
+    });
+    const elapsedMs = performance.now() - start;
+    const blobs = pngs.map((bytes) => new Blob([bytes], { type: 'image/png' }));
+    const blobUrls = blobs.map((blob) => URL.createObjectURL(blob));
+    const bitmaps = await Promise.all(blobs.map((blob) => createImageBitmap(blob)));
+    return { frames: pngs, blobUrls, bitmaps, elapsedMs, log: rawLines.join('\n') };
   } finally {
     busy = false;
   }

@@ -14,7 +14,7 @@
     <script src="./coi-serviceworker.js"></script>
     <link rel="stylesheet" href="./styles.css" />
   </head>
-  <body class="ui">
+  <body class="ui" data-mode="still">
     <header>
       <h1>
         <span class="orb" aria-hidden="true"></span><span class="brand-accent">pov</span>rayer
@@ -47,6 +47,14 @@
           ></textarea>
         </div>
         <div id="controls">
+          <span class="seg-group" id="mode-toggle" role="group" aria-label="render mode">
+            <button id="mode-still" class="toggle-btn" type="button" aria-pressed="true">
+              still
+            </button>
+            <button id="mode-animate" class="toggle-btn" type="button" aria-pressed="false">
+              animate
+            </button>
+          </span>
           <label title="width (pixels)"
             >width <input id="width" type="number" min="8" max="2048" value="512"
           /></label>
@@ -83,6 +91,12 @@
           <label title="worker threads (auto = hardware concurrency)"
             >threads <input id="threads" type="number" min="1" max="32" placeholder="auto"
           /></label>
+          <label class="animate-only" title="frame count (1..240)"
+            >frames <input id="frames" type="number" min="1" max="240" value="24"
+          /></label>
+          <label class="animate-only" title="playback frames per second (1..60)"
+            >fps <input id="fps" type="number" min="1" max="60" value="12"
+          /></label>
           <span class="actions">
             <button id="render-btn" type="button" title="Ctrl/Cmd+Enter">Render</button>
             <button id="cancel-btn" type="button" title="Esc" hidden>Cancel</button>
@@ -95,12 +109,31 @@
         <pre id="error" class="error" role="alert" hidden></pre>
         <div id="output-plate">
           <img id="output" alt="render output" hidden />
+          <canvas id="player-canvas" role="img" aria-label="animation playback" hidden></canvas>
           <p class="hint">
             Describe a 3D scene in text; POV-Ray ray-traces it in your browser. Ctrl/Cmd+Enter
             renders.
           </p>
         </div>
-        <div class="meta-row">
+        <div id="player-controls" class="animate-only" hidden>
+          <button id="play-btn" type="button" title="Play / pause">Play</button>
+          <input
+            id="scrubber"
+            type="range"
+            min="0"
+            max="0"
+            value="0"
+            step="1"
+            aria-label="frame scrubber"
+          />
+          <span id="frame-readout" class="player-readout">0 / 0</span>
+          <span id="fps-readout" class="player-readout">12 fps</span>
+          <button id="loop-btn" class="toggle-btn" type="button" aria-pressed="true">loop</button>
+          <button id="export-btn" type="button" title="Export the animation as a WebM video">
+            Export WebM
+          </button>
+        </div>
+        <div class="meta-row still-only">
           <a id="download-btn" hidden download="render.png">Download PNG</a>
           <button
             class="zoom-toggle"

@@ -254,6 +254,99 @@ try {
   assert.ok(direct.bytes > 0 && direct.blob, 'direct render should resolve bytes + a blob url');
   assert.ok(direct.logLen > 0, 'direct render should carry a raw log');
 
+  // --- render-client.js renderAnimation direct -------------------------------
+  // A 3-frame clock animation through render-client covers the wrapper->client
+  // frame fan-out (onEvent 'frame' + onFrame), the raw onProgress contract, the
+  // blob/bitmap playback-asset build, elapsedMs, and busy set/clear. wasm is
+  // warm from the renders above, so this is sub-second.
+  const anim = await page.evaluate(async () => {
+    const mod = await import('/render-client.js');
+    const scene = [
+      '#version 3.8;',
+      'global_settings { assumed_gamma 1.0 }',
+      'camera { location <0,0,-6> look_at 0 }',
+      'light_source { <4,6,-5> rgb 1 }',
+      'sphere { <clock,0,0>, 1 pigment { rgb <1,0,0> } }',
+    ].join('\n');
+    const events = [];
+    const frameCalls = [];
+    let progress = 0;
+    const res = await mod.renderAnimation(scene, {
+      width: 32,
+      height: 24,
+      antialias: false,
+      frames: 3,
+      initialClock: 0,
+      finalClock: 1,
+      onEvent: (ev) => events.push(ev.kind),
+      onFrame: (i, t) => frameCalls.push([i, t]),
+      onProgress: () => {
+        progress++;
+      },
+    });
+    const out = {
+      count: res.frames.length,
+      isPng: res.frames.every((b) => b[0] === 0x89 && b[1] === 0x50),
+      blobUrls: res.blobUrls.every((u) => u.startsWith('blob:')),
+      bitmapW: res.bitmaps[0].width,
+      bitmapsAreImageBitmap: res.bitmaps.every((b) => b instanceof ImageBitmap),
+      elapsed: typeof res.elapsedMs === 'number' && res.elapsedMs > 0,
+      logLen: res.log.length,
+      frameEvents: events.filter((k) => k === 'frame').length,
+      frameCalls,
+      progress,
+      busyAfter: mod.isBusy(),
+    };
+    res.blobUrls.forEach((u) => URL.revokeObjectURL(u));
+    res.bitmaps.forEach((b) => b.close());
+    return out;
+  });
+  assert.equal(anim.count, 3, 'renderAnimation should return one PNG per frame');
+  assert.ok(anim.isPng, 'each animation frame should be a PNG');
+  assert.ok(anim.blobUrls, 'renderAnimation should hand back blob: playback URLs');
+  assert.equal(anim.bitmapW, 32, 'bitmaps should match the render width');
+  assert.ok(anim.bitmapsAreImageBitmap, 'bitmaps should be ImageBitmaps');
+  assert.ok(anim.elapsed, 'renderAnimation should report elapsedMs');
+  assert.ok(anim.logLen > 0, 'renderAnimation should carry a raw log');
+  assert.equal(anim.frameEvents, 3, 'onEvent should see one frame event per frame');
+  assert.deepEqual(
+    anim.frameCalls,
+    [
+      [1, 3],
+      [2, 3],
+      [3, 3],
+    ],
+    'onFrame should fire per frame in order'
+  );
+  assert.ok(anim.progress > 0, 'onProgress should receive raw lines');
+  assert.equal(anim.busyAfter, false, 'isBusy must clear after renderAnimation resolves');
+
+  // Busy backstop + the absent-callback arms: a frames:1 call with no callbacks
+  // started while a second renderAnimation is in flight must throw.
+  const animBusy = await page.evaluate(async () => {
+    const mod = await import('/render-client.js');
+    const scene = [
+      '#version 3.8;',
+      'camera { location <0,0,-4> look_at 0 }',
+      'light_source { <2,4,-3> rgb 1 }',
+      'sphere { 0, 1 pigment { rgb <1,0,0> } }',
+    ].join('\n');
+    const p = mod.renderAnimation(scene, { width: 24, height: 18, antialias: false, frames: 1 });
+    let busyThrew = false;
+    try {
+      await mod.renderAnimation(scene, { width: 8, height: 8, antialias: false, frames: 1 });
+    } catch (e) {
+      busyThrew = /already in progress/.test(e.message);
+    }
+    const res = await p;
+    const count = res.frames.length;
+    res.blobUrls.forEach((u) => URL.revokeObjectURL(u));
+    res.bitmaps.forEach((b) => b.close());
+    return { busyThrew, count };
+  });
+  assert.ok(animBusy.busyThrew, 'a concurrent renderAnimation must throw the busy backstop');
+  assert.equal(animBusy.count, 1, 'a single-frame animation should return one frame');
+
   // ===========================================================================
   // ui.js DOM-controller coverage: example switch + dirty guard, editor
   // mechanics, persistence restore, zoom, error path, status throttle, and the
@@ -682,6 +775,319 @@ try {
     };
     window.dispatchEvent(new Event('pagehide'));
   });
+
+  // ===========================================================================
+  // animate mode: the inline frame player, WebM/PNG export, runAnimateRender
+  // (success / cancel / PovrayError / generic failure), the mode toggle + plate
+  // routing, and mode/frames/fps persistence. Restored straight into animate
+  // mode so the first render below is the session's first (the engine-not-seen
+  // 'parsing' status arm in runAnimateRender).
+  // ===========================================================================
+  const CLOCK_SCENE = [
+    '#version 3.8;',
+    'global_settings { assumed_gamma 1.0 }',
+    'camera { location <0,0,-6> look_at 0 }',
+    'light_source { <4,6,-5> color rgb 1 }',
+    'sphere { <clock,0,0>, 1 pigment { rgb <1,0,0> } }',
+  ].join('\n');
+  const waitDone = (t = 120_000) =>
+    page.waitForFunction(() => document.getElementById('status').dataset.state === 'done', null, {
+      timeout: t,
+    });
+  const playLabel = () => page.evaluate(() => document.getElementById('play-btn').textContent);
+  const waitPaused = () =>
+    page.waitForFunction(() => document.getElementById('play-btn').textContent === 'Play', null, {
+      timeout: 5_000,
+    });
+
+  await seedReload(
+    JSON.stringify({
+      source: CLOCK_SCENE,
+      mode: 'animate',
+      frames: '30',
+      fps: '24',
+      width: '48',
+      height: '36',
+    })
+  );
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      mode: document.body.dataset.mode,
+      frames: document.getElementById('frames').value,
+      fps: document.getElementById('fps').value,
+    })),
+    { mode: 'animate', frames: '30', fps: '24' },
+    'a saved animate blob should restore mode + frames + fps'
+  );
+  // Animate-only controls visible, still-only ones hidden, in animate mode.
+  assert.equal(
+    await page.evaluate(
+      () => getComputedStyle(document.getElementById('frames').closest('label')).display !== 'none'
+    ),
+    true,
+    'frames input should be visible in animate mode'
+  );
+  // Clicking the already-active mode is a no-op (setMode next===mode guard).
+  await page.click('#mode-animate');
+
+  // Player guards before any frames exist: play / seek / export all early-return.
+  await page.evaluate(() => {
+    document.getElementById('play-btn').click(); // toggle -> play -> !bitmaps.length
+    document.getElementById('scrubber').dispatchEvent(new Event('input')); // seek -> !bitmaps.length
+    document.getElementById('export-btn').click(); // exportVideo -> !bitmaps.length
+  });
+
+  // First animate render (3 frames, fresh page so engineSeen is false).
+  await page.fill('#frames', '3');
+  await page.fill('#fps', '12');
+  await page.fill('#width', '48');
+  await page.fill('#height', '36');
+  await page.selectOption('#antialias', 'off');
+  await page.click('#render-btn');
+  await waitDone();
+  assert.equal(
+    await page.evaluate(() => document.getElementById('player-canvas').hidden),
+    false,
+    'the player canvas should be the hero after an animate render'
+  );
+  assert.equal(
+    await page.evaluate(() => document.getElementById('scrubber').max),
+    '2',
+    'scrubber max should be frames-1'
+  );
+  assert.match(
+    await page.evaluate(() => document.getElementById('status').textContent),
+    /· 3 frames$/,
+    'the animate done line should report the frame count'
+  );
+
+  // Let the looping autoplay run a couple cycles so tick wraps off the end
+  // (next = 0) before we change anything.
+  await page.waitForTimeout(500);
+  // Transport: uncheck loop, let the autoplay run off the end (tick no-loop
+  // pause), then play from the parked last frame (the play() redraw branch).
+  await page.click('#loop-btn'); // setLoop(false)
+  await waitPaused();
+  await page.click('#play-btn'); // toggle -> play, restart from frame 0
+  await waitPaused();
+  // Re-enable loop, play, then pause via a second click (toggle's playing arm).
+  await page.click('#loop-btn'); // setLoop(true)
+  await page.click('#play-btn'); // toggle -> play
+  await page.click('#play-btn'); // toggle -> pause
+  await waitPaused();
+  // Scrubber seek (pauses an already-paused player) + fps retune (valid then
+  // out-of-range, the latter leaving the fps untouched).
+  await page.evaluate(() => {
+    const s = document.getElementById('scrubber');
+    s.value = '1';
+    s.dispatchEvent(new Event('input'));
+  });
+  await page.fill('#fps', '20'); // valid -> player.setFps(20)
+  await page.fill('#fps', '99'); // out of range -> handler no-ops
+  await page.fill('#fps', '12');
+
+  // Export WebM via a stubbed MediaRecorder -> 'animation.webm' download.
+  await page.evaluate(() => {
+    window.__dl = [];
+    window.__origAClick = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () {
+      window.__dl.push(this.download);
+    };
+    class FakeRecorder {
+      start() {
+        this.ondataavailable?.({ data: new Blob(['x'], { type: 'video/webm' }) });
+      }
+      stop() {
+        this.onstop?.();
+      }
+      static isTypeSupported() {
+        return true;
+      }
+    }
+    window.__origMR = window.MediaRecorder;
+    window.MediaRecorder = FakeRecorder;
+  });
+  await page.click('#export-btn');
+  await page.waitForFunction(() => (window.__dl ?? []).some((n) => /\.webm$/.test(n)), null, {
+    timeout: 15_000,
+  });
+
+  // Export fallback (MediaRecorder gone) -> sequential frameNNN.png downloads.
+  await page.evaluate(() => {
+    HTMLAnchorElement.prototype.click = window.__origAClick;
+    delete window.MediaRecorder;
+    window.__dl2 = [];
+    HTMLAnchorElement.prototype.click = function () {
+      window.__dl2.push(this.download);
+    };
+  });
+  await page.click('#export-btn');
+  await page.waitForFunction(
+    () => (window.__dl2 ?? []).filter((n) => /frame\d+\.png/.test(n)).length >= 3,
+    null,
+    { timeout: 5_000 }
+  );
+  await page.evaluate(() => {
+    HTMLAnchorElement.prototype.click = window.__origAClick;
+    if (window.__origMR) window.MediaRecorder = window.__origMR;
+  });
+
+  // A second animate render at a mobile viewport: load() frees the prior
+  // render's assets (player destroy revokes the old blob URLs, closes the old
+  // bitmaps), and the narrow viewport scrolls the player into view.
+  await page.setViewportSize({ width: 480, height: 900 });
+  await page.fill('#frames', '2');
+  await page.click('#render-btn');
+  await waitDone();
+  await page.setViewportSize({ width: 1280, height: 720 });
+
+  // Reduced motion: no autoplay on load (the else branch sets the label only).
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.fill('#frames', '2');
+  await page.click('#render-btn');
+  await waitDone();
+  assert.equal(await playLabel(), 'Play', 'reduced motion must not autoplay the player');
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+
+  // Blank frames/fps -> collectAnimOptions falls back to 24/12; a big slow
+  // render gives a wide window to cancel, and a mid-render mode click is a
+  // no-op (the busy guard in setMode).
+  await page.fill('#frames', '');
+  await page.fill('#fps', '');
+  await page.fill('#width', '400');
+  await page.fill('#height', '300');
+  await page.selectOption('#antialias', '0.1');
+  await page.click('#render-btn');
+  await page.waitForFunction(
+    () => document.getElementById('status').textContent.startsWith('rendering'),
+    null,
+    { timeout: 15_000 }
+  );
+  await page.click('#mode-still'); // busy -> setMode returns, mode stays animate
+  await page.click('#cancel-btn');
+  await page.waitForFunction(
+    () => document.getElementById('status').textContent === 'cancelled',
+    null,
+    { timeout: 60_000 }
+  );
+
+  // A broken scene in animate mode -> PovrayError error path (line jump + exit).
+  await page.fill('#editor', BROKEN_SCENE);
+  await page.fill('#frames', '2');
+  await page.fill('#width', '48');
+  await page.fill('#height', '36');
+  await page.selectOption('#antialias', 'off');
+  await page.click('#render-btn');
+  await page.waitForFunction(
+    () => document.getElementById('status').dataset.state === 'error',
+    null,
+    { timeout: 60_000 }
+  );
+  assert.match(
+    await page.evaluate(() => document.getElementById('error').textContent),
+    /line 3/,
+    'a broken animate scene should surface a line reference'
+  );
+  assert.match(
+    await page.evaluate(() => document.getElementById('log-summary').textContent),
+    /exit \d+/,
+    'a PovrayError animate failure should label the log summary with its exit code'
+  );
+
+  // A generic (non-PovrayError, non-abort) failure: the wasm frames render, but
+  // createImageBitmap throws, so render-client rejects with a plain Error. The
+  // log summary stays exit-less and no editor line is selected.
+  await page.fill('#editor', CLOCK_SCENE);
+  await page.fill('#frames', '2');
+  await page.evaluate(() => {
+    window.__origCIB = window.createImageBitmap;
+    window.createImageBitmap = () => Promise.reject(new Error('bitmap boom'));
+  });
+  await page.click('#render-btn');
+  await page.waitForFunction(
+    () => document.getElementById('status').dataset.state === 'error',
+    null,
+    { timeout: 60_000 }
+  );
+  assert.doesNotMatch(
+    await page.evaluate(() => document.getElementById('log-summary').textContent),
+    /exit \d+/,
+    'a generic animate failure must not carry an exit code'
+  );
+  await page.evaluate(() => {
+    window.createImageBitmap = window.__origCIB;
+  });
+
+  // Mode toggle + plate routing: switch to still (player pauses, image plate),
+  // run a still render, then bounce animate<->still so refreshPlate routes both
+  // a live player (animate, hasFrames) and a kept still image (still).
+  await page.click('#mode-still');
+  assert.equal(
+    await page.evaluate(() => document.body.dataset.mode),
+    'still',
+    'the mode toggle should switch to still'
+  );
+  await page.click('#mode-still'); // already still -> setMode returns
+  await page.fill('#editor', VALID_SCENE);
+  await page.fill('#width', '48');
+  await page.fill('#height', '36');
+  await page.selectOption('#antialias', 'off');
+  await page.click('#render-btn');
+  await waitDone();
+  assert.equal(
+    await page.evaluate(() => document.getElementById('output').hidden),
+    false,
+    'a still render after animate mode should show the image again'
+  );
+  await page.click('#mode-animate'); // refreshPlate animate branch (hasFrames true)
+  assert.equal(
+    await page.evaluate(() => document.getElementById('player-canvas').hidden),
+    false,
+    'switching back to animate should re-show the player'
+  );
+  await page.click('#mode-still'); // refreshPlate still branch (hasStillImage true)
+  assert.equal(
+    await page.evaluate(() => document.getElementById('output').hidden),
+    false,
+    'switching back to still should re-show the kept image'
+  );
+
+  // updateZoomLabel with a zero-width (but shown) image: clientWidth/naturalWidth
+  // rounds to 0, so the label falls back to '|| 100'.
+  await page.evaluate(() => {
+    const o = document.getElementById('output');
+    o.style.width = '0px';
+    window.dispatchEvent(new Event('resize'));
+    o.style.width = '';
+  });
+  assert.match(
+    await page.evaluate(() => document.querySelector('#output-pane .zoom-toggle').textContent),
+    /fit \(100%\)/,
+    'a zero-width image should fall back to a 100% fit label'
+  );
+
+  // Persistence: invalid mode/frames/fps fall back to still/24/12 across the
+  // validator's range and type arms.
+  await seedReload(JSON.stringify({ mode: 'weird', frames: '999', fps: '99' }));
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      mode: document.body.dataset.mode,
+      frames: document.getElementById('frames').value,
+      fps: document.getElementById('fps').value,
+    })),
+    { mode: 'still', frames: '24', fps: '12' },
+    'out-of-range persisted mode/frames/fps should fall back to defaults'
+  );
+  await seedReload(JSON.stringify({ frames: '0', fps: '0' })); // below the floor
+  await seedReload(JSON.stringify({ frames: 'x', fps: 'y' })); // non-numeric (NaN)
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      frames: document.getElementById('frames').value,
+      fps: document.getElementById('fps').value,
+    })),
+    { frames: '24', fps: '12' },
+    'non-numeric persisted frames/fps should fall back to defaults'
+  );
 } catch (err) {
   failure = err;
 } finally {
