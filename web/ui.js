@@ -358,41 +358,57 @@ function progressStop() {
 // The trailing line emulates the terminal \r-overwrite: hundreds of percent
 // segments collapse into a single visible line, zero information loss.
 
-let logCommitted = '';
-let logProgressLine = null;
+// Two text nodes: committed lines grow append-only (appendData preserves the
+// reader's scroll position and text selection), and the trailing progress
+// line is the only node whose data gets replaced. Autoscroll follows the
+// tail only while the reader is already pinned at the bottom; scrolling up
+// to read detaches it until they scroll back down.
+const logCommittedNode = document.createTextNode('');
+const logProgressNode = document.createTextNode('');
+log.append(logCommittedNode, logProgressNode);
+let logHasProgressLine = false;
 
-function refreshLog() {
-  log.textContent = logCommitted + (logProgressLine ?? '');
-  log.scrollTop = log.scrollHeight;
+function logPinned() {
+  return log.scrollTop + log.clientHeight >= log.scrollHeight - 8;
+}
+
+function refreshLogScroll(wasPinned) {
+  if (wasPinned) log.scrollTop = log.scrollHeight;
   if (logDetails.hidden) logDetails.hidden = false;
 }
 
 function appendLogLine(text) {
-  if (logProgressLine !== null) {
-    logCommitted += logProgressLine + '\n';
-    logProgressLine = null;
+  const pinned = logPinned();
+  if (logHasProgressLine) {
+    logCommittedNode.appendData(logProgressNode.data + '\n');
+    logProgressNode.data = '';
+    logHasProgressLine = false;
   }
-  logCommitted += text + '\n';
-  refreshLog();
+  logCommittedNode.appendData(text + '\n');
+  refreshLogScroll(pinned);
 }
 
 function setProgressLine(text) {
-  logProgressLine = text;
-  refreshLog();
+  const pinned = logPinned();
+  logProgressNode.data = text;
+  logHasProgressLine = true;
+  refreshLogScroll(pinned);
 }
 
 function commitProgressLine() {
-  if (logProgressLine !== null) {
-    logCommitted += logProgressLine + '\n';
-    logProgressLine = null;
-    refreshLog();
+  if (logHasProgressLine) {
+    const pinned = logPinned();
+    logCommittedNode.appendData(logProgressNode.data + '\n');
+    logProgressNode.data = '';
+    logHasProgressLine = false;
+    refreshLogScroll(pinned);
   }
 }
 
 function resetLog() {
-  logCommitted = '';
-  logProgressLine = null;
-  log.textContent = '';
+  logCommittedNode.data = '';
+  logProgressNode.data = '';
+  logHasProgressLine = false;
   logSummary.textContent = 'render log';
   // #log-details stays visible once shown (re-hiding would shift layout);
   // it unhides on the first line of the first render. Open/closed state is
