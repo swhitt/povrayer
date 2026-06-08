@@ -1,0 +1,20 @@
+#!/bin/sh
+# Pre-push gate: lint, the full render suite, and the 100% coverage check.
+# Slow but authoritative, the last line before code leaves the machine.
+#
+# `npm run coverage` runs the ENTIRE suite (node + browser) under c8, so it
+# doubles as the full `npm test` run; coverage:check then enforces 100%.
+set -e
+
+say() { printf '\npre-push: %s\n' "$1"; }
+
+say 'eslint'
+npm run lint
+
+say 'full suite + merged coverage (node + browser)'
+npm run coverage
+
+say 'coverage gate (100% first-party)'
+npm run coverage:check
+
+say 'ok'

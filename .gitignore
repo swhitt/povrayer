@@ -3,6 +3,17 @@ node_modules/
 *.log
 .DS_Store
 
+# Merged coverage reports (node + browser). Root-anchored so it never swallows
+# tools/coverage/ (the committed harness scripts). The .nyc_output/ + *.lcov
+# patterns catch c8/istanbul defaults if a tool ever writes outside coverage/.
+/coverage/
+.nyc_output/
+*.lcov
+
+# CLI testability shim: gitignored symlink to dist/index.js created by
+# tools/link-wrapper.mjs so src/cli.mjs can resolve its `./index.js` import.
+src/index.js
+
 # playwright-cli scratch output (snapshots, console logs)
 .playwright-cli/
 

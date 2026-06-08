@@ -2,7 +2,7 @@
 # satisfy `dist:` forever and `make test` would test old artifacts.
 # node_modules is a real sentinel target so `npm ci` only reruns when the
 # lockfile changes.
-.PHONY: dist image shell test web
+.PHONY: dist image shell test web hooks coverage lint
 
 dist:   ## export wasm bundle to ./dist
 	docker buildx build --target artifact --output type=local,dest=dist .
@@ -25,3 +25,12 @@ test: dist node_modules
 web: node_modules  ## serve the UI + REPL on :8080 (builds dist only if missing)
 	@test -f dist/povray.wasm || $(MAKE) dist
 	node test/browser/serve.mjs
+hooks:  ## wire git to the committed .githooks (pre-commit, pre-push)
+	git config core.hooksPath .githooks
+lint: node_modules  ## prettier --check + eslint
+	npm run format:check && npm run lint
+# Builds dist only if missing (coverage needs the wasm for the browser/node
+# render paths), then produces the merged node+browser report.
+coverage: node_modules  ## merged node + browser coverage report
+	@test -f dist/povray.wasm || $(MAKE) dist
+	npm run coverage

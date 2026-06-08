@@ -8,6 +8,23 @@ permissions:
   contents: read
 
 jobs:
+  # Fast, no-wasm gate: format, lint, and wrapper types. Runs in parallel with
+  # build-test (nothing here needs the docker-built dist).
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - name: Install deps (pinned via root lockfile)
+        run: npm ci
+      - name: Prettier format check
+        run: npm run format:check
+      - name: ESLint
+        run: npm run lint
+      - name: Typecheck wrapper (tsc --noEmit)
+        run: npm run typecheck
+
   build-test:
     runs-on: ubuntu-latest
     steps:
@@ -27,16 +44,24 @@ jobs:
         with: { node-version: 22 }
       - name: Install test deps (pinned via root lockfile)
         run: npm ci
-      - name: Node render test
-        # Test commands are single-sourced in package.json scripts (see the
-        # Makefile for why they use the quoted-glob form).
-        run: npm run test:node
-      - name: Browser render test
-        run: |
-          npx playwright install --with-deps chromium
-          npm run test:browser
+      - name: Install Chromium for browser tests
+        run: npx playwright install --with-deps chromium
+      # `npm run coverage` runs the ENTIRE suite (node + browser) under c8, so it
+      # is the authoritative test run AND produces the merged report. Test
+      # commands are single-sourced in package.json (see the Makefile for the
+      # quoted-glob form). A failing test exits this non-zero.
+      - name: Full suite + merged coverage (node + browser)
+        run: npm run coverage
+      - name: Coverage gate (100% first-party)
+        run: npm run coverage:check
       - uses: actions/upload-artifact@v7
         with: { name: povrayer-dist, path: dist/ }
+      - name: Upload merged coverage (lcov)
+        uses: actions/upload-artifact@v7
+        with:
+          name: povrayer-coverage-lcov
+          path: coverage/lcov.info
+          if-no-files-found: error
 
   publish:
     needs: build-test

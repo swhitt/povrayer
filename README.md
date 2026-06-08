@@ -60,7 +60,7 @@ const png = await render(source, {
   width: 800,
   height: 600,
   antialias: 0.3,
-  files: { 'shapes.inc': myInclude },        // extra inputs, staged next to the scene
+  files: { 'shapes.inc': myInclude }, // extra inputs, staged next to the scene
   onProgress: (line) => console.error(line), // POV-Ray's log, line by line
 });
 ```
@@ -132,6 +132,55 @@ Safari and iOS can refuse to instantiate a growable shared memory with a
 ```sh
 docker buildx build --build-arg WASM_MAX_MEMORY=2GB --target artifact --output type=local,dest=dist .
 ```
+
+## Development
+
+```sh
+npm ci            # installs dev deps and wires git hooks (prepare -> core.hooksPath)
+make dist         # build the wasm bundle once (cached); tests render against dist/
+npm test          # node:test render suite + the 3 Playwright browser suites
+```
+
+`npm ci` runs `prepare`, which points `core.hooksPath` at `.githooks/`. If you
+ever need to re-wire them by hand, `make hooks`.
+
+### Lint and format
+
+ESLint (flat config, `eslint.config.js`) and Prettier (`.prettierrc.json`) own
+style. Browser globals apply under `web/`, Node globals everywhere else; the
+wrapper's TypeScript is type-checked by `tsc`, not linted.
+
+```sh
+npm run lint          # eslint .
+npm run format:check  # prettier --check .
+npm run format        # prettier --write .
+npm run typecheck     # tsc --noEmit on wrapper/tsconfig.json
+```
+
+### Coverage
+
+One merged report spans both runtimes. Node code (the wrapper `dist/index.js`,
+`src/cli.mjs`, `test/browser/serve.mjs`, `web/examples.js`) is measured with
+c8; the browser modules (`web/render-client.js`, `web/ui.js`, `web/repl.js`,
+`web/examples.js`) are measured with Playwright V8 coverage during the browser
+suites and converted to istanbul. The two are merged into `coverage/`.
+
+```sh
+npm run coverage        # run the whole suite, write coverage/ (final json, lcov, html)
+npm run coverage:check  # gate: fail if any first-party file is below 100%
+```
+
+The gate also audits `c8 ignore` / `istanbul ignore` pragmas: each must carry a
+`-- <reason>`. The excluded files and the rationale live in `.c8rc.json`.
+
+### Git hooks
+
+Committed in `.githooks/`, wired via `core.hooksPath`:
+
+- **pre-commit** (fast): `prettier --check`, `eslint`, `tsc --noEmit` on the
+  wrapper, and the fast `*.unit.test.mjs` node subset.
+- **pre-push** (slow, authoritative): `eslint`, the full suite under coverage,
+  and the 100% `coverage:check` gate.
 
 ## License
 

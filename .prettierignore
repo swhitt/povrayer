@@ -1,0 +1,16 @@
+# Generated build output (emscripten + tsc)
+dist/
+# Gitignored symlink to the built wrapper (tools/link-wrapper.mjs)
+src/index.js
+# Vendored third-party (MIT, pinned)
+web/coi-serviceworker.js
+# Generated coverage reports
+coverage/
+# Dependencies and scratch
+node_modules/
+.playwright-cli/
+# Lockfiles (npm owns their formatting)
+package-lock.json
+wrapper/package-lock.json
+# Scene fixtures / SDL are not JS-formattable
+test/fixtures/

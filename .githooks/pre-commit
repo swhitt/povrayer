@@ -1,0 +1,27 @@
+#!/bin/sh
+# Fast pre-commit gate: format, lint, wrapper types, and the fast unit subset.
+# POSIX sh, fail on the first problem with a clear message. The heavy stuff
+# (full render suite + 100% coverage) runs in pre-push, not here.
+set -e
+
+say() { printf '\npre-commit: %s\n' "$1"; }
+
+say 'prettier --check'
+npx prettier --check .
+
+say 'eslint'
+npx eslint .
+
+say 'tsc --noEmit (wrapper)'
+npx tsc --noEmit -p wrapper/tsconfig.json
+
+# Pure-logic node tests only (named *.unit.test.mjs). The wasm render tests are
+# slow and belong in pre-push; skip cleanly until the fast subset exists.
+say 'fast node unit tests'
+if ls test/node/*.unit.test.mjs >/dev/null 2>&1; then
+  node --test "test/node/*.unit.test.mjs"
+else
+  printf '  (no test/node/*.unit.test.mjs yet; skipping)\n'
+fi
+
+say 'ok'
