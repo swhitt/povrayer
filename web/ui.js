@@ -323,16 +323,21 @@ function setBusyStatus(text) {
 }
 
 // ---- progress bar ----
-// Indeterminate sweep from render start; switches permanently to determinate
-// once the first percent event arrives. Percents from interleaved render
-// threads regress (2%, 1%, 0%, ...), hence the monotonic clamp. With the
-// current dist artifact percent events only arrive at trace completion, so
-// the determinate path is forward-compat plumbing for the TTY follow-up.
+// Indeterminate sweep from render start. The bar only leaves the sweep once
+// percent events are actually streaming: a single early percent (radiosity
+// scenes flush one pretrace, 0% or 1%) would otherwise pin a frozen sliver for
+// the whole trace, which reads as hung, worse than the honest sweep. So the
+// first percent only primes; the second (and beyond) drives the determinate
+// width. Percents from interleaved render threads regress, hence the monotonic
+// clamp. With the current dist artifact percent arrives in one burst at trace
+// completion, so most renders sweep the whole way and never go determinate.
 
-let progressPct = -1;
+let progressPct = -1; // last confirmed percent; -1 until streaming is confirmed
+let progressPrimed = false; // a first percent event has arrived this render
 
 function progressStart() {
   progressPct = -1;
+  progressPrimed = false;
   progressBar.classList.add('indeterminate');
   progressBar.classList.remove('determinate');
   progressBar.style.removeProperty('--pct');
@@ -340,6 +345,10 @@ function progressStart() {
 }
 
 function progressPercent(p) {
+  if (!progressPrimed) {
+    progressPrimed = true;
+    return; // one lone percent never leaves the sweep; wait for a second
+  }
   if (!(p > progressPct)) return; // monotonic within a render
   progressPct = p;
   progressBar.classList.remove('indeterminate');
@@ -352,6 +361,7 @@ function progressStop() {
   progressBar.classList.remove('indeterminate', 'determinate');
   progressBar.style.removeProperty('--pct');
   progressPct = -1;
+  progressPrimed = false;
 }
 
 // ---- log: committed lines plus one overwritable trailing progress line ----
@@ -507,7 +517,7 @@ function doneLine(elapsedMs, opts, rawLog) {
     base +
     ` · trace ${Number(stats.traceSeconds).toFixed(2)}s` +
     ` · ${Number(stats.rays).toLocaleString('en-US')} rays` +
-    ` · ${stats.threads} threads`
+    ` · ${stats.threads} thread${stats.threads === 1 ? '' : 's'}`
   );
 }
 
@@ -561,7 +571,9 @@ async function startRender() {
         } else if (ev.kind === 'line') {
           if (!tracing && /^==== \[Rendering/.test(ev.text)) {
             tracing = true;
-            setBusyStatus('rendering…');
+            // No trailing ellipsis: the busy-state ::after owns the animated
+            // one, so "rendering…" here would render a double "rendering……".
+            setBusyStatus('rendering');
           } else if (!tracing && !sawLine) {
             sawLine = true;
             setBusyStatus('rendering… parsing');

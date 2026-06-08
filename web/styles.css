@@ -449,14 +449,12 @@ body.ui main > * {
   gap: 8px;
 }
 
-/* Aligns with the example row so both columns share one top edge. */
+/* The single-row, ellipsis-truncated treatment is two-column only (see the
+   min-width: 900px block, where it aligns with the example row's top edge). In
+   one column the done line is allowed to wrap so the rays/thread payoff stays
+   visible on phones instead of truncating to "…rays". */
 #status {
-  height: 28px;
-  line-height: 28px;
   margin-bottom: 8px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 #progress {
@@ -689,18 +687,27 @@ figure.result.pending > div {
   body.ui main {
     grid-template-columns: 1fr 1fr;
   }
+
+  /* Two-column only: the status stays a single aligned row whose top edge
+     matches the example row. (One column lets it wrap, see the #status rule.) */
+  #status {
+    height: 28px;
+    line-height: 28px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }
 
-/* Single-column widths: cap the editor so controls and the output pane stay
-   within a scroll-flick's reach. The #gutter cap is load-bearing: a flex row
-   is as tall as its tallest item, so the uncapped gutter (one line per source
-   line) would re-inflate #editor-wrap far past the editor's own max-height
-   and leave a dead panel below the textarea. */
-@media (max-width: 899.98px) {
-  #editor,
-  #gutter {
-    max-height: 60vh;
-  }
+/* Cap the editor at every width so controls and the output pane stay within a
+   scroll-flick's reach (and the Render button never falls below the fold on a
+   tall scene; two-column had no cap before). The #gutter cap is load-bearing:
+   a flex row is as tall as its tallest item, so the uncapped gutter (one line
+   per source line) would re-inflate #editor-wrap far past the editor's own
+   max-height and leave a dead panel below the textarea. */
+#editor,
+#gutter {
+  max-height: 60vh;
 }
 
 @media (max-width: 600px) {
@@ -867,8 +874,12 @@ figure.result.pending > div {
   row-gap: 2px;
   margin: 0;
 }
+/* --text, not --accent: the accent census (identity rule 1) is the render/run
+   action, REPL prompt, figure provenance edge, links, focus ring, progress bar,
+   and wordmark. Command names in the help card are emphasized via the brighter
+   --text against the --dim descriptions, not painted accent. */
 .help dt {
-  color: var(--accent);
+  color: var(--text);
   white-space: nowrap;
 }
 .help dd {

@@ -65,7 +65,8 @@ let draft = ''; // unsubmitted input stashed while recalling history
 const SCROLLBACK_CAP = 300;
 
 let lastLog = ''; // raw unfiltered log of the last render (success or failure), for :log
-let renderPct = -1; // last percent event of the in-flight render (-1 = none yet)
+let renderPct = -1; // last confirmed percent of the in-flight render (-1 = none yet)
+let renderPrimed = false; // a first percent event has arrived this render
 let statusStamp = 0; // last live-region text update, for the 1/s throttle
 let hintTimer = null; // transient busy-hint restore timer
 
@@ -240,7 +241,9 @@ function appendPending(w, h) {
   box.style.maxWidth = '100%';
   box.style.aspectRatio = `${w} / ${h}`;
   const cap = document.createElement('figcaption');
-  cap.textContent = 'rendering…';
+  // No trailing ellipsis: the .pending figcaption ::after owns the animated
+  // one, so "rendering…" here would render a double "rendering……".
+  cap.textContent = 'rendering';
   fig.append(box, cap);
   appendNode(fig);
   return fig;
@@ -313,7 +316,9 @@ function markRolledBack(node) {
 function updateStatus() {
   statusStamp = performance.now();
   const busy = abortCtl !== null;
-  const head = busy ? (renderPct >= 0 ? `rendering… ${renderPct}%` : 'rendering…') : 'idle';
+  // Bare head carries no trailing ellipsis: the busy-state ::after owns the
+  // animated one, so "rendering…" would render a double "rendering……".
+  const head = busy ? (renderPct >= 0 ? `rendering ${renderPct}%` : 'rendering') : 'idle';
   const parts = [head, `${settings.width}×${settings.height}`];
   if (settings.quality !== undefined) parts.push(`q ${settings.quality}`);
   if (settings.antialias !== false) parts.push(`aa ${aaLabel()}`);
@@ -337,10 +342,15 @@ function flashHint(text) {
 // --- progress bar ------------------------------------------------------------
 
 // #repl-progress contract with styles.css: visible = indeterminate sweep;
-// .determinate switches to width: calc(var(--pct) * 1%). Percent is clamped
-// monotonic because render threads interleave their status lines.
+// .determinate switches to width: calc(var(--pct) * 1%). The bar only leaves
+// the sweep once percents are actually streaming: a single early percent
+// (radiosity scenes flush one pretrace, 0% or 1%) would otherwise freeze a thin
+// sliver for the whole trace, reading as hung. So the first percent only
+// primes; the second (and beyond) drives the determinate width. Percents are
+// clamped monotonic because render threads interleave their status lines.
 function startProgress() {
   renderPct = -1;
+  renderPrimed = false;
   progressEl.classList.remove('determinate');
   progressEl.style.removeProperty('--pct');
   progressEl.hidden = false;
@@ -350,10 +360,16 @@ function stopProgress() {
   progressEl.hidden = true;
   progressEl.classList.remove('determinate');
   progressEl.style.removeProperty('--pct');
+  renderPct = -1;
+  renderPrimed = false;
 }
 
 function handleRenderEvent(ev) {
   if (ev.kind !== 'progress' || typeof ev.percent !== 'number') return;
+  if (!renderPrimed) {
+    renderPrimed = true;
+    return; // one lone percent never leaves the sweep; wait for a second
+  }
   if (ev.percent <= renderPct) return; // monotonic clamp
   renderPct = ev.percent;
   progressEl.classList.add('determinate');
