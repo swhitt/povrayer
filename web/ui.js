@@ -1333,6 +1333,13 @@ exportBtn.addEventListener('click', () => player.exportVideo());
 player.setFps(Number(fpsInput.value));
 applyMode();
 
+// Kick an initial draft so the restored scene renders on load, before any
+// keystroke. Without this a cold page load sits on the empty-state hint until
+// you type, which reads as "live is broken" (it isn't). scheduleDraft()
+// self-guards to still-mode + liveDraft, so animate mode or a saved live-off
+// preference correctly render nothing here. Mirrors the example-select path.
+scheduleDraft();
+
 renderBtn.addEventListener('click', startRender);
 cancelBtn.addEventListener('click', () => abortCtl?.abort());
 

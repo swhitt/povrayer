@@ -78,6 +78,30 @@ try {
     '#status should carry role="status"'
   );
 
+  // Cold-load contract: live draft is on by default, and the restored scene
+  // auto-renders on load BEFORE any keystroke. Regression guard for the bug
+  // where the render plate sat empty until the first edit (read as "live is
+  // broken"). Wait for the on-load draft's decoded image, then confirm it was a
+  // draft (no download button) rather than a full render.
+  assert.equal(
+    await page.evaluate(() => document.getElementById('live-toggle').getAttribute('aria-pressed')),
+    'true',
+    'live draft should default to on'
+  );
+  await page.waitForFunction(
+    () => {
+      const img = document.getElementById('output');
+      return img && img.src.startsWith('blob:') && img.naturalWidth > 0;
+    },
+    null,
+    { timeout: 120_000 }
+  );
+  assert.equal(
+    await page.evaluate(() => document.getElementById('download-btn').hidden),
+    true,
+    'the on-load image should be a live draft (no download), not a full render'
+  );
+
   // Happy path: small fast render, wait for the decoded blob image.
   await page.fill('#width', '160');
   await page.fill('#height', '120');
