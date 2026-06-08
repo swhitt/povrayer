@@ -33,7 +33,7 @@ try {
   page.on('console', (msg) => consoleLines.push(`[${msg.type()}] ${msg.text()}`));
   page.on('pageerror', (err) => consoleLines.push(`[pageerror] ${err.message}`));
 
-  await page.goto(server.url, { waitUntil: 'load' });
+  await page.goto(new URL('harness.html', server.url).href, { waitUntil: 'load' });
 
   // FIRST: cross-origin isolation, so a header regression fails distinctly
   // from a render regression.

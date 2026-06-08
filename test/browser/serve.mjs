@@ -1,6 +1,7 @@
-// COOP/COEP static server for the browser test. Serves the exported wasm
-// bundle from ./dist plus this directory's harness files. Every response
-// carries the cross-origin-isolation headers SharedArrayBuffer requires.
+// COOP/COEP static server for the browser tests and local dev. Serves the
+// exported wasm bundle from ./dist, the UI/REPL pages from ./web, and this
+// directory's harness files. Every response carries the cross-origin-
+// isolation headers SharedArrayBuffer requires.
 //
 //   import { startServer } from './serve.mjs'   -> ephemeral port (CI)
 //   node test/browser/serve.mjs                 -> port 8080 (interactive debugging)
@@ -10,8 +11,9 @@ import { extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
-// dist/ first so /index.js and /povray.{mjs,wasm} win over harness files.
-const ROOTS = [resolve(here, '../../dist'), resolve(here)];
+// dist/ first so /index.js and /povray.{mjs,wasm} win; web/ next so / serves the real UI
+// page exactly as deployed on Pages; test/browser/ last for the test harness.
+const ROOTS = [resolve(here, '../../dist'), resolve(here, '../../web'), resolve(here)];
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',

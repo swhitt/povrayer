@@ -3,6 +3,9 @@ node_modules/
 *.log
 .DS_Store
 
+# playwright-cli scratch output (snapshots, console logs)
+.playwright-cli/
+
 # Test output (rendered PNGs from CLI/docker runs against the fixtures)
 test/fixtures/*.png
 test-output/

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>povrayer REPL</title>
+  <link rel="icon" href="data:,"><!-- no favicon; suppress the 404 -->
+  <script src="./coi-serviceworker.js"></script>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body class="repl">
+  <header><h1>povrayer REPL</h1><nav><a href="./index.html">editor</a></nav></header>
+  <div id="iso-warning" hidden>Not cross-origin isolated: SharedArrayBuffer is unavailable and rendering can't start. If this is the first visit, the service worker is installing and the page will reload itself.</div>
+  <main id="scrollback"></main>
+  <form id="input-form"><span class="prompt">pov&gt;</span><textarea id="input" rows="2" autofocus></textarea></form>
+  <footer id="repl-status">idle · 320x240 · aa off</footer>
+  <script type="module" src="./repl.js"></script>
+</body>
+</html>

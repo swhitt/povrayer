@@ -103,6 +103,24 @@ Two hard requirements:
    Mark it external in your bundler and copy both files through untouched.
    (`index.js` itself is safe to bundle.)
 
+## Try it in the browser
+
+Live, no install: <https://swhitt.github.io/povrayer/> (scene editor) and
+<https://swhitt.github.io/povrayer/repl.html> (an SDL REPL: each entry
+appends to the scene and auto-renders; a failed entry rolls back).
+
+REPL commands: `:help`, `:reset`, `:list`, `:undo`, `:del N`, `:size WxH`,
+`:q N`, `:aa [threshold|off]`, `:threads N`, `:render`, `:example [name]`.
+
+GitHub Pages can't send COOP/COEP headers, so the pages use a vendored
+[coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker) to get
+cross-origin isolation; the first visit reloads once while the worker
+installs.
+
+Locally: `make web` builds `dist/` if needed and serves the same pages at
+<http://localhost:8080/> with real COOP/COEP headers (no service worker
+involved).
+
 ## Memory
 
 The build declares a 4GB shared-memory maximum (it starts at 256MB and

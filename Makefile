@@ -2,7 +2,7 @@
 # satisfy `dist:` forever and `make test` would test old artifacts.
 # node_modules is a real sentinel target so `npm ci` only reruns when the
 # lockfile changes.
-.PHONY: dist image shell test
+.PHONY: dist image shell test web
 
 dist:   ## export wasm bundle to ./dist
 	docker buildx build --target artifact --output type=local,dest=dist .
@@ -19,3 +19,9 @@ node_modules: package.json package-lock.json
 # glob is expanded by node itself and works on both.
 test: dist node_modules
 	npm test
+# Deliberately not depending on the phony `dist` target here: that would
+# rebuild the wasm on every run. The test -f guard is the "build only if
+# missing" semantics that local dev wants.
+web: node_modules  ## serve the UI + REPL on :8080 (builds dist only if missing)
+	@test -f dist/povray.wasm || $(MAKE) dist
+	node test/browser/serve.mjs
