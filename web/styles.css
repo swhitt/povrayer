@@ -246,6 +246,15 @@ summary:focus-visible,
   outline-offset: 2px;
 }
 
+/* The two primary CTAs are accent-filled, so an accent ring is invisible on
+   them (accent-on-accent). Use a dark inset ring (accent-ink on accent) so the
+   focus indicator stays high-contrast on the most important controls. */
+#render-btn:focus-visible,
+#run-btn:focus-visible {
+  outline-color: var(--accent-ink);
+  outline-offset: -4px;
+}
+
 label {
   color: var(--dim);
 }
@@ -724,8 +733,8 @@ figure.result.pending > div {
   input,
   select,
   textarea {
-    font-size: 16px; /* kills iOS focus-zoom */
-    min-height: 40px;
+    font-size: 16px; /* kills iOS focus-zoom; the floor below is independent */
+    min-height: 44px; /* meets the 44px coarse-pointer tap target */
   }
 
   /* Must track #editor (a textarea) or the line numbers misalign. */

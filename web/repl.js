@@ -45,7 +45,10 @@ const DEFAULT_SETTINGS = Object.freeze({
 
 const STORAGE_KEY = 'povrayer.repl.v1';
 
-const TRY_LINE = 'sphere { <0,1,0>, 1 pigment { color Red } }';
+// rgb literal, not a named color: the assembled scene scaffold never injects
+// `#include "colors.inc"`, so `color Red` would fail with an undeclared
+// identifier. The suggested first-contact snippet has to render as-is.
+const TRY_LINE = 'sphere { <0,1,0>, 1 pigment { color rgb <1,0,0> } }';
 const GREETING =
   `type POV-Ray scene code, get an image · try: ${TRY_LINE} · :example for scenes, :help for commands`;
 
@@ -490,6 +493,10 @@ function buildHelpBlock() {
   const addHead = (text) => {
     const h = document.createElement('div');
     h.className = 'help-head';
+    // Expose as a heading so screen-reader users can jump between the
+    // commands/keys/notes sections by heading navigation.
+    h.setAttribute('role', 'heading');
+    h.setAttribute('aria-level', '3');
     h.textContent = text;
     block.appendChild(h);
   };
@@ -765,7 +772,12 @@ function dispatchCommand(text) {
       if (typeof stats?.threads === 'number') parts.push(`${stats.threads} threads`);
       const warnCount = typeof stats?.warnings === 'number' ? stats.warnings : 0;
       parts.push(`${warnCount} warning${warnCount === 1 ? '' : 's'}`);
-      const warnLines = lastLog.split('\n').filter((l) => /Warning:/.test(l));
+      // Match the error box's path rewrite: the user never wrote
+      // '/work/scene.pov', so warning references read `File scene line N`.
+      const warnLines = lastLog
+        .split('\n')
+        .filter((l) => /Warning:/.test(l))
+        .map((l) => l.replaceAll("'/work/scene.pov'", 'scene'));
       appendBlock('info', [parts.join(' · '), ...warnLines].join('\n'));
       break;
     }

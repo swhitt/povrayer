@@ -438,6 +438,9 @@ function updateZoomLabel() {
     return;
   }
   zoomBtn.hidden = false;
+  // aria-pressed exposes the toggle state (1:1 engaged) beyond the visible
+  // label, which only some AT surfaces read aloud.
+  zoomBtn.setAttribute('aria-pressed', String(zoom1x));
   if (zoom1x) {
     zoomBtn.textContent = '1:1';
   } else {
