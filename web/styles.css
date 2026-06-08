@@ -591,8 +591,32 @@ body.ui main > * {
    min-width: 900px block, where it aligns with the example row's top edge). In
    one column the done line is allowed to wrap so the rays/thread payoff stays
    visible on phones instead of truncating to "…rays". */
-#status {
+/* Status text and the render spinner share one row: text left (truncates in
+   two-column, see the 900px block), spinner pinned right. */
+#status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 8px;
+}
+
+#status {
+  flex: 1 1 auto;
+  min-width: 0; /* let the text truncate instead of shoving the spinner off */
+}
+
+/* Render spinner: a square ring whose one accent edge orbits while a render or
+   live draft is in flight. Square (corners stay sharp) so it's the one moving
+   mark that still reads optical-bench; the rotation itself is gated in the
+   motion block, so under reduced-motion it sits as a static accent tick. JS
+   toggles the `hidden` attribute off exactly when work is in flight. */
+.spinner {
+  flex: none;
+  box-sizing: border-box;
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
 }
 
 #progress {
@@ -1069,6 +1093,10 @@ figure.result.pending > div {
     animation: sweep 0.9s linear infinite;
   }
 
+  .spinner {
+    animation: spin 0.8s linear infinite;
+  }
+
   #progress.determinate::before,
   #progress[data-mode='determinate']::before,
   #repl-progress.determinate::before,
@@ -1108,6 +1136,12 @@ figure.result.pending > div {
 @keyframes pulse {
   50% {
     opacity: 0.2;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 

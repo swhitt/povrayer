@@ -50,6 +50,7 @@ const threadsInput = document.getElementById('threads');
 const renderBtn = document.getElementById('render-btn');
 const cancelBtn = document.getElementById('cancel-btn');
 const status = document.getElementById('status');
+const statusSpinner = document.getElementById('status-spinner');
 const errorBox = document.getElementById('error');
 const output = document.getElementById('output');
 const downloadBtn = document.getElementById('download-btn');
@@ -389,10 +390,12 @@ function setStatus(text, state) {
   status.textContent = text;
   status.dataset.state = state;
   statusLastAt = performance.now();
+  syncSpinner();
 }
 
 function setBusyStatus(text) {
   status.dataset.state = 'busy';
+  syncSpinner();
   const now = performance.now();
   if (now - statusLastAt >= 1000) {
     status.textContent = text;
@@ -413,6 +416,15 @@ function setBusyStatus(text) {
       1000 - (now - statusLastAt)
     );
   }
+}
+
+// The spinner mirrors "a render is actually in flight". An explicit render holds
+// data-state 'busy' for its whole duration; a live draft holds 'draft', but that
+// state also describes a *settled* draft (the resting "live draft · WxH" line),
+// so the draft case keys on the in-flight controller, not the state. Once both
+// clear, the spinner hides.
+function syncSpinner() {
+  statusSpinner.hidden = !(status.dataset.state === 'busy' || draftCtl !== null);
 }
 
 // ---- progress bar ----
@@ -761,6 +773,7 @@ async function runDraft(src) {
     // On abort (superseded by newer text) do nothing: keep the image.
   } finally {
     draftCtl = null;
+    syncSpinner();
     if (pendingFull) {
       // An explicit render is waiting on this abort; renderScene cleared `busy`
       // synchronously in its finally before ours, so the restart is race-free.

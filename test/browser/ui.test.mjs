@@ -685,8 +685,22 @@ try {
   await page.evaluate(() => document.getElementById('threads').focus());
   await page.keyboard.press('Control+Enter'); // startRender via the document shortcut
   await page.keyboard.press('Meta+Enter'); // busy re-entry guard returns immediately
+  // The render spinner shows for the whole busy phase (sibling of #status, which
+  // owns textContent, so it can't be a child).
+  await page.waitForFunction(
+    () =>
+      document.getElementById('status').dataset.state === 'busy' &&
+      !document.getElementById('status-spinner').hidden,
+    null,
+    { timeout: 120_000 }
+  );
   await waitState('done');
   await page.waitForTimeout(300); // let the decode().then(scrollIntoView) chain settle
+  assert.equal(
+    await page.evaluate(() => document.getElementById('status-spinner').hidden),
+    true,
+    'spinner should hide once the render settles to done'
+  );
   assert.match(
     await page.evaluate(() => document.getElementById('download-btn').getAttribute('download')),
     /^render-64x48-q8-a03\.png$/,
@@ -1684,6 +1698,14 @@ try {
     },
     cornellA,
     { timeout: 60_000 }
+  );
+  // While a live draft is genuinely in flight the spinner shows, even though the
+  // state is 'draft' (not 'busy'): syncSpinner keys the draft case on the
+  // in-flight controller, since 'draft' also describes a settled preview.
+  assert.equal(
+    await page.evaluate(() => document.getElementById('status-spinner').hidden),
+    false,
+    'spinner should show while a live draft is in flight'
   );
   // Same text: fireDraft sees src === draftingSource and bails (702). The
   // scheduled fire clears the pending timer with the SAME draft still in flight

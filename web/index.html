@@ -130,7 +130,10 @@
         </div>
       </section>
       <section id="output-pane">
-        <div id="status" role="status" data-state="idle">no render yet</div>
+        <div id="status-row">
+          <div id="status" role="status" data-state="idle">no render yet</div>
+          <span id="status-spinner" class="spinner" aria-hidden="true" hidden></span>
+        </div>
         <div id="progress" hidden></div>
         <pre id="error" class="error" role="alert" hidden></pre>
         <div id="output-plate">
