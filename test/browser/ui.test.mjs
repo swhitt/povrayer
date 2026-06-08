@@ -188,6 +188,17 @@ try {
       genericMsg: mod.formatError(new Error('boom')),
       // formatError of a message-less value (the `?? err` fallback side).
       genericNoMsg: mod.formatError('plain string failure'),
+      // formatError(PovrayError) with a `File '...' line N: Parse Error: ...`
+      // line: the synthesized headline speaks that line once, so the excerpt
+      // must DROP the original File line (head !== null && from+k === i) rather
+      // than restate it as a second "File scene line N:" right below.
+      dedupHead: mod.formatError(
+        new mod.PovrayError(
+          'parse',
+          1,
+          "some parsing notes\nFile '/work/scene.pov' line 4: Parse Error: Expected ; but found }\nRender failed"
+        )
+      ),
     };
   });
   assert.deepEqual(
@@ -216,6 +227,22 @@ try {
     helpers.genericNoMsg,
     'plain string failure',
     'formatError must stringify a message-less failure value'
+  );
+  // The headline is spoken exactly once; the original File line is de-duplicated
+  // out of the excerpt (not restated below the headline).
+  assert.match(
+    helpers.dedupHead,
+    /^line 4 · Parse Error: Expected ; but found }/,
+    'formatError must lead with the synthesized headline'
+  );
+  assert.ok(
+    !/File .*line 4:/.test(helpers.dedupHead),
+    'formatError must drop the original File line once a headline restates it'
+  );
+  assert.equal(
+    (helpers.dedupHead.match(/Parse Error/g) ?? []).length,
+    1,
+    'the parse error message must not appear twice (headline + restated File line)'
   );
 
   // A real (tiny) render with onProgress and no onEvent covers the onProgress
@@ -560,6 +587,31 @@ try {
   await page.keyboard.press('Shift+Tab');
   assert.equal(await editorValue(), 'ccc\nddd', 'Shift+Tab on an unindented line is a no-op');
 
+  // The Esc-then-Tab escape hatch is discoverable in the a11y tree: the editor
+  // is described by a visually-hidden (sr-only, but present) help span that
+  // names it, so a screen-reader user isn't silently trapped by Tab-indents.
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const ed = document.getElementById('editor');
+      const help = document.getElementById('editor-tabhelp');
+      const cs = getComputedStyle(help);
+      return {
+        describedBy: ed.getAttribute('aria-describedby'),
+        helpText: help.textContent.trim(),
+        // sr-only: off-screen but NOT display:none (still in the a11y tree).
+        clipped: cs.position === 'absolute' && cs.width === '1px',
+        visible: cs.display !== 'none',
+      };
+    }),
+    {
+      describedBy: 'editor-tabhelp status',
+      helpText: 'Tab indents the line. Press Escape then Tab to move focus out of the editor.',
+      clipped: true,
+      visible: true,
+    },
+    'the editor must reference an sr-only Esc-then-Tab help span via aria-describedby'
+  );
+
   // Escape primes the focus escape; the next Tab moves focus instead of indenting.
   await setEditor('keep\nme', 2, 2);
   await page.keyboard.press('Escape');
@@ -636,6 +688,16 @@ try {
     await page.evaluate(() => document.getElementById('log-summary').textContent),
     /exit \d+/,
     'a PovrayError should label the log summary with its exit code'
+  );
+  // An explicit Render failure is the loud, assertive case: the error box must
+  // be a role=alert (not the quiet draft 'status'), with no draft styling.
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const e = document.getElementById('error');
+      return { role: e.getAttribute('role'), draft: e.classList.contains('draft') };
+    }),
+    { role: 'alert', draft: false },
+    'an explicit render error must read as a role=alert, non-draft box'
   );
 
   // --- status throttle: immediate path (stepped clock forces now - last >= 1s)
@@ -866,6 +928,20 @@ try {
     '2',
     'scrubber max should be frames-1'
   );
+  // The scrubber carries the shared .scrubber class (square grey thumb / 2px
+  // track) instead of the OS-blue default range, and an appearance-stripped
+  // computed style.
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const s = document.getElementById('scrubber');
+      return {
+        hasClass: s.classList.contains('scrubber'),
+        appearance: getComputedStyle(s).appearance,
+      };
+    }),
+    { hasClass: true, appearance: 'none' },
+    'the scrubber must use the de-accented .scrubber styling'
+  );
   assert.match(
     await page.evaluate(() => document.getElementById('status').textContent),
     /· 3 frames$/,
@@ -893,9 +969,66 @@ try {
     s.value = '1';
     s.dispatchEvent(new Event('input'));
   });
+  // The scrubber announces a 1-based "frame i+1 of N" (matching the readout),
+  // not the raw 0-indexed slider value, on every draw.
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const s = document.getElementById('scrubber');
+      return { aria: s.getAttribute('aria-valuetext'), readout: frameReadoutText() };
+      function frameReadoutText() {
+        return document.getElementById('frame-readout').textContent;
+      }
+    }),
+    { aria: 'frame 2 of 3', readout: '2 / 3' },
+    'the scrubber aria-valuetext must read "frame 2 of 3" on a seek to index 1'
+  );
   await page.fill('#fps', '20'); // valid -> player.setFps(20)
   await page.fill('#fps', '99'); // out of range -> handler no-ops
   await page.fill('#fps', '12');
+
+  // Deterministic tick stall-resync (ui.js): steady-state autoplay only ever
+  // takes the accumulate arm (last += interval). To exercise the resync arm
+  // (`if (now - lastAdvance >= interval) lastAdvance = now`) we stub rAF so we
+  // own the `now` passed to tick, then drive a single tick a huge gap past two
+  // fps intervals (a backgrounded-tab style stall) so the resync fires once and
+  // advances exactly one frame instead of replaying the whole backlog.
+  const resync = await page.evaluate(async () => {
+    const play = document.getElementById('play-btn');
+    const scrub = document.getElementById('scrubber');
+    const readout = document.getElementById('frame-readout');
+    const origRAF = window.requestAnimationFrame;
+    const origCAF = window.cancelAnimationFrame;
+    let captured = null;
+    try {
+      // Park paused on frame 0 first (seek pauses + draws 0).
+      scrub.value = '0';
+      scrub.dispatchEvent(new Event('input'));
+      const before = readout.textContent;
+      window.requestAnimationFrame = (cb) => {
+        captured = cb;
+        return 1;
+      };
+      window.cancelAnimationFrame = () => {};
+      if (play.textContent === 'Play') play.click(); // play() schedules tick via the stub
+      const scheduled = typeof captured === 'function';
+      captured?.(performance.now() + 100_000); // one tick, far past 2 intervals
+      const after = readout.textContent;
+      const aria = scrub.getAttribute('aria-valuetext');
+      if (play.textContent === 'Pause') play.click(); // pause via toggle
+      return { before, after, aria, scheduled };
+    } finally {
+      window.requestAnimationFrame = origRAF;
+      window.cancelAnimationFrame = origCAF;
+    }
+  });
+  assert.equal(resync.scheduled, true, 'play() must schedule a tick through the stubbed rAF');
+  assert.equal(resync.before, '1 / 3', 'the player must start parked on frame 0 (reads "1 / 3")');
+  assert.equal(
+    resync.after,
+    '2 / 3',
+    'a stalled tick must resync and advance exactly one frame (not burst the backlog)'
+  );
+  assert.equal(resync.aria, 'frame 2 of 3', 'the resync-advanced frame announces "frame 2 of 3"');
 
   // Export WebM via a stubbed MediaRecorder -> 'animation.webm' download.
   await page.evaluate(() => {
@@ -918,10 +1051,39 @@ try {
     window.__origMR = window.MediaRecorder;
     window.MediaRecorder = FakeRecorder;
   });
-  await page.click('#export-btn');
+  // Re-entrancy + feedback: the first click disables the button and relabels it
+  // 'exporting…' (synchronously, before the playOnce await); a SECOND click
+  // while that export is still running hits the `exporting` guard and no-ops, so
+  // only one file is produced (no second MediaRecorder on the same stream).
+  const exportFeedback = await page.evaluate(() => {
+    const btn = document.getElementById('export-btn');
+    const prevLabel = btn.textContent;
+    btn.click(); // export #1 begins
+    const midLabel = btn.textContent;
+    const midDisabled = btn.disabled;
+    btn.click(); // export #2: re-entrant -> guard returns immediately
+    return { prevLabel, midLabel, midDisabled };
+  });
+  assert.equal(exportFeedback.midLabel, 'exporting…', 'the export button relabels while exporting');
+  assert.equal(exportFeedback.midDisabled, true, 'the export button disables while exporting');
   await page.waitForFunction(() => (window.__dl ?? []).some((n) => /\.webm$/.test(n)), null, {
     timeout: 15_000,
   });
+  // The export finished: button re-enabled + relabel restored, and exactly one
+  // webm came out despite the re-entrant second click.
+  await page.waitForFunction(
+    (label) => {
+      const btn = document.getElementById('export-btn');
+      return !btn.disabled && btn.textContent === label;
+    },
+    exportFeedback.prevLabel,
+    { timeout: 15_000 }
+  );
+  assert.equal(
+    await page.evaluate(() => (window.__dl ?? []).filter((n) => /\.webm$/.test(n)).length),
+    1,
+    'a re-entrant export click must not produce a second file'
+  );
 
   // Export fallback (MediaRecorder gone) -> sequential frameNNN.png downloads.
   await page.evaluate(() => {
@@ -1004,6 +1166,15 @@ try {
     /exit \d+/,
     'a PovrayError animate failure should label the log summary with its exit code'
   );
+  // The animate error path is loud too: role=alert, draft styling cleared.
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const e = document.getElementById('error');
+      return { role: e.getAttribute('role'), draft: e.classList.contains('draft') };
+    }),
+    { role: 'alert', draft: false },
+    'an animate render error must read as a role=alert, non-draft box'
+  );
 
   // A generic (non-PovrayError, non-abort) failure: the wasm frames render, but
   // createImageBitmap throws, so render-client rejects with a plain Error. The
@@ -1056,11 +1227,32 @@ try {
     false,
     'switching back to animate should re-show the player'
   );
+  // syncStatusToPlate re-derives a neutral footer that agrees with the new
+  // plate: animate (frames present) reads 'animation ready', not the prior
+  // still 'done …' line.
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const s = document.getElementById('status');
+      return { text: s.textContent, state: s.dataset.state };
+    }),
+    { text: 'animation ready', state: 'idle' },
+    'switching into animate with frames must read "animation ready"'
+  );
   await page.click('#mode-still'); // refreshPlate still branch (hasStillImage true)
   assert.equal(
     await page.evaluate(() => document.getElementById('output').hidden),
     false,
     'switching back to still should re-show the kept image'
+  );
+  // ...and switching back to still (image present) reads 'render ready', never a
+  // lingering 'animation ready' / 'live draft' line.
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const s = document.getElementById('status');
+      return { text: s.textContent, state: s.dataset.state };
+    }),
+    { text: 'render ready', state: 'idle' },
+    'switching back into still with a kept image must read "render ready"'
   );
 
   // updateZoomLabel with a zero-width (but shown) image: clientWidth/naturalWidth
@@ -1156,17 +1348,24 @@ try {
   // linger into the next section, leaving a stray render in flight under an
   // assertion that expects idle. Flooring it keeps every fireDraft prompt.
   const floorDebounce = async () => {
+    // Wait for a genuinely NEW draft image (the blob src changes), not just any
+    // 320×240 'draft' state: a prior cornell draft already leaves status='draft'
+    // at 320×240, so matching on those alone resolves instantly on the stale
+    // frame and never actually re-floors lastDraftMs (which left the debounce
+    // inflated, so a later busy-guard draft fired late and lingered in flight
+    // under the isolation guard's idle assertion).
+    const before = await page.evaluate(() => document.getElementById('output').src);
     await typeScene(LIVE_SCENE);
     await page.waitForFunction(
-      () => {
+      (prev) => {
         const o = document.getElementById('output');
         return (
           document.getElementById('status').dataset.state === 'draft' &&
-          o.naturalWidth === 320 &&
-          o.naturalHeight === 240
+          o.src.startsWith('blob:') &&
+          o.src !== prev
         );
       },
-      null,
+      before,
       { timeout: 60_000 }
     );
     await waitIdle();
@@ -1314,12 +1513,56 @@ try {
     /live draft · error/,
     'a draft error sets a muted draft-error status'
   );
+  // A draft error is a POLITE live region (role swapped to status), so a screen
+  // reader isn't interrupted on every keystroke; the box also carries .draft.
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const e = document.getElementById('error');
+      return { role: e.getAttribute('role'), draft: e.classList.contains('draft') };
+    }),
+    { role: 'status', draft: true },
+    'a draft error must read as a quiet role=status, draft-styled box'
+  );
   assert.ok(
     await page.evaluate(() => {
       const ed = document.getElementById('editor');
       return ed.selectionStart === ed.selectionEnd;
     }),
     'a draft error must not select/jump the editor caret'
+  );
+
+  // P1 loop fix: the parse failure recorded lastDraftSource, so the backstop's
+  // re-read of the SAME (unchanged) broken text must short-circuit instead of
+  // re-rendering the erroring scene forever. Re-fire the input with no edit and
+  // confirm the scheduled backstop draft bails (pending clears) without ever
+  // going in flight or touching the engine.
+  await page.evaluate(() => document.getElementById('editor').dispatchEvent(new Event('input')));
+  await page.waitForFunction(() => window.__liveDraftProbe().pending, null, { timeout: 5_000 });
+  await page.waitForFunction(() => !window.__liveDraftProbe().pending, null, { timeout: 5_000 });
+  assert.equal(
+    await page.evaluate(() => window.__liveDraftProbe().inFlight),
+    false,
+    'the backstop must not start a draft for the unchanged erroring source (no re-render loop)'
+  );
+  assert.equal(
+    await page.evaluate(async () => (await import('/render-client.js')).isBusy()),
+    false,
+    'the erroring draft must not re-render itself forever on the backstop'
+  );
+
+  // Restore the assertive voice on an explicit Render: with DRAFT_BROKEN still in
+  // the editor (and the error box parked in the quiet draft state), clicking
+  // Render must fail loudly, flipping the box back to role=alert and clearing
+  // .draft. This is the role-restore the still-render error path owns.
+  await page.click('#render-btn');
+  await waitState('error');
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const e = document.getElementById('error');
+      return { role: e.getAttribute('role'), draft: e.classList.contains('draft') };
+    }),
+    { role: 'alert', draft: false },
+    'an explicit Render error must restore the assertive role=alert, non-draft box'
   );
 
   // Recover: a fresh valid edit succeeds, swaps the image, and clears the draft
@@ -1467,16 +1710,25 @@ try {
 
   // Isolation guard: a scheduled draft that fires after cross-origin isolation
   // drops must bail before any render (the live preview can't run un-isolated).
+  await waitIdle(); // clean idle baseline before asserting nothing starts
   const isoSrc = await outSrc();
-  await typeScene(LIVE_SCENE + '\n// iso-marker\n');
+  await typeScene(LIVE_SCENE + '\n// iso-marker\n'); // schedules a draft (pending=true)
   await page.evaluate(() => {
     Object.defineProperty(window, 'crossOriginIsolated', { configurable: true, get: () => false });
   });
-  await page.waitForTimeout(700);
+  // Await the scheduled fireDraft actually running (pending clears) rather than
+  // sleeping: non-isolated, it bails before starting a render, so inFlight stays
+  // false and the engine stays idle.
+  await page.waitForFunction(() => !window.__liveDraftProbe().pending, null, { timeout: 30_000 });
+  assert.equal(
+    await page.evaluate(() => window.__liveDraftProbe().inFlight),
+    false,
+    'a non-isolated draft must never start a render'
+  );
   assert.equal(
     await page.evaluate(async () => (await import('/render-client.js')).isBusy()),
     false,
-    'a non-isolated draft must never start a render'
+    'a non-isolated draft must leave the engine idle'
   );
   assert.equal(await outSrc(), isoSrc, 'a non-isolated draft must not change the image');
   await page.evaluate(() => {
@@ -1535,6 +1787,17 @@ try {
   await page.waitForFunction(() => window.__liveDraftProbe().inFlight, null, { timeout: 60_000 });
   await page.click('#live-toggle'); // OFF mid-flight -> draftCtl?.abort() actually aborts
   assert.equal(await ariaPressed('live-toggle'), 'false', 'live toggles OFF again, mid-draft');
+  // The footer was sitting in the 'draft' state ('live draft · …'), so toggling
+  // off neutralizes it to 'live off' (idle) rather than leaving the now-frozen
+  // preview announced as live.
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const s = document.getElementById('status');
+      return { text: s.textContent, state: s.dataset.state };
+    }),
+    { text: 'live off', state: 'idle' },
+    'toggling live off from a draft footer must read "live off"'
+  );
   await waitIdle();
   await page.fill('#threads', '');
 } catch (err) {

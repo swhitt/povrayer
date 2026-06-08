@@ -606,11 +606,13 @@ function completeAnimResult(fig, result, w, h) {
 
   const scrubber = document.createElement('input');
   scrubber.type = 'range';
+  scrubber.className = 'scrubber'; // square grey thumb / 2px track, no OS-blue accent
   scrubber.min = '0';
   scrubber.max = String(total - 1);
   scrubber.step = '1';
   scrubber.value = '0';
   scrubber.setAttribute('aria-label', 'frame');
+  scrubber.setAttribute('aria-valuetext', `frame 1 of ${total}`);
   Object.assign(scrubber.style, { flex: '1', minWidth: '80px' });
 
   const frameLabel = document.createElement('span');
@@ -626,13 +628,16 @@ function completeAnimResult(fig, result, w, h) {
   const loopBox = document.createElement('input');
   loopBox.type = 'checkbox';
   loopBox.checked = true;
-  // Undo the global form-control sizing so this renders as a native checkbox.
+  // Undo the global form-control sizing so this renders as a native checkbox,
+  // and pin accent-color to a neutral token so the checked state paints grey
+  // instead of leaking the OS-blue second accent (optical-bench identity rule).
   Object.assign(loopBox.style, {
     height: 'auto',
     minHeight: '0',
     width: 'auto',
     padding: '0',
     margin: '0',
+    accentColor: 'var(--border-strong)',
   });
   loopLabel.append(loopBox, document.createTextNode('loop'));
 
@@ -665,6 +670,9 @@ function completeAnimResult(fig, result, w, h) {
     ctx.clearRect(0, 0, w, h);
     ctx.drawImage(bitmaps[i], 0, 0);
     scrubber.value = String(i);
+    // 1-based "frame 2 of 4" for screen readers, matching the visible label
+    // instead of the raw 0-indexed slider value.
+    scrubber.setAttribute('aria-valuetext', `frame ${i + 1} of ${total}`);
     frameLabel.textContent = `${i + 1}/${total}`;
   };
 
@@ -686,8 +694,14 @@ function completeAnimResult(fig, result, w, h) {
     let last = performance.now();
     const tick = (now) => {
       if (!playing) return;
-      if (now - last >= 1000 / fps) {
-        last = now;
+      const interval = 1000 / fps;
+      if (now - last >= interval) {
+        // Accumulate the interval rather than snapping to `now`, so the average
+        // cadence matches the target fps (snapping rounds each step up to the
+        // next rAF tick, biasing playback slow and drifting from the export).
+        // Resync after a long stall instead of replaying the backlog.
+        last += interval;
+        if (now - last >= interval) last = now;
         let next = index + 1;
         if (next >= total) {
           if (!looping) {
@@ -714,6 +728,8 @@ function completeAnimResult(fig, result, w, h) {
     }
     pause();
     exportBtn.disabled = true;
+    const prevLabel = exportBtn.textContent;
+    exportBtn.textContent = 'exporting…';
     try {
       const stream = canvas.captureStream(fps);
       const recorder = new MediaRecorder(stream, { mimeType: mime });
@@ -734,6 +750,7 @@ function completeAnimResult(fig, result, w, h) {
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } finally {
       exportBtn.disabled = false;
+      exportBtn.textContent = prevLabel;
     }
   }
 
@@ -993,6 +1010,13 @@ function dispatchCommand(text) {
       break;
 
     case 'del': {
+      // Guard the empty scene first, matching the rest of the REPL's voice
+      // (:undo 'nothing to undo', :render 'scene empty, add…'); a bare
+      // 'usage: :del N (1..0)' with max below min reads as a bug.
+      if (!entries.length) {
+        appendBlock('error', 'scene empty, nothing to delete');
+        break;
+      }
       const n = parseIntStrict(arg);
       if (!Number.isInteger(n) || n < 1 || n > entries.length) {
         appendBlock('error', `usage: :del N (1..${entries.length})`);
@@ -1006,6 +1030,10 @@ function dispatchCommand(text) {
     // editing first; resubmitting appends as a fresh entry with normal
     // rollback.
     case 'edit': {
+      if (!entries.length) {
+        appendBlock('error', 'scene empty, nothing to edit');
+        break;
+      }
       const n = parseIntStrict(arg);
       if (!Number.isInteger(n) || n < 1 || n > entries.length) {
         appendBlock('error', `usage: :edit N (1..${entries.length})`);

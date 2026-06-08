@@ -42,7 +42,7 @@
      yellow/gold (so they never fight --accent) and none coral (so they stay
      clear of --error). All are clearly distinct from --text and --dim so UI
      chrome never reads as syntax. */
-  --syn-comment: #646e7d; /* slate grey, italic; recedes by design */
+  --syn-comment: #7a8493; /* slate grey, italic; recedes by design (4.75:1 on --panel, the quietest token that still clears WCAG AA) */
   --syn-keyword: #7fa6c9; /* desaturated steel blue, structural vocabulary */
   --syn-builtin: #5fb3a1; /* muted sea-teal, math/vector fns + x/y/z/clock/pi */
   --syn-string: #9bb56b; /* soft sage/olive, strings + include paths */
@@ -70,6 +70,23 @@
 /* Author display rules below must never beat the `hidden` attribute. */
 [hidden] {
   display: none !important;
+}
+
+/* Visually-hidden but exposed to the accessibility tree (e.g. the editor's
+   Esc-then-Tab escape instructions, referenced via aria-describedby). The clip
+   pattern keeps it off-screen without dropping it from the a11y tree the way
+   display:none would. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 html,
@@ -267,6 +284,14 @@ summary:focus-visible,
 #run-btn:focus-visible {
   outline-color: var(--accent-ink);
   outline-offset: -4px;
+}
+
+/* A pressed toggle inverts to a light fill (see .toggle-btn[aria-pressed='true']
+   below), so the accent-gold ring all but vanishes on it (~1:1). Mirror the CTA
+   treatment with the dark ink ring (~14:1 on the light fill). still/live/loop
+   all default to pressed, so this is the ring keyboard users actually land on. */
+.toggle-btn[aria-pressed='true']:focus-visible {
+  outline-color: var(--accent-ink);
 }
 
 label {
@@ -675,6 +700,17 @@ body.ui[data-mode='animate'] .still-only {
   color: var(--bg);
 }
 
+/* Hovering an UNpressed segment must not borrow the selected segment's solid
+   fill (the generic button:hover invert) or both segments read as "on" the
+   moment the pointer approaches the mode selector. A border + text emphasis on
+   a transparent bg keeps the affordance grey/square/accent-free while staying
+   clearly distinct from the inverted pressed state. */
+.toggle-btn[aria-pressed='false']:hover:not(:disabled) {
+  background: transparent;
+  border-color: var(--text);
+  color: var(--text);
+}
+
 /* The player canvas is the animate-mode hero, drawn into the same #output-plate
    (mat + shadow) the still image uses. Scales down to fit like #output. */
 #player-canvas {
@@ -694,8 +730,9 @@ body.ui[data-mode='animate'] .still-only {
 
 /* Scrubber: a 2px track echoing the progress bar, with a small square grey
    thumb (no rounded corners, no accent). The base input:focus accent ring
-   still applies. */
-#scrubber {
+   still applies. Shared (.scrubber, not #scrubber) so the REPL's inline player
+   range gets the same de-accented treatment instead of the OS-blue default. */
+.scrubber {
   flex: 1;
   min-width: 8em;
   height: 28px;
@@ -707,17 +744,17 @@ body.ui[data-mode='animate'] .still-only {
   appearance: none;
 }
 
-#scrubber::-webkit-slider-runnable-track {
+.scrubber::-webkit-slider-runnable-track {
   height: 2px;
   background: var(--border-strong);
 }
 
-#scrubber::-moz-range-track {
+.scrubber::-moz-range-track {
   height: 2px;
   background: var(--border-strong);
 }
 
-#scrubber::-webkit-slider-thumb {
+.scrubber::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
   width: 10px;
@@ -727,7 +764,7 @@ body.ui[data-mode='animate'] .still-only {
   border: none;
 }
 
-#scrubber::-moz-range-thumb {
+.scrubber::-moz-range-thumb {
   width: 10px;
   height: 16px;
   background: var(--text);
@@ -921,6 +958,23 @@ figure.result.pending > div {
 
   #render-btn {
     flex: 1;
+  }
+}
+
+/* Short / landscape viewports (e.g. a phone on its side): the editor is sized
+   in vh, so the vh base + 48vh min-height alone push Render and the output
+   plate below the fold. Cap it harder and drop the min-height floor so the
+   editor yields room for the hero, and the resize handle can shrink it further.
+   Placed after the max-width block so a small landscape phone (short but not
+   narrow) still gets the min-height: 0 release. */
+@media (max-height: 560px) {
+  #editor,
+  #gutter {
+    max-height: 40vh;
+  }
+
+  #editor {
+    min-height: 0;
   }
 }
 

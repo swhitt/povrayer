@@ -288,19 +288,37 @@ try {
   await runCmd(':zzzzz'); // unknown -> no edit-distance match
   await runCmd(':example zzzz'); // no such example
 
+  const lastErr = () =>
+    page.evaluate(() => {
+      const e = document.querySelectorAll('#scrollback .error');
+      return e[e.length - 1]?.textContent ?? '';
+    });
+
   // Empty-scene command variants.
   await runCmd(':reset'); // clears scene + settings (-> 320x240)
   await runCmd(':list'); // scene empty
   await runCmd(':source'); // scene empty
   await runCmd(':undo'); // nothing to undo
   await runCmd(':render'); // scene empty, add something first
-  await runCmd(':del 1'); // usage (1..0)
-  await runCmd(':edit 1'); // usage (1..0)
+  // :del / :edit on an EMPTY scene take the empty-scene guard (added so a bare
+  // 'usage: :del N (1..0)' with max below min never reads as a bug), in the
+  // REPL's own voice.
+  await runCmd(':del 1');
+  assert.match(await lastErr(), /scene empty, nothing to delete/, ':del on empty scene');
+  await runCmd(':edit 1');
+  assert.match(await lastErr(), /scene empty, nothing to edit/, ':edit on empty scene');
 
   // --- PART 2: render-driving commands (small size) --------------------------
   await runCmd(':size 48x32');
   await submitRender('sphere { 0, 1 pigment { rgb <1,0,0> } }'); // entry A
   await submitRender('box { <-1,-1,-1>, <1,1,1> pigment { rgb <0,1,0> } }'); // entry B
+  // Out-of-range :del / :edit WITH entries present reach the usage branch: the
+  // empty-scene guard only fires on an empty scene, so a non-empty scene with an
+  // N past the ends (N>len, N<1) is the only path to 'usage: :del/:edit N (1..n)'.
+  await runCmd(':del 9'); // 9 > 2 entries -> usage
+  assert.match(await lastErr(), /usage: :del N \(1\.\.2\)/, ':del past the end shows usage');
+  await runCmd(':edit 0'); // 0 < 1 -> usage
+  assert.match(await lastErr(), /usage: :edit N \(1\.\.2\)/, ':edit below 1 shows usage');
   await runCmd(':q 5');
   await runCmd(':aa'); // antialias true -> downloadName + aaLabel exercised below
   await submitRender(':render'); // re-render [A,B] with quality + antialias
@@ -424,6 +442,25 @@ try {
     /anim #\d+ · \d+×\d+ · 3 frames · \d+\.\ds/,
     `unexpected anim figcaption: ${animCap}`
   );
+  // Player chrome stays on-identity: the scrubber uses the shared, de-accented
+  // .scrubber class (square grey thumb, appearance stripped) and the loop
+  // checkbox pins accent-color to a neutral token so its checked state never
+  // leaks the OS-blue second accent.
+  const playerChrome = await onAnim((p) => ({
+    scrubberClass: p.scrubber.className,
+    scrubberAppearance: getComputedStyle(p.scrubber).appearance,
+    loopAccent: p.loopBox.style.accentColor,
+  }));
+  assert.ok(
+    playerChrome.scrubberClass.split(/\s+/).includes('scrubber'),
+    'the REPL scrubber must carry the shared .scrubber class'
+  );
+  assert.equal(playerChrome.scrubberAppearance, 'none', 'the REPL scrubber strips OS appearance');
+  assert.equal(
+    playerChrome.loopAccent,
+    'var(--border-strong)',
+    'the REPL loop checkbox must pin accent-color to the neutral token, not OS blue'
+  );
 
   // Let the looping autoplay run a couple cycles so tick wraps off the end
   // (next = 0) before we change anything.
@@ -458,9 +495,54 @@ try {
     p.fpsBox.value = 'abc';
     p.fpsBox.dispatchEvent(new Event('change')); // clampFps non-finite -> default
   });
+  // The seek left the player on frame index 1, so the scrubber announces the
+  // 1-based "frame 2 of 3" (matching the visible label), not the raw slider 1.
+  assert.equal(
+    await onAnim((p) => p.scrubber.getAttribute('aria-valuetext')),
+    'frame 2 of 3',
+    'the REPL scrubber aria-valuetext must read "frame 2 of 3" on a seek to index 1'
+  );
+
+  // Deterministic tick stall-resync (repl.js): own the rAF `now` so one tick
+  // driven far past two fps intervals (a backgrounded-tab style stall) takes the
+  // resync arm (`if (now - last >= interval) last = now`) instead of the
+  // accumulate arm steady-state autoplay always hits, advancing exactly one
+  // frame rather than bursting the backlog.
+  const replResync = await onAnim((p) => {
+    const origRAF = window.requestAnimationFrame;
+    const origCAF = window.cancelAnimationFrame;
+    let captured = null;
+    try {
+      p.scrubber.value = '0';
+      p.scrubber.dispatchEvent(new Event('input')); // pause + draw(0)
+      const before = p.scrubber.getAttribute('aria-valuetext');
+      window.requestAnimationFrame = (cb) => {
+        captured = cb;
+        return 1;
+      };
+      window.cancelAnimationFrame = () => {};
+      if (p.playBtn.textContent === 'play') p.playBtn.click(); // play() schedules tick via stub
+      const scheduled = typeof captured === 'function';
+      captured?.(performance.now() + 100000); // one tick, far past 2 intervals
+      const after = p.scrubber.getAttribute('aria-valuetext');
+      if (p.playBtn.textContent === 'pause') p.playBtn.click(); // pause
+      return { before, after, scheduled };
+    } finally {
+      window.requestAnimationFrame = origRAF;
+      window.cancelAnimationFrame = origCAF;
+    }
+  });
+  assert.equal(replResync.scheduled, true, 'repl play() must schedule a tick through stubbed rAF');
+  assert.equal(replResync.before, 'frame 1 of 3', 'the player parks on frame 0 (reads "frame 1")');
+  assert.equal(
+    replResync.after,
+    'frame 2 of 3',
+    'a stalled repl tick must resync and advance exactly one frame'
+  );
+  await animPaused();
 
   // Export WebM via a stubbed MediaRecorder: a .webm download anchor is clicked.
-  await onAnim((p) => {
+  const exportFeedback = await onAnim((p) => {
     window.__dl = [];
     window.__origAClick = HTMLAnchorElement.prototype.click;
     HTMLAnchorElement.prototype.click = function () {
@@ -479,11 +561,23 @@ try {
     }
     window.__origMR = window.MediaRecorder;
     window.MediaRecorder = FakeRecorder;
-    p.exportBtn.click();
+    const prevLabel = p.exportBtn.textContent;
+    p.exportBtn.click(); // exportAnim runs sync up to the first frame await
+    return { prevLabel, midLabel: p.exportBtn.textContent, midDisabled: p.exportBtn.disabled };
   });
+  // Export gives feedback: the button disables + relabels 'exporting…' for the
+  // duration (synchronously, before the first frame await), then restores.
+  assert.equal(exportFeedback.midLabel, 'exporting…', 'the REPL export button relabels mid-export');
+  assert.equal(exportFeedback.midDisabled, true, 'the REPL export button disables mid-export');
   await page.waitForFunction(() => (window.__dl ?? []).some((n) => /\.webm$/.test(n)), null, {
     timeout: 15_000,
   });
+  // The finally restored the button: re-enabled + original label back.
+  assert.deepEqual(
+    await onAnim((p) => ({ label: p.exportBtn.textContent, disabled: p.exportBtn.disabled })),
+    { label: exportFeedback.prevLabel, disabled: false },
+    'the REPL export button restores its label + enabled state after exporting'
+  );
 
   // Export fallback (no MediaRecorder): N sequential frameNNN.png downloads.
   await onAnim((p) => {

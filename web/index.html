@@ -49,9 +49,12 @@
               autocorrect="off"
               autocomplete="off"
               aria-label="POV-Ray scene source"
-              aria-describedby="status"
+              aria-describedby="editor-tabhelp status"
               title="Tab indents; Esc then Tab moves focus"
             ></textarea>
+            <span id="editor-tabhelp" class="sr-only"
+              >Tab indents the line. Press Escape then Tab to move focus out of the editor.</span
+            >
           </div>
         </div>
         <div id="controls">
@@ -136,6 +139,7 @@
           <button id="play-btn" type="button" title="Play / pause">Play</button>
           <input
             id="scrubber"
+            class="scrubber"
             type="range"
             min="0"
             max="0"

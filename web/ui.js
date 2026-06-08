@@ -740,9 +740,19 @@ async function runDraft(src) {
     setStatus(`live draft · ${dims}`, 'draft');
   } catch (err) {
     if (!isAbortError(err)) {
+      // Record the failed source too. The success path sets lastDraftSource, but
+      // a deterministic parse failure must also mark this exact text as
+      // attempted, or the finally's backstop scheduleDraft re-fires the same
+      // erroring scene forever (fireDraft's `src === lastDraftSource` guard never
+      // short-circuits). That loop is a silent CPU/battery drain with status
+      // flicker, worst on mobile.
+      lastDraftSource = src;
       // Non-destructive: keep the last good image (no #output.src change, no
       // .stale, no canvas clear). Surface the message quietly inline and do NOT
-      // jump the caret (hostile while typing).
+      // jump the caret (hostile while typing). A draft error is a polite live
+      // region (role swapped to status), not the assertive alert the explicit
+      // Render path uses, so a screen reader isn't interrupted on every keystroke.
+      errorBox.setAttribute('role', 'status');
       errorBox.textContent = formatError(err);
       errorBox.classList.add('draft');
       errorBox.hidden = false;
@@ -872,6 +882,11 @@ async function startRender() {
     } else {
       setStatus('error', 'error');
       const message = formatError(err);
+      // An explicit Render failure is the loud, assertive case: clear any quiet
+      // draft styling/role a prior live-draft error left behind so the box reads
+      // as the red, alert-announced error it should be.
+      errorBox.classList.remove('draft');
+      errorBox.setAttribute('role', 'alert');
       errorBox.textContent = message;
       errorBox.hidden = false;
       errorBox.scrollIntoView({ block: 'nearest' });
@@ -994,6 +1009,10 @@ async function runAnimateRender() {
     } else {
       setStatus('error', 'error');
       const message = formatError(err);
+      // Same as the still path: an explicit animate failure is the loud,
+      // assertive error, never the quiet draft variant.
+      errorBox.classList.remove('draft');
+      errorBox.setAttribute('role', 'alert');
       errorBox.textContent = message;
       errorBox.hidden = false;
       errorBox.scrollIntoView({ block: 'nearest' });
@@ -1033,6 +1052,9 @@ function createPlayer() {
     idx = i;
     ctx.drawImage(bitmaps[i], 0, 0);
     scrubber.value = String(i);
+    // aria-valuetext so a screen reader announces the 1-based "frame 2 of 3"
+    // that matches the visible readout, not the raw 0-indexed slider value.
+    scrubber.setAttribute('aria-valuetext', `frame ${i + 1} of ${bitmaps.length}`);
     frameReadout.textContent = `${i + 1} / ${bitmaps.length}`;
   }
 
@@ -1052,8 +1074,15 @@ function createPlayer() {
 
   function tick(now) {
     if (!playing) return;
-    if (now - lastAdvance >= 1000 / fps) {
-      lastAdvance = now;
+    const interval = 1000 / fps;
+    if (now - lastAdvance >= interval) {
+      // Accumulate the interval instead of snapping lastAdvance to `now`:
+      // snapping rounds every step up to the next rAF tick, which biased
+      // playback slow (a 24fps target measured ~21.5fps) and made the preview
+      // drift behind the exported WebM. After a long stall (backgrounded tab)
+      // resync rather than replay the backlog as a burst.
+      lastAdvance += interval;
+      if (now - lastAdvance >= interval) lastAdvance = now;
       let next = idx + 1;
       if (next >= bitmaps.length) {
         if (!loop) {
@@ -1162,28 +1191,44 @@ function createPlayer() {
     return candidates.find((t) => window.MediaRecorder?.isTypeSupported?.(t)) ?? null;
   }
 
+  let exporting = false;
+
   async function exportVideo() {
-    if (!bitmaps.length) return;
+    // Re-entrancy guard: a real export runs for seconds (playOnce holds each
+    // frame a full fps interval). Without it, a second click starts a second
+    // MediaRecorder on the same captureStream and you get two garbled files.
+    if (!bitmaps.length || exporting) return;
     const mime = pickMime();
     if (!mime) {
+      // Synchronous PNG fallback; nothing to guard or relabel.
       downloadFramesAsPng();
       return;
     }
+    exporting = true;
+    const prevLabel = exportBtn.textContent;
+    exportBtn.disabled = true;
+    exportBtn.textContent = 'exporting…';
     pause();
-    const stream = playerCanvas.captureStream(fps);
-    const recorder = new MediaRecorder(stream, { mimeType: mime });
-    const chunks = [];
-    recorder.ondataavailable = (e) => chunks.push(e.data);
-    const stopped = new Promise((resolve) => {
-      recorder.onstop = resolve;
-    });
-    recorder.start();
-    await playOnce();
-    recorder.stop();
-    await stopped;
-    const url = URL.createObjectURL(new Blob(chunks, { type: mime }));
-    triggerDownload(url, 'animation.webm');
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    try {
+      const stream = playerCanvas.captureStream(fps);
+      const recorder = new MediaRecorder(stream, { mimeType: mime });
+      const chunks = [];
+      recorder.ondataavailable = (e) => chunks.push(e.data);
+      const stopped = new Promise((resolve) => {
+        recorder.onstop = resolve;
+      });
+      recorder.start();
+      await playOnce();
+      recorder.stop();
+      await stopped;
+      const url = URL.createObjectURL(new Blob(chunks, { type: mime }));
+      triggerDownload(url, 'animation.webm');
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } finally {
+      exporting = false;
+      exportBtn.disabled = false;
+      exportBtn.textContent = prevLabel;
+    }
   }
 
   function hasFrames() {
@@ -1206,10 +1251,26 @@ function setMode(next) {
   draftTimer = null;
   mode = next;
   applyMode();
+  // Re-derive the footer so it agrees with the new plate. Without this #status
+  // keeps the prior mode's text (a "live draft · WxH" line lingering in animate
+  // where drafts are suppressed, or an animate "done … · N frames" line over a
+  // single still). A still-mode draft, if it fires below, overrides this.
+  syncStatusToPlate();
   scheduleSave();
   // Switching back to still refreshes the preview; switching to animate leaves
   // drafts suppressed (scheduleDraft early-returns when mode !== 'still').
   if (mode === 'still' && liveDraft) scheduleDraft();
+}
+
+// Neutral status line that agrees with whatever the plate is actually showing.
+// Kept in the dim 'idle' state: it describes existing content, it isn't the
+// bright payoff line a fresh render earns.
+function syncStatusToPlate() {
+  if (mode === 'animate') {
+    setStatus(player.hasFrames() ? 'animation ready' : 'no render yet', 'idle');
+  } else {
+    setStatus(hasStillImage ? 'render ready' : 'no render yet', 'idle');
+  }
 }
 
 function applyMode() {
@@ -1254,6 +1315,10 @@ liveToggle.addEventListener('click', () => {
     clearTimeout(draftTimer);
     draftTimer = null;
     draftCtl?.abort();
+    // Drop the "live draft · …" label so the now-frozen, editable preview isn't
+    // still announced as live. Only when the footer is actually showing a draft
+    // line (don't clobber a real render's done/error payoff).
+    if (status.dataset.state === 'draft') setStatus('live off', 'idle');
   }
 });
 playBtn.addEventListener('click', () => player.toggle());
