@@ -2,6 +2,9 @@
   "name": "povrayer-root",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "test": "npm run test:node && npm run test:browser",
     "pretest:node": "node tools/link-wrapper.mjs",

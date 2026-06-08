@@ -1,6 +1,9 @@
 #!/bin/sh
-# Pre-push gate: lint, the full render suite, and the 100% coverage check.
-# Slow but authoritative, the last line before code leaves the machine.
+# Pre-push gate: format, lint, wrapper types, the full render suite, and the
+# 100% coverage check. Slow but authoritative, the last line before code leaves
+# the machine. Mirrors CI's lint job (format + eslint + tsc) so a push whose
+# pre-commit was bypassed (--no-verify, an amend/rebase, a hook-skipping GUI)
+# can't slip a formatting or type error through to CI.
 #
 # `npm run coverage` runs the ENTIRE suite (node + browser) under c8, so it
 # doubles as the full `npm test` run; coverage:check then enforces 100%.
@@ -8,8 +11,14 @@ set -e
 
 say() { printf '\npre-push: %s\n' "$1"; }
 
+say 'prettier --check'
+npm run format:check
+
 say 'eslint'
 npm run lint
+
+say 'tsc --noEmit (wrapper)'
+npm run typecheck
 
 say 'full suite + merged coverage (node + browser)'
 npm run coverage

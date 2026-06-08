@@ -251,7 +251,7 @@ function replaceWithBlock(fig, cls, text) {
   scrollback.scrollTop = scrollback.scrollHeight;
 }
 
-// Pending placeholder (3.2): the layout shift happens at submit time, sized
+// Pending placeholder: the layout shift happens at submit time, sized
 // from the current settings; .pending styles supply the dashed border and the
 // busy-pulse on the caption.
 function appendPending(w, h) {
@@ -275,7 +275,7 @@ function aaLabel() {
   return String(settings.antialias);
 }
 
-// render-512x384-q9-a03.png, from the options actually used (5.14).
+// render-512x384-q9-a03.png, from the options actually used.
 function downloadName(w, h) {
   let name = `render-${w}x${h}`;
   if (settings.quality !== undefined) name += `-q${settings.quality}`;
@@ -283,7 +283,7 @@ function downloadName(w, h) {
   return `${name}.png`;
 }
 
-// Swaps the finished image into the pending figure. Figcaption per 3.2:
+// Swaps the finished image into the pending figure. Figcaption:
 // `render #3 · 320×240 · 0.8s · 554,341 rays [· 2 warnings]` + save png.
 function completeResult(fig, blobUrl, w, h, elapsedMs, log) {
   renderCounter += 1;
@@ -332,7 +332,7 @@ function markRolledBack(node) {
 
 // --- status footer -----------------------------------------------------------
 
-// Prints only non-defaults (3.2): `idle · 320×240`, gaining `· q 9 · aa 0.3 ·
+// Prints only non-defaults: `idle · 320×240`, gaining `· q 9 · aa 0.3 ·
 // threads 4 · args +UA` only when set. Busy: `rendering… · 320×240`, with a
 // percent suffix only once a percent event has arrived (rare today; the TTY
 // flushes percent lines at trace completion).

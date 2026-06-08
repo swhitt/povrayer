@@ -125,6 +125,33 @@ test('frames:12 returns 12 PNGs in numeric (not lexical) frame order', async () 
   );
 });
 
+test('ignores caller-staged decoy out files outside the frame range and padding', async () => {
+  // Regression (frame-collection bounding): the collector must return only the
+  // frames POV-Ray produced THIS run, never a caller-staged stray. A 10-frame
+  // run zero-pads to out01..out10, so the collector matches exactly 2-digit
+  // padding AND bounds N to [1, 10]. Stage decoys the OLD unbounded
+  // /^out(\d+)\.png$/ matcher would have swept in:
+  //   - out00.png : 2-digit padding but n=0  -> fails the n >= 1 lower bound
+  //   - out99.png : 2-digit padding but n=99 -> fails the n <= frames upper bound
+  //   - out9.png  : 1-digit, so the exact-width regex rejects it outright
+  // None are valid PNGs, so if any leaked into the result assertPng would fail;
+  // the count assertion catches the inflation either way.
+  const decoy = new Uint8Array([0x2f, 0x2f, 0x0a]); // "//\n", deliberately not a PNG
+  const frames = await renderAnimation(CLOCK_SCENE, {
+    width: 32,
+    height: 24,
+    antialias: false,
+    frames: 10,
+    files: {
+      'out00.png': decoy,
+      'out99.png': decoy,
+      'out9.png': decoy,
+    },
+  });
+  assert.equal(frames.length, 10, 'decoy out files must not inflate the frame count');
+  frames.forEach((png, i) => assertPng(png, `frame ${i + 1}`));
+});
+
 test('a throwing onFrame is swallowed; the animation still resolves', async () => {
   // fireOnFrame mirrors append's swallow: a callback that blows up must never
   // corrupt the render, so all frames still come back.

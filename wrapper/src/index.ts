@@ -13,9 +13,10 @@
  * - `povray.mjs` and `povray.wasm` must be served as opaque static assets,
  *   never run through a bundler: the pthread worker is spawned via
  *   `new URL(import.meta.url)` and ignores `locateFile` (emscripten #22508).
- * - The wasm memory declares a 4 GB shared maximum. Chrome/Firefox treat that
- *   as an address-space reservation, but Safari/iOS can fail to instantiate
- *   it; a 2 GB build is one `--build-arg WASM_MAX_MEMORY=2GB` rebuild away.
+ * - The default wasm build declares a 2 GB shared maximum, which Safari/iOS can
+ *   instantiate. Chrome/Firefox treat the maximum as an address-space
+ *   reservation, so a higher ceiling is free there; the published Node CLI
+ *   image is linked with 4 GB (`--build-arg WASM_MAX_MEMORY=4GB`).
  */
 
 export interface RenderOptions {
@@ -42,7 +43,12 @@ export interface RenderOptions {
      * paths are fine (`"textures/wood.inc"`); `".."` segments are rejected.
      */
     files?: Record<string, string | Uint8Array>;
-    /** Raw POV-Ray args appended last (escape hatch: `+KFF`, `+UA`, ...). */
+    /**
+     * Raw POV-Ray args appended last (escape hatch: `+UA`, `+AM2`, ...).
+     * Animation flags (`+KFI`/`+KFF`) belong on {@link renderAnimation}: passing
+     * them here puts POV-Ray in animation mode, which writes numbered
+     * `out<N>.png` frames that this single-file {@link render} can't collect.
+     */
     args?: string[];
     /** Receives each output line (stdout + stderr) as it arrives. */
     onProgress?: (line: string) => void;
@@ -92,7 +98,18 @@ function loadFactory(): Promise<PovrayFactory> {
     // Identical code path in Node and the browser: both import the ES module
     // natively, and emscripten's internal environment switch picks
     // worker_threads vs Worker for the pthread pool.
-    factoryPromise ??= import("./povray.mjs").then((m) => m.default);
+    if (!factoryPromise) {
+        const p = import("./povray.mjs").then((m) => m.default);
+        // Cache only a *successful* factory. Clearing a rejected import lets the
+        // next render() retry instead of replaying a stale transient failure;
+        // the `=== p` guard keeps a late rejection of this attempt from
+        // clobbering a newer in-flight one.
+        /* c8 ignore next 3 -- a transient povray.mjs import failure can't be provoked deterministically */
+        p.catch(() => {
+            if (factoryPromise === p) factoryPromise = undefined;
+        });
+        factoryPromise = p;
+    }
     return factoryPromise;
 }
 
@@ -210,9 +227,18 @@ async function runEngine<T>(
         // An uncaught error in a pthread worker (e.g. a scene that overflows
         // a render thread's stack) reaches neither onExit nor onAbort:
         // emscripten's worker.onerror reports it through err() -- our
-        // printErr -- with this fixed prefix, then rethrows outside any
-        // promise chain, which would leave `exited` pending forever. Detect
-        // the report and fail the render instead of hanging.
+        // printErr -- with this fixed prefix, then rethrows synchronously
+        // outside any promise chain. Detecting the report lets us reject
+        // `exited` instead of leaving it pending forever.
+        //
+        // The clean PovrayError reject is a browser-effective guarantee: there
+        // the synchronous rethrow lands in window.onerror, the realm survives,
+        // and the queued rejection drains, so render() rejects cleanly. In Node
+        // the rethrow escapes emscripten's `worker.on('error')` listener as an
+        // uncaughtException, and with no process-level handler installed Node
+        // tears the process down before the queued rejection is observed -- so a
+        // Node consumer that needs to catch a pthread crash must install its own
+        // `process.on('uncaughtException')` guard.
         /* c8 ignore next 3 -- emscripten only emits "worker sent an error!" on a real pthread crash, which can't be provoked deterministically in a test */
         if (line.startsWith("worker sent an error!")) {
             rejectExit(
@@ -265,7 +291,6 @@ async function runEngine<T>(
         // here, so this is safe under PROXY_TO_PTHREAD.
         const FS = instance.FS;
         FS.mkdir("/work");
-        FS.writeFile("/work/scene.pov", source);
         if (files) {
             for (const [name, data] of Object.entries(files)) {
                 const path = stagedPath(name);
@@ -273,6 +298,12 @@ async function runEngine<T>(
                 FS.writeFile(path, data);
             }
         }
+        // Staged LAST so the documented scene source always wins: a `files`
+        // entry (or, in CLI file mode, a sibling literally named scene.pov in
+        // the staged directory) can never clobber the source being rendered.
+        // /work already exists from the mkdir above and a top-level
+        // "scene.pov" has no parent dirs to create, so this ordering is safe.
+        FS.writeFile("/work/scene.pov", source);
 
         const argv = [
             "+I/work/scene.pov",
@@ -363,13 +394,6 @@ export interface AnimationOptions extends RenderOptions {
 // startup), so it is deliberately NOT used here.
 const TRACE_DONE = /^\s*Trace Time:/;
 
-// Frame PNGs the engine writes under +KFI/+KFF for a MULTI-frame run:
-// out<N>.png, where N is zero-padded to the digit width of the final frame. The
-// `\d+` capture excludes scene.pov. A single-frame run (+KFF1) is the lone
-// exception: POV-Ray writes a bare out.png with no frame number, handled by the
-// fallback in the collector below.
-const FRAME_PNG = /^out(\d+)\.png$/;
-
 /**
  * Render a POV-Ray scene as an animation: drives POV-Ray's native clock loop
  * (`+KFI1 +KFF{frames} +KI{initialClock} +KF{finalClock}`) and returns one PNG
@@ -380,7 +404,8 @@ const FRAME_PNG = /^out(\d+)\.png$/;
  * @param options See {@link AnimationOptions}; `frames` is required.
  * @returns One PNG per frame, each in a fresh, non-shared buffer, ordered by
  *          frame number (numeric, so frame 2 precedes frame 10).
- * @throws Error synchronously when `frames` is not an integer >= 1.
+ * @throws Error (rejects, since this is async) when `frames` is not an integer
+ *         >= 1.
  * @throws {PovrayError} when POV-Ray exits non-zero; `AbortError` when
  *         cancelled via `options.signal`.
  */
@@ -417,17 +442,31 @@ export async function renderAnimation(
             },
         },
         extraArgs,
-        // Bytes only, each copied into a fresh non-shared buffer. A multi-frame
-        // run writes out1.png, out2.png, ... (numeric sort so out2 precedes
-        // out10); a single-frame run writes a bare out.png with no number, so
-        // fall back to it when no numbered frames exist.
+        // Bytes only, each copied into a fresh non-shared buffer.
         (fs) => {
-            const numbered = fs
-                .readdir("/work")
-                .filter((name) => FRAME_PNG.test(name))
-                .sort((a, b) => Number(FRAME_PNG.exec(a)![1]) - Number(FRAME_PNG.exec(b)![1]));
-            const names = numbered.length > 0 ? numbered : ["out.png"];
-            return names.map((name) => Uint8Array.from(fs.readFile("/work/" + name)));
+            // A single-frame run (+KFF1) emits a bare out.png with no number;
+            // read it directly so a stray out<N>.png can never shadow it.
+            if (frames === 1) {
+                return [Uint8Array.from(fs.readFile("/work/out.png"))];
+            }
+            // A multi-frame run writes out<N>.png, zero-padded to the digit
+            // width of `frames`. Match that exact padding AND bound N to
+            // [1, frames] so caller-staged strays (a leftover frame from a
+            // higher count, an incidentally-named out9.png) can never
+            // masquerade as a frame this run produced. In-range, same-padding
+            // files are exactly what POV-Ray overwrites this run, so they are
+            // always fresh; the numeric sort keeps out2 ahead of out10.
+            const width = String(frames).length;
+            const framePng = new RegExp(`^out(\\d{${width}})\\.png$`);
+            const numbered: { name: string; n: number }[] = [];
+            for (const name of fs.readdir("/work")) {
+                const m = framePng.exec(name);
+                if (!m) continue;
+                const n = Number(m[1]);
+                if (n >= 1 && n <= frames) numbered.push({ name, n });
+            }
+            numbered.sort((a, b) => a.n - b.n);
+            return numbered.map((e) => Uint8Array.from(fs.readFile("/work/" + e.name)));
         },
     );
 }

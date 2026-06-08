@@ -9,10 +9,12 @@ ARG POVRAY_COMMIT
 # Debug/tuning knobs:
 #   LINK_EXTRA      extra flags appended to the final em++ link
 #                   (e.g. --build-arg LINK_EXTRA="-sASSERTIONS=2 -sSTACK_OVERFLOW_CHECK=2")
-#   WASM_MAX_MEMORY shared-memory maximum; 4GB can fail to instantiate on
-#                   Safari/iOS, rebuild with --build-arg WASM_MAX_MEMORY=2GB
+#   WASM_MAX_MEMORY shared-memory maximum. Default 2GB instantiates on
+#                   Safari/iOS; Chrome/Firefox treat the max as an address-space
+#                   reservation, so the published Node CLI image is built with
+#                   4GB (--build-arg WASM_MAX_MEMORY=4GB) where Safari is moot.
 ARG LINK_EXTRA=""
-ARG WASM_MAX_MEMORY=4GB
+ARG WASM_MAX_MEMORY=2GB
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       autoconf automake m4 patch curl ca-certificates && \

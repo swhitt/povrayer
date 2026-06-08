@@ -31,6 +31,13 @@ Common options: `-w N` / `-h N` (size), `-o FILE` (output, `-` for stdout),
 and `--` to pass raw POV-Ray switches through verbatim. `--help` has the full
 list.
 
+Animation: `--frames N` renders N frames as a clock-driven sequence instead of a
+single image (`--clock-initial F` / `--clock-final F` set the clock sweep,
+defaulting to 0 and 1; the scene's `clock` identifier walks that range). Frames
+are written as numbered PNGs (`-o out.png` -> `out01.png`..`outNN.png`, or a `#`
+run in the name marks the number slot). `-o -` is rejected with `--frames`,
+since frames can't stream to stdout.
+
 If the GHCR image isn't pullable (package not public yet, or you're on a
 fork), build it locally with `make image` (or `docker buildx build --target
 runtime -t povrayer .`) and use `povrayer` in place of
@@ -50,8 +57,9 @@ include library is embedded in the wasm.
 
 ## Wrapper API
 
-`render()` is the only public API. It takes POV-Ray SDL source and resolves
-to the PNG bytes as a fresh `Uint8Array` (never a view into wasm memory):
+`render()` and `renderAnimation()` are the public API. `render()` takes POV-Ray
+SDL source and resolves to the PNG bytes as a fresh `Uint8Array` (never a view
+into wasm memory):
 
 ```js
 import { render } from './dist/index.js';
@@ -68,6 +76,28 @@ const png = await render(source, {
 On failure it rejects with `PovrayError`, which carries the `exitCode` and
 the full captured log on `.log`. An `AbortSignal` via `signal` cancels a
 running render; `args` passes raw POV-Ray switches through.
+
+### Animation
+
+`renderAnimation(source, options)` resolves to one PNG per frame (a
+`Uint8Array[]`, in numeric frame order), driving POV-Ray's native clock loop
+(`+KFI1 +KFF{frames} +KI{initialClock} +KF{finalClock}`):
+
+```js
+import { renderAnimation } from './dist/index.js';
+
+const frames = await renderAnimation(source, {
+  frames: 24, // required, integer >= 1
+  initialClock: 0, // clock at the first frame (default 0)
+  finalClock: 1, // clock at the last frame (default 1)
+  onFrame: (index, total) => console.error(`frame ${index}/${total}`),
+  // ...plus any render() option (width, antialias, signal, args, files, ...)
+});
+```
+
+The scene animates by reading the `clock` identifier, which sweeps
+`initialClock`..`finalClock` across the frames. It inherits every
+`RenderOptions` field; an invalid `frames` rejects before any render work.
 
 ### Node
 
@@ -111,7 +141,7 @@ appends to the scene and auto-renders; a failed entry rolls back).
 
 REPL commands: `:help`, `:reset`, `:list`, `:source`, `:undo`, `:del N`,
 `:size WxH`, `:q N`, `:aa [threshold|off]`, `:threads N`, `:render`,
-`:example [name]`.
+`:anim N`, `:example [name]`.
 
 GitHub Pages can't send COOP/COEP headers, so the pages use a vendored
 [coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker) to get
@@ -124,13 +154,15 @@ involved; the server binds the IPv4 loopback, so use the numeric address).
 
 ## Memory
 
-The build declares a 4GB shared-memory maximum (it starts at 256MB and
-grows; on Chrome and Firefox the max is mostly address-space reservation).
-Safari and iOS can refuse to instantiate a growable shared memory with a
-4GB max. If you need those targets, rebuild with a lower ceiling:
+The default build declares a 2GB shared-memory maximum (it starts at 256MB and
+grows). Safari and iOS can refuse to instantiate a growable shared memory with a
+4GB max, so 2GB is the safe default for the browser. Chrome and Firefox treat
+the max as mostly address-space reservation, so the published Node CLI image
+(no Safari constraint) is built with 4GB for big renders. Rebuild the artifact
+with a different ceiling via the build arg:
 
 ```sh
-docker buildx build --build-arg WASM_MAX_MEMORY=2GB --target artifact --output type=local,dest=dist .
+docker buildx build --build-arg WASM_MAX_MEMORY=4GB --target artifact --output type=local,dest=dist .
 ```
 
 ## Development

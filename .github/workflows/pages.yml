@@ -1,6 +1,11 @@
 name: pages
 on:
-  push: { branches: [main] }
+  # Gate the deploy on ci: only publish the site after the build-test + 100%
+  # coverage job on main has gone green, so a red build never reaches production.
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -15,12 +20,19 @@ concurrency:
 
 jobs:
   deploy:
+    # workflow_run fires on every ci completion (success or failure); only deploy
+    # on success. A manual workflow_dispatch has no run to gate on, so allow it.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Deploy the exact commit ci tested: workflow_run otherwise defaults to
+          # the default-branch HEAD, which can drift past the triggering run.
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
       - uses: docker/setup-buildx-action@v4
       - name: Build wasm artifact
         uses: docker/build-push-action@v7

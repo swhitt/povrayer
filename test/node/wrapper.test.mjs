@@ -74,6 +74,22 @@ test('stages extra files (flat + nested) and fires onProgress', async () => {
   assert.ok(seen.length > 0, 'onProgress never fired');
 });
 
+test('a files entry named scene.pov cannot clobber the rendered source', async () => {
+  // Regression (staging order): the documented source is written to
+  // /work/scene.pov LAST, after the `files` loop, so a `files` entry that
+  // happens to be named scene.pov can never overwrite the scene being rendered.
+  // Here the source is the valid fixture and the decoy entry is a parse-error
+  // scene; if the decoy won, render() would reject with PovrayError instead of
+  // producing a PNG.
+  const png = await render(scene, {
+    width: 64,
+    height: 48,
+    antialias: false,
+    files: { 'scene.pov': 'sphere {' },
+  });
+  assert.deepEqual([...png.subarray(0, 8)], PNG_SIGNATURE, 'source must win over the files decoy');
+});
+
 test('rejects a files key that escapes /work', async () => {
   await assert.rejects(render(scene, { files: { '../escape.inc': 'nope' } }), (err) => {
     assert.ok(!(err instanceof PovrayError), 'should be a plain staging Error, not PovrayError');

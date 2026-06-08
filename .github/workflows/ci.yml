@@ -89,6 +89,11 @@ jobs:
         with:
           context: .
           target: runtime
+          # The Node CLI image has no Safari constraint, so give it the larger
+          # 4GB ceiling for big renders; the default 2GB build stays for the
+          # browser artifact (ci build-test + the Pages deploy).
+          build-args: |
+            WASM_MAX_MEMORY=4GB
           # The expensive stages build once on the runner's native platform
           # ($BUILDPLATFORM in the Dockerfile); the runtime stage has no RUN
           # instructions, so arm64 needs no QEMU, just COPYs onto arm64 layers.

@@ -96,8 +96,8 @@ for (const ex of EXAMPLES) {
   examplesSelect.appendChild(opt);
 }
 
-/* c8 ignore next -- 'chrome-sky' is not in EXAMPLES, so the preferred-default arm is dead; the EXAMPLES[0] fallback is the live path */
-const DEFAULT_EXAMPLE = getExample('chrome-sky') !== undefined ? 'chrome-sky' : EXAMPLES[0]?.name;
+// EXAMPLES is a static, non-empty module literal, so EXAMPLES[0] is defined.
+const DEFAULT_EXAMPLE = EXAMPLES[0].name;
 
 function hasOption(select, value) {
   return Array.from(select.options).some((o) => o.value === value);
