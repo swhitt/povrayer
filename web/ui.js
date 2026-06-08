@@ -660,6 +660,18 @@ let lastDraftSource = null; // last source actually attempted (draft or explicit
 let lastDraftMs = 0; // last draft's elapsed ms; drives the adaptive debounce
 let pendingFull = false; // an explicit render is waiting on a draft to abort
 
+// Read-only test-observability probe (no behaviour; the app never reads it).
+// Surfaces the draft scheduler's internal state (a debounced fire pending, a
+// draft render in flight, and which source it is rendering) so the browser
+// coverage suite can await the coalescing / supersede / mid-flight-abort
+// transitions deterministically instead of racing the adaptive debounce with
+// fixed sleeps (which broke whenever a cold, slow prior draft inflated it).
+window.__liveDraftProbe = () => ({
+  pending: draftTimer !== null,
+  inFlight: draftCtl !== null,
+  source: draftingSource,
+});
+
 // Scale the debounce with the last draft's elapsed time so a slow scene waits
 // longer between auto-renders and a fast one fires near the floor. Simple
 // last-duration scaling, clamped; no hysteresis/EWMA/multi-pass.

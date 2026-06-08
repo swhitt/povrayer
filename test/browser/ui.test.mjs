@@ -15,8 +15,19 @@ import {
 
 // Hard watchdog: only cleared on success, after browser and server have shut
 // down cleanly.
-const watchdog = setTimeout(() => {
+const watchdog = setTimeout(async () => {
   console.error('watchdog: ui test still running after 300s, force-exiting');
+  // process.exit skips the finally, so flush V8 coverage here too (bounded, in
+  // case the wedge is the browser itself) so a late hang never drops this
+  // page's first-party coverage from the merged report.
+  try {
+    await Promise.race([
+      page ? saveBrowserCoverage(page, 'ui') : Promise.resolve(),
+      new Promise((r) => setTimeout(r, 10_000).unref()),
+    ]);
+  } catch {
+    // best-effort; we're force-exiting regardless
+  }
   process.exit(1);
 }, 300_000);
 
@@ -1138,6 +1149,29 @@ try {
       timeout: t,
     });
 
+  // Floor the adaptive debounce by rendering one fast (sphere) draft and letting
+  // it settle, so lastDraftMs (which the debounce scales off) is small. A slow
+  // prior draft (e.g. the q11 cornell below) otherwise inflates the debounce
+  // toward its 2s cap; a draft scheduled then fires a full ~2s later and can
+  // linger into the next section, leaving a stray render in flight under an
+  // assertion that expects idle. Flooring it keeps every fireDraft prompt.
+  const floorDebounce = async () => {
+    await typeScene(LIVE_SCENE);
+    await page.waitForFunction(
+      () => {
+        const o = document.getElementById('output');
+        return (
+          document.getElementById('status').dataset.state === 'draft' &&
+          o.naturalWidth === 320 &&
+          o.naturalHeight === 240
+        );
+      },
+      null,
+      { timeout: 60_000 }
+    );
+    await waitIdle();
+  };
+
   // Fresh page: a known scene, full 512x384, and the toggle restored OFF (the
   // `typeof saved.liveDraft === 'boolean'` restore arm). Start with drafts off
   // so the overlay/scroll assertions run without a render firing underneath.
@@ -1357,18 +1391,55 @@ try {
   );
 
   // In-flight coalescing: while a draft renders, a same-text re-input is a no-op
-  // (already rendering this exact source), and a newer valid edit supersedes it
-  // (abort-the-stale, render the latest). Quality 11 stretches the draft so both
-  // re-inputs land while it is still in flight.
+  // (already rendering this exact source, ui.js 702), and a newer valid edit
+  // supersedes it (abort-the-stale + reschedule, ui.js 703). Driven off the
+  // window.__liveDraftProbe state so each fireDraft transition is awaited
+  // deterministically instead of raced against the adaptive debounce with fixed
+  // sleeps (the cold flake: a stale slow prior draft inflated the debounce past
+  // the in-flight draft's lifetime, so the supersede never landed mid-flight).
+  //
+  // First pin that debounce near its 250ms floor (the engine is thoroughly warm
+  // by now, so the sphere draft is quick) and reset the stale lastDraftMs it
+  // scales off.
+  await floorDebounce();
+
+  // q11 cornell on one thread stays in flight for seconds, so every fireDraft
+  // below (now firing at the floored debounce) lands while it is still live.
   await page.selectOption('#quality', '11');
   await typeScene(cornellA);
-  await waitBusy();
-  await page.evaluate(() => document.getElementById('editor').dispatchEvent(new Event('input'))); // same text
-  await page.waitForTimeout(500); // fireDraft sees src === draftingSource -> no-op
-  await typeScene(cornellB); // newer text supersedes the in-flight draft
-  await page.waitForTimeout(500);
+  await page.waitForFunction(
+    (s) => {
+      const d = window.__liveDraftProbe();
+      return d.inFlight && d.source === s;
+    },
+    cornellA,
+    { timeout: 60_000 }
+  );
+  // Same text: fireDraft sees src === draftingSource and bails (702). The
+  // scheduled fire clears the pending timer with the SAME draft still in flight
+  // and no new draft started, which is exactly the no-op branch having run.
+  await page.evaluate(() => document.getElementById('editor').dispatchEvent(new Event('input')));
+  await page.waitForFunction(
+    (s) => {
+      const d = window.__liveDraftProbe();
+      return !d.pending && d.inFlight && d.source === s;
+    },
+    cornellA,
+    { timeout: 60_000 }
+  );
+  // Newer text supersedes the in-flight draft (703): abort + reschedule, so the
+  // drafting source flips to cornellB once the abort's finally restarts it.
+  await typeScene(cornellB);
+  await page.waitForFunction((s) => window.__liveDraftProbe().source === s, cornellB, {
+    timeout: 60_000,
+  });
   await waitIdle();
   await page.selectOption('#quality', '');
+
+  // The q11 cornell draft just inflated the debounce back toward its cap; floor
+  // it again so the busy-guard / isolation drafts below fire promptly and never
+  // linger into a later section's idle assertion.
+  await floorDebounce();
 
   // Busy guard: a direct render-client call holds the engine while a draft is
   // scheduled, so fireDraft bails at the defensive isBusy() check (no pile-up).
@@ -1459,7 +1530,9 @@ try {
   );
   await typeScene(cornellA + '\n// reactivate\n'); // distinct + slow; nothing fires while OFF
   await page.click('#live-toggle'); // ON -> schedules a draft for the fresh scene
-  await waitBusy();
+  // Await the draft actually being in flight (draftCtl set) before flipping OFF,
+  // so the toggle's draftCtl?.abort() takes its truthy (mid-flight) branch.
+  await page.waitForFunction(() => window.__liveDraftProbe().inFlight, null, { timeout: 60_000 });
   await page.click('#live-toggle'); // OFF mid-flight -> draftCtl?.abort() actually aborts
   assert.equal(await ariaPressed('live-toggle'), 'false', 'live toggles OFF again, mid-draft');
   await waitIdle();

@@ -20,8 +20,19 @@ const rejectAfter = (ms, message) =>
 
 // Hard watchdog: only cleared on success, after browser and server have shut
 // down cleanly. Anything wedged (including a hung browser.close()) dies here.
-const watchdog = setTimeout(() => {
+const watchdog = setTimeout(async () => {
   console.error('watchdog: browser test still running after 180s, force-exiting');
+  // process.exit skips the finally, so flush V8 coverage here too (bounded, in
+  // case the wedge is the browser itself) so a late hang never drops this
+  // page's first-party coverage from the merged report.
+  try {
+    await Promise.race([
+      page ? saveBrowserCoverage(page, 'browser') : Promise.resolve(),
+      new Promise((r) => setTimeout(r, 10_000).unref()),
+    ]);
+  } catch {
+    // best-effort; we're force-exiting regardless
+  }
   process.exit(1);
 }, 180_000);
 
