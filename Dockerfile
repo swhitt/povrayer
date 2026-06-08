@@ -114,6 +114,7 @@ RUN mkdir -p /out && cd povray && em++ \
       -sEXPORTED_FUNCTIONS=_main \
       -sEXPORTED_RUNTIME_METHODS=callMain,FS,PThread \
       ${LINK_EXTRA} \
+      --embed-file distribution/ini@/usr/share/povray-3.8/ini \
       --embed-file distribution/include@/usr/share/povray-3.8/include
 
 # Arch-independent JS output; same native-platform treatment as the builder.
