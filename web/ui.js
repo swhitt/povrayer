@@ -584,7 +584,13 @@ async function startRender() {
     setStatus(doneLine(elapsedMs, opts, rawLog), 'done');
     logSummary.textContent = summaryWithCount('render log');
     if (!matchMedia('(min-width: 900px)').matches) {
-      output.scrollIntoView({ block: 'nearest' });
+      // Wait for the intrinsic size: block:'nearest' measures the box, and an
+      // undecoded blob img is still 0px tall, which reads as "already in
+      // view" and turns the scroll into a no-op.
+      output
+        .decode()
+        .catch(() => {})
+        .then(() => output.scrollIntoView({ block: 'nearest' }));
     }
   } catch (err) {
     commitProgressLine();

@@ -138,7 +138,9 @@ h1 .orb {
 }
 
 footer {
-  padding: 8px 12px;
+  /* env() is 0 in normal browsing contexts; it pads above the iOS home
+     indicator when standalone/viewport-fit=cover hands out real insets. */
+  padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--border);
   color: var(--dim);
   font-size: var(--fs-chrome);
@@ -500,6 +502,7 @@ body.ui main > * {
 /* Download anchor + fit/1:1 zoom toggle. */
 .meta-row {
   display: flex;
+  flex-wrap: wrap; /* download + zoom stack instead of overflowing on narrow panes */
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
@@ -660,7 +663,9 @@ figure.result.pending > div {
 }
 
 #repl-status {
-  padding: 8px 12px;
+  /* Same env() story as the page footer: free in browsers, load-bearing in
+     standalone/cover contexts where the home indicator overlaps. */
+  padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--border);
   font-size: var(--fs-chrome);
   line-height: 1.4;
@@ -677,10 +682,26 @@ figure.result.pending > div {
   }
 }
 
+/* Single-column widths: cap the editor so controls and the output pane stay
+   within a scroll-flick's reach. The #gutter cap is load-bearing: a flex row
+   is as tall as its tallest item, so the uncapped gutter (one line per source
+   line) would re-inflate #editor-wrap far past the editor's own max-height
+   and leave a dead panel below the textarea. */
+@media (max-width: 899.98px) {
+  #editor,
+  #gutter {
+    max-height: 60vh;
+  }
+}
+
 @media (max-width: 600px) {
+  #editor,
+  #gutter {
+    max-height: 45vh; /* shrinks the swipe trap */
+  }
+
   #editor {
     min-height: 35vh;
-    max-height: 45vh; /* shrinks the swipe trap */
   }
 
   /* The primary CTA becomes a full-width thumb bar on its own stable row. */
@@ -710,6 +731,28 @@ figure.result.pending > div {
   /* Must track #editor (a textarea) or the line numbers misalign. */
   #gutter {
     font-size: 16px;
+  }
+
+  /* The REPL input is the page's primary control; its own min-height rule
+     (an id selector) outranks the textarea floor above, so the 44px floor
+     needs the same specificity. */
+  #input {
+    min-height: 44px;
+  }
+
+  /* Inline links (nav, footer, save png): vertical padding on inline boxes
+     expands the tap target without moving line boxes, so the chrome stays
+     visually identical while the hit area reaches ~44px. */
+  header nav a,
+  footer a,
+  figure.result figcaption a {
+    padding-block: 16px;
+  }
+
+  /* The log disclosure is a primary tap target after a render. summary is
+     block-level, so this one genuinely grows the row. */
+  summary {
+    padding-block: 13px;
   }
 }
 
@@ -797,6 +840,9 @@ figure.result.pending > div {
   background: var(--panel);
   border: 1px solid var(--border);
   padding: 10px 12px;
+  /* Notes carry slash-joined identifier runs (global_settings/camera/...)
+     longer than a phone column; without this they bleed past the panel. */
+  overflow-wrap: anywhere;
 }
 .help .help-head {
   color: var(--text);
