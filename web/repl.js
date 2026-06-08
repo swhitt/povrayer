@@ -5,7 +5,25 @@ import { renderScene, isAbortError, formatError } from './render-client.js';
 import { EXAMPLES, getExample } from './examples.js';
 
 const isoWarning = document.getElementById('iso-warning');
-if (!crossOriginIsolated) isoWarning.hidden = false;
+if (crossOriginIsolated) {
+  sessionStorage.removeItem('coi-retry');
+} else {
+  isoWarning.hidden = false;
+  // coi-serviceworker first-visit race: on a fast load the SW can install,
+  // activate, and claim() the page before the script's reload branches run,
+  // leaving the page controlled but not isolated and never self-reloading.
+  // A controlled page does get the injected headers on its next load, so
+  // reload as soon as the SW takes (or already has) control; the
+  // sessionStorage guard stops a loop when isolation fails for some other
+  // reason.
+  const coiRetry = () => {
+    if (sessionStorage.getItem('coi-retry')) return;
+    sessionStorage.setItem('coi-retry', '1');
+    location.reload();
+  };
+  if (navigator.serviceWorker?.controller) coiRetry();
+  else navigator.serviceWorker?.addEventListener('controllerchange', coiRetry);
+}
 
 const scrollback = document.getElementById('scrollback');
 const form = document.getElementById('input-form');
@@ -37,7 +55,7 @@ const SCROLLBACK_CAP = 300;
 // --- scene assembly ----------------------------------------------------------
 
 // Each scaffold line is injected only when its keyword test fails against the
-// accumulated source (word-boundary regex; false positives in comments/strings
+// accumulated source (word-boundary regex; false positives in string literals
 // are an accepted v1 tradeoff), so a user-supplied camera never collides with
 // the default one (POV-Ray errors on duplicate cameras).
 const SCAFFOLD = [
@@ -48,9 +66,18 @@ const SCAFFOLD = [
   [/\bbackground\b/, 'background { color rgb <0.15, 0.15, 0.18> }'],
 ];
 
+// Comments must not satisfy a scaffold test: "// fix camera later" would
+// otherwise suppress the camera scaffold and silently render black from
+// POV-Ray's fallback origin camera, so the keyword probes run against a
+// comment-stripped copy.
+function stripComments(sdl) {
+  return sdl.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, '');
+}
+
 function assembleScene() {
   const body = entries.map((e) => e.source).join('\n');
-  const injected = SCAFFOLD.filter(([re]) => !re.test(body)).map(([, line]) => line);
+  const probe = stripComments(body);
+  const injected = SCAFFOLD.filter(([re]) => !re.test(probe)).map(([, line]) => line);
   return injected.length ? injected.join('\n') + '\n\n' + body : body;
 }
 
@@ -161,6 +188,7 @@ const HELP_TEXT = `commands:
   :help                this text
   :reset               clear scene, restore default settings
   :list                numbered scene entries
+  :source              assembled scene as POV-Ray parses it (with line numbers)
   :undo                remove last entry, re-render
   :del N               remove entry N, re-render
   :size WxH            render size (each 8..2048)
@@ -170,10 +198,13 @@ const HELP_TEXT = `commands:
   :render              re-render the current scene
   :example [name]      list examples / replace scene with one
 
+settings (:size/:q/:aa/:threads) take effect on the next render.
 anything else is SDL appended to the scene; each entry auto-renders.
+Shift+Enter inserts a newline; ArrowUp/ArrowDown walk input history.
 missing #version/global_settings/camera/light_source/background are
 injected with defaults (a #version in a later entry parses after the
-scaffold; POV-Ray warns but renders).
+scaffold; POV-Ray warns but renders). error line numbers refer to the
+assembled scene; :source shows it.
 a fresh entry that fails (or is cancelled with Escape) rolls back
 automatically; :undo/:del/:render/:example keep their state on failure.
 while rendering, input is disabled and Escape cancels.`;
@@ -226,6 +257,21 @@ function dispatchCommand(text) {
     case 'list':
       appendBlock('info', listEntries());
       break;
+
+    // The scene POV-Ray actually parses (scaffold + entries), numbered so
+    // "File '/work/scene.pov' line N" in errors maps to something visible.
+    case 'source': {
+      if (!entries.length) {
+        appendBlock('info', 'scene empty');
+        break;
+      }
+      const numbered = assembleScene()
+        .split('\n')
+        .map((l, i) => `${String(i + 1).padStart(3)}  ${l}`)
+        .join('\n');
+      appendBlock('info', numbered);
+      break;
+    }
 
     case 'undo':
       if (!entries.length) appendBlock('error', 'nothing to undo');

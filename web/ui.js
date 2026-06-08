@@ -4,7 +4,25 @@ import { renderScene, isBusy, isAbortError, formatError, PovrayError } from './r
 import { EXAMPLES, getExample } from './examples.js';
 
 const isoWarning = document.getElementById('iso-warning');
-if (!crossOriginIsolated) isoWarning.hidden = false;
+if (crossOriginIsolated) {
+  sessionStorage.removeItem('coi-retry');
+} else {
+  isoWarning.hidden = false;
+  // coi-serviceworker first-visit race: on a fast load the SW can install,
+  // activate, and claim() the page before the script's reload branches run,
+  // leaving the page controlled but not isolated and never self-reloading.
+  // A controlled page does get the injected headers on its next load, so
+  // reload as soon as the SW takes (or already has) control; the
+  // sessionStorage guard stops a loop when isolation fails for some other
+  // reason.
+  const coiRetry = () => {
+    if (sessionStorage.getItem('coi-retry')) return;
+    sessionStorage.setItem('coi-retry', '1');
+    location.reload();
+  };
+  if (navigator.serviceWorker?.controller) coiRetry();
+  else navigator.serviceWorker?.addEventListener('controllerchange', coiRetry);
+}
 
 const examplesSelect = document.getElementById('examples');
 const editor = document.getElementById('editor');
@@ -16,6 +34,7 @@ const threadsInput = document.getElementById('threads');
 const renderBtn = document.getElementById('render-btn');
 const cancelBtn = document.getElementById('cancel-btn');
 const status = document.getElementById('status');
+const errorBox = document.getElementById('error');
 const output = document.getElementById('output');
 const downloadBtn = document.getElementById('download-btn');
 const log = document.getElementById('log');
@@ -82,6 +101,9 @@ async function startRender() {
 
   const opts = collectOptions();
   log.textContent = '';
+  errorBox.hidden = true;
+  errorBox.textContent = '';
+  status.classList.remove('error');
   status.textContent = 'rendering...';
   renderBtn.disabled = true;
   cancelBtn.disabled = false;
@@ -105,12 +127,16 @@ async function startRender() {
     // Error and cancel both keep the previous image and download link.
     if (isAbortError(err)) {
       status.textContent = 'cancelled';
-    } else if (err instanceof PovrayError) {
-      status.textContent = `error (exit ${err.exitCode})`;
-      appendLog('\n--- render failed ---\n' + formatError(err));
     } else {
-      status.textContent = 'error';
-      appendLog('\n--- render failed ---\n' + formatError(err));
+      status.textContent =
+        err instanceof PovrayError ? `error (exit ${err.exitCode})` : 'error';
+      status.classList.add('error');
+      // The full stream is already in #log via onProgress; show the trimmed,
+      // readable version in its own red box instead of burying a duplicate
+      // at the bottom of the log.
+      errorBox.textContent = formatError(err);
+      errorBox.hidden = false;
+      errorBox.scrollIntoView({ block: 'nearest' });
     }
   } finally {
     abortCtl = null;

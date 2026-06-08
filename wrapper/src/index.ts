@@ -177,17 +177,6 @@ export async function render(
     const factory = await loadFactory();
 
     const logLines: string[] = [];
-    const append = (line: string) => {
-        logLines.push(line);
-        if (onProgress) {
-            try {
-                onProgress(line);
-            } catch {
-                // A throwing progress callback must never corrupt the render:
-                // print/printErr are invoked from emscripten's output plumbing.
-            }
-        }
-    };
 
     let resolveExit!: (code: number) => void;
     let rejectExit!: (reason: Error) => void;
@@ -199,6 +188,33 @@ export async function render(
     // (e.g. a staging error); mark it observed so that never surfaces as an
     // unhandled rejection. The real `await exited` below still sees the state.
     exited.catch(() => {});
+
+    const append = (line: string) => {
+        logLines.push(line);
+        if (onProgress) {
+            try {
+                onProgress(line);
+            } catch {
+                // A throwing progress callback must never corrupt the render:
+                // print/printErr are invoked from emscripten's output plumbing.
+            }
+        }
+        // An uncaught error in a pthread worker (e.g. a scene that overflows
+        // a render thread's stack) reaches neither onExit nor onAbort:
+        // emscripten's worker.onerror reports it through err() -- our
+        // printErr -- with this fixed prefix, then rethrows outside any
+        // promise chain, which would leave `exited` pending forever. Detect
+        // the report and fail the render instead of hanging.
+        if (line.startsWith("worker sent an error!")) {
+            rejectExit(
+                new PovrayError(
+                    `POV-Ray render thread crashed: ${line}`,
+                    -1,
+                    logLines.join("\n"),
+                ),
+            );
+        }
+    };
 
     const instance = await factory({
         print: append,

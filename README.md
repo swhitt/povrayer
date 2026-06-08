@@ -109,8 +109,9 @@ Live, no install: <https://swhitt.github.io/povrayer/> (scene editor) and
 <https://swhitt.github.io/povrayer/repl.html> (an SDL REPL: each entry
 appends to the scene and auto-renders; a failed entry rolls back).
 
-REPL commands: `:help`, `:reset`, `:list`, `:undo`, `:del N`, `:size WxH`,
-`:q N`, `:aa [threshold|off]`, `:threads N`, `:render`, `:example [name]`.
+REPL commands: `:help`, `:reset`, `:list`, `:source`, `:undo`, `:del N`,
+`:size WxH`, `:q N`, `:aa [threshold|off]`, `:threads N`, `:render`,
+`:example [name]`.
 
 GitHub Pages can't send COOP/COEP headers, so the pages use a vendored
 [coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker) to get
@@ -118,8 +119,8 @@ cross-origin isolation; the first visit reloads once while the worker
 installs.
 
 Locally: `make web` builds `dist/` if needed and serves the same pages at
-<http://localhost:8080/> with real COOP/COEP headers (no service worker
-involved).
+<http://127.0.0.1:8080/> with real COOP/COEP headers (no service worker
+involved; the server binds the IPv4 loopback, so use the numeric address).
 
 ## Memory
 

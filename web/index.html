@@ -10,15 +10,15 @@
 </head>
 <body class="ui">
 <header><h1>povrayer</h1><nav><a href="./repl.html">REPL</a></nav></header>
-<div id="iso-warning" hidden>Not cross-origin isolated: SharedArrayBuffer is unavailable and rendering can't start. If this is the first visit, the service worker is installing and the page will reload itself.</div>
+<div id="iso-warning" hidden>Not cross-origin isolated: SharedArrayBuffer is unavailable and rendering can't start. If this is the first visit, the service worker is installing and the page will reload itself; if it doesn't, refresh manually.</div>
 <main>
   <section id="editor-pane">
     <label>example <select id="examples"></select></label>
     <textarea id="editor" spellcheck="false"></textarea>
     <div id="controls">
-      <label>w <input id="width" type="number" min="8" max="2048" value="512"></label>
-      <label>h <input id="height" type="number" min="8" max="2048" value="384"></label>
-      <label>q <select id="quality">
+      <label title="width (pixels)">w <input id="width" type="number" min="8" max="2048" value="512"></label>
+      <label title="height (pixels)">h <input id="height" type="number" min="8" max="2048" value="384"></label>
+      <label title="render quality, 0..11 (lower is faster)">q <select id="quality">
         <option value="" selected>default</option>
         <option>0</option>
         <option>1</option>
@@ -33,19 +33,20 @@
         <option>10</option>
         <option>11</option>
       </select></label>
-      <label>aa <select id="antialias">
+      <label title="antialias threshold (off is fastest)">aa <select id="antialias">
         <option value="off">off</option>
         <option value="0.3" selected>0.3</option>
         <option value="0.1">0.1</option>
         <option value="0.05">0.05</option>
       </select></label>
-      <label>threads <input id="threads" type="number" min="1" max="32" placeholder="auto"></label>
-      <button id="render-btn" type="button">Render</button>
+      <label title="worker threads (auto = hardware concurrency)">threads <input id="threads" type="number" min="1" max="32" placeholder="auto"></label>
+      <button id="render-btn" type="button" title="Ctrl/Cmd+Enter">Render</button>
       <button id="cancel-btn" type="button" disabled>Cancel</button>
     </div>
   </section>
   <section id="output-pane">
     <div id="status">idle</div>
+    <pre id="error" class="error" hidden></pre>
     <img id="output" alt="render output" hidden>
     <a id="download-btn" hidden download="render.png">Download PNG</a>
     <pre id="log"></pre>

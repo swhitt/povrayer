@@ -131,6 +131,12 @@ body.ui main {
   padding: 12px;
 }
 
+/* Grid items default to min-width auto (= min-content), so a long example
+   title in the select would push the column past a narrow viewport. */
+body.ui main > * {
+  min-width: 0;
+}
+
 @media (min-width: 900px) {
   body.ui main {
     grid-template-columns: 1fr 1fr;
@@ -140,6 +146,10 @@ body.ui main {
 #editor-pane > label {
   display: block;
   margin-bottom: 8px;
+}
+
+#examples {
+  max-width: 100%;
 }
 
 #editor {
@@ -178,6 +188,20 @@ body.ui main {
   margin-bottom: 8px;
 }
 
+#status.error {
+  color: var(--error);
+}
+
+/* Trimmed failure excerpt; .error sets the text color. */
+#error {
+  background: var(--panel);
+  border: 1px solid var(--error);
+  border-radius: 3px;
+  padding: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
 #output {
   display: block;
   max-width: 100%;
@@ -208,6 +232,11 @@ body.ui main {
   font-size: 12px;
   max-height: 40vh;
   overflow-y: auto;
+}
+
+/* No render yet: don't show an empty bordered strip. */
+#log:empty {
+  display: none;
 }
 
 /* ---- REPL page ---- */

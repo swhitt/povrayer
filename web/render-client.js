@@ -46,20 +46,28 @@ export function isAbortError(err) {
   return err instanceof DOMException && err.name === 'AbortError';
 }
 
+// Option-summary banner noise that lands in the error window when parsing
+// fails early: "  Warning Stream to console.......On " lines and the
+// "==== [Parsing...] ====" section markers right before the first error.
+const BANNER_NOISE = /Streams? to console\.+\s*O(n|ff)\s*$|^==== \[/;
+
 /**
  * Human-readable message for a failed render.
  *
  * For PovrayError, trims the (often huge) log down to the relevant lines:
  * POV-Ray prints the offending source excerpt and `File '...' line N`
  * immediately BEFORE the `Parse Error:` line, hence the 6-line window on
- * each side of the first error-looking line.
+ * each side of the first error-looking line (minus banner noise).
  */
 export function formatError(err) {
   if (err instanceof PovrayError) {
     const lines = err.log.split('\n');
-    const i = lines.findIndex((l) => /parse error|^fatal|error:/i.test(l));
-    const relevant =
+    const i = lines.findIndex((l) =>
+      /parse error|^fatal|error:|worker sent an error/i.test(l)
+    );
+    const excerpt =
       i >= 0 ? lines.slice(Math.max(0, i - 6), i + 6) : lines.slice(-12);
+    const relevant = excerpt.filter((l) => !BANNER_NOISE.test(l));
     return (`exit ${err.exitCode}\n` + relevant.join('\n')).trimEnd();
   }
   if (isAbortError(err)) return 'render cancelled';
