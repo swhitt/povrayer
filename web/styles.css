@@ -35,6 +35,20 @@
   --mat-a: #181b21; /* checker mat squares (decorative) */
   --mat-b: #121419;
 
+  /* Syntax-highlight palette for the editor overlay (web/highlight.js). Muted,
+     low-saturation, harmonious on the near-black bg: a cool blue->teal->green
+     sweep for keyword/builtin/string, control-flow violet for directives, one
+     desaturated warm rose for numbers, slate grey for comments. None are
+     yellow/gold (so they never fight --accent) and none coral (so they stay
+     clear of --error). All are clearly distinct from --text and --dim so UI
+     chrome never reads as syntax. */
+  --syn-comment: #646e7d; /* slate grey, italic; recedes by design */
+  --syn-keyword: #7fa6c9; /* desaturated steel blue, structural vocabulary */
+  --syn-builtin: #5fb3a1; /* muted sea-teal, math/vector fns + x/y/z/clock/pi */
+  --syn-string: #9bb56b; /* soft sage/olive, strings + include paths */
+  --syn-number: #c890a0; /* dusty rose, dense numerics */
+  --syn-directive: #a98fd0; /* muted violet, #declare/#for/#if/#macro */
+
   /* Type scale: 4 steps, monospace only. */
   --fs-brand: 20px; /* / 1.2, w700, wordmark only */
   --fs-body: 13px; /* / 1.45, editor, REPL src+input, controls, status */
@@ -278,6 +292,13 @@ label {
   color: var(--error);
 }
 
+/* Live-draft preview status: calm and accent-free (dim; the busy-pulse ::after
+   never triggers since it keys on data-state='busy'). Distinct from 'done'
+   (--text) so a draft never masquerades as the full-quality result. */
+#status[data-state='draft'] {
+  color: var(--dim);
+}
+
 /* Pulsing trailing ellipsis: alive is distinguishable from hung. The busy
    text already reads "rendering…"; this appends the animated tail. The pulse
    animation itself is gated in the motion block below. */
@@ -409,6 +430,14 @@ body.ui main > * {
 
 #editor-wrap #editor {
   border: none; /* the wrap carries the control boundary */
+  /* The textarea text goes transparent so the colored overlay behind it shows
+     through; the caret and the native ::selection stay in this (z-index:1)
+     layer so both remain visible. */
+  position: relative;
+  z-index: 1;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text);
 }
 
 #editor {
@@ -422,6 +451,64 @@ body.ui main > * {
   padding: 8px;
   line-height: 1.45;
   overflow: auto; /* wrap="off": horizontal scroll is the honest trade */
+}
+
+/* Syntax overlay: web/highlight.js paints a colored layer that sits behind the
+   transparent-text textarea inside #editor-stack. Absolutely positioned so it
+   never affects layout (the textarea alone sizes the stack via min-height +
+   resize, and the overlay fills it via inset:0); JS scroll-syncs both axes and
+   repaints it on every input. Every metric below MUST match #editor exactly
+   (font, line-height, padding, tab-size, white-space, letter-spacing) or the
+   colored text drifts off the caret. */
+#editor-stack {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+#editor-highlight {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 8px;
+  border: 0;
+  overflow: hidden; /* JS drives scrollTop/scrollLeft; it never scrolls itself */
+  white-space: pre; /* matches the textarea's wrap="off" */
+  pointer-events: none;
+  color: var(--text);
+  font-family: inherit; /* override the <pre> UA monospace; match the textarea */
+  font-size: inherit;
+  line-height: 1.45;
+  letter-spacing: normal;
+  tab-size: 2;
+}
+
+#editor-code {
+  font: inherit; /* override the <code> UA monospace */
+}
+
+/* Token colors: only the language vocabulary lights up. Punctuation, operators,
+   vectors (< >), and the user's own #declare/#macro names stay --text so dense
+   scenes don't turn garish. */
+#editor-highlight .tok-comment {
+  color: var(--syn-comment);
+  font-style: italic;
+}
+#editor-highlight .tok-keyword {
+  color: var(--syn-keyword);
+}
+#editor-highlight .tok-builtin {
+  color: var(--syn-builtin);
+}
+#editor-highlight .tok-string {
+  color: var(--syn-string);
+}
+#editor-highlight .tok-number {
+  color: var(--syn-number);
+}
+#editor-highlight .tok-directive {
+  color: var(--syn-directive);
 }
 
 #controls {
@@ -470,6 +557,15 @@ body.ui main > * {
   margin-bottom: 8px;
   font-size: var(--fs-out);
   line-height: 1.5;
+}
+
+/* Quiet draft-error variant: a live-draft parse error keeps the last good
+   image and surfaces the message non-modally, without the loud red box or the
+   rise entrance. */
+#error.draft {
+  border-color: var(--border-strong);
+  color: var(--dim);
+  animation: none;
 }
 
 /* The plate: the one shadow and the one textured background in the app. */
@@ -842,8 +938,12 @@ figure.result.pending > div {
     min-height: 44px; /* meets the 44px coarse-pointer tap target */
   }
 
-  /* Must track #editor (a textarea) or the line numbers misalign. */
-  #gutter {
+  /* Must track #editor (a textarea) or the line numbers / syntax overlay
+     misalign. The overlay's base font-size:inherit would resolve to the body
+     13px (it inherits from the stack, not the 16px textarea), so it needs the
+     bump explicitly here. */
+  #gutter,
+  #editor-highlight {
     font-size: 16px;
   }
 

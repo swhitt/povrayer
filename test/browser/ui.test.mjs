@@ -1088,6 +1088,382 @@ try {
     { frames: '24', fps: '12' },
     'non-numeric persisted frames/fps should fall back to defaults'
   );
+
+  // ===========================================================================
+  // live-draft auto-render (still mode only): the syntax overlay (paint +
+  // escaping + scroll sync), the persisted toggle, the validity gate, the draft
+  // state machine (success swap / non-destructive error / in-flight coalescing /
+  // explicit-render priority), the isolation + busy guards, and animate
+  // suppression. Drives the deliverable A/B/C code in ui.js that the still/
+  // animate paths above never reach (no draft ever fired up to here).
+  // ===========================================================================
+  const LIVE_SCENE = [
+    '#version 3.8;',
+    'global_settings { assumed_gamma 1.0 }',
+    'camera { location <0,0,-4> look_at 0 }',
+    'light_source { <2,4,-3> rgb 1 }',
+    'sphere { 0, 1 pigment { rgb <1,0,0> } }',
+    '',
+  ].join('\n');
+  const LIVE_SCENE2 = LIVE_SCENE + '// variant two\n';
+  // Balanced + #version-present (so the validity gate passes) but POV-Ray
+  // rejects the bogus pigment keyword: exercises the non-destructive draft error.
+  const DRAFT_BROKEN = [
+    '#version 3.8;',
+    'global_settings { assumed_gamma 1.0 }',
+    'camera { location <0,0,-4> look_at 0 }',
+    'light_source { <2,4,-3> rgb 1 }',
+    'sphere { 0, 1 pigment { BROKEN_NOPE } }',
+    '',
+  ].join('\n');
+
+  // Replace the editor contents and fire the input event the controller hooks.
+  const typeScene = (value) =>
+    page.evaluate((v) => {
+      const ed = document.getElementById('editor');
+      ed.value = v;
+      ed.dispatchEvent(new Event('input'));
+    }, value);
+  const outSrc = () => page.evaluate(() => document.getElementById('output').src);
+  const ariaPressed = (id) =>
+    page.evaluate((i) => document.getElementById(i).getAttribute('aria-pressed'), id);
+  // render-client is a URL-keyed module singleton, so this import returns the
+  // very instance ui.js drives: isBusy() reflects an in-flight draft.
+  const waitBusy = (t = 60_000) =>
+    page.waitForFunction(async () => (await import('/render-client.js')).isBusy(), null, {
+      timeout: t,
+    });
+  const waitIdle = (t = 60_000) =>
+    page.waitForFunction(async () => !(await import('/render-client.js')).isBusy(), null, {
+      timeout: t,
+    });
+
+  // Fresh page: a known scene, full 512x384, and the toggle restored OFF (the
+  // `typeof saved.liveDraft === 'boolean'` restore arm). Start with drafts off
+  // so the overlay/scroll assertions run without a render firing underneath.
+  await seedReload(
+    JSON.stringify({
+      source: LIVE_SCENE,
+      width: '512',
+      height: '384',
+      antialias: '0.3',
+      liveDraft: false,
+    })
+  );
+  assert.equal(await ariaPressed('live-toggle'), 'false', 'a saved liveDraft:false restores OFF');
+  assert.equal(
+    await page.evaluate(() => document.body.dataset.mode),
+    'still',
+    'the live-draft suite runs in still mode'
+  );
+
+  // Overlay paint: the colored layer carries token spans for the scene and
+  // escapes the vector angle brackets (never raw markup).
+  const paint = await page.evaluate(() => document.getElementById('editor-code').innerHTML);
+  assert.ok(paint.includes('tok-keyword'), 'overlay should color SDL keywords');
+  assert.ok(paint.includes('tok-directive'), 'overlay should color the #version directive');
+  assert.ok(
+    paint.includes('&lt;') && paint.includes('&gt;'),
+    'overlay must escape vector brackets'
+  );
+
+  // Typing a raw '<' stays escaped: the overlay <code> text must equal the
+  // editor value byte-for-byte (proves no markup injection / no drift).
+  await typeScene('box { <');
+  assert.ok(
+    await page.evaluate(
+      () =>
+        document.getElementById('editor-code').textContent ===
+        document.getElementById('editor').value
+    ),
+    'overlay text must equal the editor value (escaped, no injection)'
+  );
+
+  // Scroll sync: the overlay mirrors BOTH axes (the gutter mirrors only the top).
+  await page.evaluate(() => {
+    const ed = document.getElementById('editor');
+    ed.value = Array.from({ length: 80 }, (_, i) => `line ${i} ${'x'.repeat(140)}`).join('\n');
+    ed.dispatchEvent(new Event('input'));
+    ed.scrollTop = 60;
+    ed.scrollLeft = 40;
+    ed.dispatchEvent(new Event('scroll'));
+  });
+  const sync = await page.evaluate(() => {
+    const ed = document.getElementById('editor');
+    const hl = document.getElementById('editor-highlight');
+    const g = document.getElementById('gutter');
+    return {
+      hlTop: hl.scrollTop,
+      hlLeft: hl.scrollLeft,
+      edTop: ed.scrollTop,
+      edLeft: ed.scrollLeft,
+      gTop: g.scrollTop,
+    };
+  });
+  assert.equal(sync.hlTop, sync.edTop, 'overlay scrollTop must mirror the editor');
+  assert.equal(sync.hlLeft, sync.edLeft, 'overlay scrollLeft must mirror the editor');
+  assert.equal(sync.gTop, sync.edTop, 'gutter mirrors the editor scrollTop');
+
+  // Toggle live ON: the current scene auto-renders a downscaled (320-edge,
+  // AA-off) draft, clearly distinct from the full 512x384 Render output.
+  await typeScene(LIVE_SCENE);
+  await page.click('#live-toggle');
+  assert.equal(await ariaPressed('live-toggle'), 'true', 'toggling shows the pressed state');
+  await page.waitForFunction(
+    () => {
+      const o = document.getElementById('output');
+      return (
+        document.getElementById('status').dataset.state === 'draft' &&
+        o.src.startsWith('blob:') &&
+        !o.hidden &&
+        o.naturalWidth === 320 &&
+        o.naturalHeight === 240
+      );
+    },
+    null,
+    { timeout: 60_000 }
+  );
+  assert.match(
+    await page.evaluate(() => document.getElementById('status').textContent),
+    /live draft · 320×240/,
+    'the draft status reads the downscaled dims in a muted state'
+  );
+  assert.equal(
+    await page.evaluate(() => document.getElementById('download-btn').hidden),
+    true,
+    'a low-res draft preview is not offered for download'
+  );
+  assert.equal(
+    await page.evaluate(() => document.getElementById('output').classList.contains('stale')),
+    false,
+    'a fresh draft image is not stale'
+  );
+
+  // Validity gate: an obviously mid-edit (unbalanced) scene must NOT auto-render.
+  const goodDraftSrc = await outSrc();
+  await typeScene(LIVE_SCENE + '\nsphere { 0, 1'); // dangling '{'
+  await page.waitForTimeout(1200); // well past the (250ms) debounce
+  assert.equal(await outSrc(), goodDraftSrc, 'an unbalanced scene must not fire a draft');
+  assert.equal(
+    await page.evaluate(() => document.getElementById('error').hidden),
+    true,
+    'the gate suppresses before any render, so no error surfaces'
+  );
+
+  // Non-destructive draft error: a balanced + versioned but parse-broken scene
+  // renders, POV-Ray rejects it, the last good image is KEPT, the error shows
+  // quietly (the .draft modifier), and the caret is NOT jumped to a line.
+  const keptW = await page.evaluate(() => document.getElementById('output').naturalWidth);
+  const keptSrc = await outSrc();
+  await typeScene(DRAFT_BROKEN);
+  await page.waitForFunction(
+    () => {
+      const e = document.getElementById('error');
+      return !e.hidden && e.classList.contains('draft');
+    },
+    null,
+    { timeout: 60_000 }
+  );
+  assert.equal(
+    await page.evaluate(() => document.getElementById('output').naturalWidth),
+    keptW,
+    'a draft parse error must keep the last good image'
+  );
+  assert.equal(await outSrc(), keptSrc, 'the kept image src must not change on a draft error');
+  assert.equal(
+    await page.evaluate(() => document.getElementById('output').classList.contains('stale')),
+    false,
+    'the kept image must not be marked stale by a draft error'
+  );
+  assert.match(
+    await page.evaluate(() => document.getElementById('status').textContent),
+    /live draft · error/,
+    'a draft error sets a muted draft-error status'
+  );
+  assert.ok(
+    await page.evaluate(() => {
+      const ed = document.getElementById('editor');
+      return ed.selectionStart === ed.selectionEnd;
+    }),
+    'a draft error must not select/jump the editor caret'
+  );
+
+  // Recover: a fresh valid edit succeeds, swaps the image, and clears the draft
+  // error (also stops the broken-scene backstop retry loop).
+  await typeScene(LIVE_SCENE2);
+  await page.waitForFunction(
+    (prev) => {
+      const o = document.getElementById('output');
+      const e = document.getElementById('error');
+      return (
+        document.getElementById('status').dataset.state === 'draft' &&
+        e.hidden &&
+        o.src.startsWith('blob:') &&
+        o.src !== prev &&
+        o.naturalWidth === 320
+      );
+    },
+    keptSrc,
+    { timeout: 60_000 }
+  );
+  await waitIdle();
+  await page.waitForTimeout(400); // let the success backstop fireDraft no-op (src === last)
+
+  // From here the in-flight scenarios use the radiosity Cornell scene on a
+  // single thread so a DRAFT stays in flight long enough to catch deterministically.
+  const cornell = await page.evaluate(async () =>
+    (await import('/examples.js')).getExample('cornell-mood')
+  );
+  const cornellA = cornell + '\n// inflight-a\n';
+  const cornellB = cornell + '\n// inflight-b\n';
+  await page.fill('#threads', '1');
+
+  // Explicit-render priority: a draft in flight is aborted by clicking Render
+  // (the pendingFull hand-off), and the result is a FULL-dimension image, not
+  // the 320 draft cap.
+  await page.fill('#width', '400');
+  await page.fill('#height', '300');
+  await page.selectOption('#antialias', 'off');
+  await typeScene(cornell);
+  // Click Render from page context the instant the draft is in flight: two
+  // synchronous statements with no round-trip, so draftCtl is guaranteed still
+  // set when startRender runs (it aborts the draft, sets pendingFull, and the
+  // draft's finally restarts it as a full render).
+  await page.evaluate(async () => {
+    const mod = await import('/render-client.js');
+    await new Promise((resolve) => {
+      const check = () => {
+        if (mod.isBusy()) {
+          document.getElementById('render-btn').click();
+          resolve();
+        } else {
+          requestAnimationFrame(check);
+        }
+      };
+      check();
+    });
+  });
+  await page.waitForFunction(
+    () => {
+      const o = document.getElementById('output');
+      return (
+        document.getElementById('status').dataset.state === 'done' &&
+        o.naturalWidth === 400 &&
+        o.naturalHeight === 300
+      );
+    },
+    null,
+    { timeout: 120_000 }
+  );
+
+  // In-flight coalescing: while a draft renders, a same-text re-input is a no-op
+  // (already rendering this exact source), and a newer valid edit supersedes it
+  // (abort-the-stale, render the latest). Quality 11 stretches the draft so both
+  // re-inputs land while it is still in flight.
+  await page.selectOption('#quality', '11');
+  await typeScene(cornellA);
+  await waitBusy();
+  await page.evaluate(() => document.getElementById('editor').dispatchEvent(new Event('input'))); // same text
+  await page.waitForTimeout(500); // fireDraft sees src === draftingSource -> no-op
+  await typeScene(cornellB); // newer text supersedes the in-flight draft
+  await page.waitForTimeout(500);
+  await waitIdle();
+  await page.selectOption('#quality', '');
+
+  // Busy guard: a direct render-client call holds the engine while a draft is
+  // scheduled, so fireDraft bails at the defensive isBusy() check (no pile-up).
+  await page.waitForTimeout(400);
+  await page.evaluate((scene) => {
+    window.__directDone = false;
+    import('/render-client.js').then((mod) => {
+      mod
+        .renderScene(scene, { width: 600, height: 600, antialias: false, threads: 1 })
+        .then((r) => {
+          URL.revokeObjectURL(r.blobUrl);
+          window.__directDone = true;
+        })
+        .catch(() => {
+          window.__directDone = true;
+        });
+    });
+    const ed = document.getElementById('editor');
+    ed.value = scene + '\n// busy-guard\n';
+    ed.dispatchEvent(new Event('input')); // schedules a draft that will hit isBusy()
+  }, cornell);
+  await page.waitForTimeout(700); // the draft fires while the direct render is busy -> bail
+  await page.waitForFunction(() => window.__directDone === true, null, { timeout: 120_000 });
+  await waitIdle();
+
+  // Isolation guard: a scheduled draft that fires after cross-origin isolation
+  // drops must bail before any render (the live preview can't run un-isolated).
+  const isoSrc = await outSrc();
+  await typeScene(LIVE_SCENE + '\n// iso-marker\n');
+  await page.evaluate(() => {
+    Object.defineProperty(window, 'crossOriginIsolated', { configurable: true, get: () => false });
+  });
+  await page.waitForTimeout(700);
+  assert.equal(
+    await page.evaluate(async () => (await import('/render-client.js')).isBusy()),
+    false,
+    'a non-isolated draft must never start a render'
+  );
+  assert.equal(await outSrc(), isoSrc, 'a non-isolated draft must not change the image');
+  await page.evaluate(() => {
+    Object.defineProperty(window, 'crossOriginIsolated', { configurable: true, get: () => true });
+  });
+
+  // Animate suppression: switching to animate aborts an in-flight draft and
+  // hides the still-only toggle; editing while animating fires no still draft.
+  await typeScene(cornellA);
+  await waitBusy();
+  await page.click('#mode-animate'); // setMode aborts the draft, suppresses drafts
+  assert.equal(
+    await page.evaluate(() => document.body.dataset.mode),
+    'animate',
+    'the mode toggle switches to animate'
+  );
+  assert.equal(
+    await page.evaluate(() => getComputedStyle(document.getElementById('live-toggle')).display),
+    'none',
+    'the live toggle is still-only (hidden in animate mode)'
+  );
+  await waitIdle();
+  const animSrc = await outSrc();
+  await typeScene(cornellB);
+  await page.waitForTimeout(700);
+  assert.equal(await outSrc(), animSrc, 'no still draft fires while animating');
+
+  // Back to still re-schedules a preview; let it settle.
+  await page.click('#mode-still');
+  assert.equal(
+    await page.evaluate(() => document.body.dataset.mode),
+    'still',
+    'the mode toggle switches back to still'
+  );
+  await waitIdle();
+  await page.waitForTimeout(400);
+
+  // Persisted toggle OFF: with no draft in flight (the optional-chain abort is a
+  // no-op), then ON again, then OFF mid-flight (the abort actually fires).
+  await page.click('#live-toggle'); // OFF, draftCtl is null -> abort skipped
+  assert.equal(await ariaPressed('live-toggle'), 'false', 'live toggles back OFF');
+  // saveState is debounced (~300ms), so poll the persisted blob rather than read
+  // it the instant after the click.
+  await page.waitForFunction(
+    () => {
+      const raw = localStorage.getItem('povrayer.ui.v1');
+      return !!raw && JSON.parse(raw).liveDraft === false;
+    },
+    null,
+    { timeout: 5_000 }
+  );
+  await typeScene(cornellA + '\n// reactivate\n'); // distinct + slow; nothing fires while OFF
+  await page.click('#live-toggle'); // ON -> schedules a draft for the fresh scene
+  await waitBusy();
+  await page.click('#live-toggle'); // OFF mid-flight -> draftCtl?.abort() actually aborts
+  assert.equal(await ariaPressed('live-toggle'), 'false', 'live toggles OFF again, mid-draft');
+  await waitIdle();
+  await page.fill('#threads', '');
 } catch (err) {
   failure = err;
 } finally {

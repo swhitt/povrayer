@@ -34,17 +34,25 @@
         ></label>
         <div id="editor-wrap">
           <pre id="gutter" aria-hidden="true"></pre>
-          <textarea
-            id="editor"
-            wrap="off"
-            spellcheck="false"
-            autocapitalize="off"
-            autocorrect="off"
-            autocomplete="off"
-            aria-label="POV-Ray scene source"
-            aria-describedby="status"
-            title="Tab indents; Esc then Tab moves focus"
-          ></textarea>
+          <div id="editor-stack">
+            <!-- Syntax-colored layer behind the transparent-text textarea. The
+                 generated HTML lives in the inner <code>, never directly in the
+                 <pre>: the parser strips a leading "\n" that is the first child
+                 of a <pre>, which would misalign a scene whose first line is
+                 blank. <code> is exempt from that rule. -->
+            <pre id="editor-highlight" aria-hidden="true"><code id="editor-code"></code></pre>
+            <textarea
+              id="editor"
+              wrap="off"
+              spellcheck="false"
+              autocapitalize="off"
+              autocorrect="off"
+              autocomplete="off"
+              aria-label="POV-Ray scene source"
+              aria-describedby="status"
+              title="Tab indents; Esc then Tab moves focus"
+            ></textarea>
+          </div>
         </div>
         <div id="controls">
           <span class="seg-group" id="mode-toggle" role="group" aria-label="render mode">
@@ -55,6 +63,15 @@
               animate
             </button>
           </span>
+          <button
+            id="live-toggle"
+            class="toggle-btn still-only"
+            type="button"
+            aria-pressed="true"
+            title="Live draft: auto-render as you type (fast preview)"
+          >
+            live
+          </button>
           <label title="width (pixels)"
             >width <input id="width" type="number" min="8" max="2048" value="512"
           /></label>

@@ -21,6 +21,8 @@ export const WEB_FILES = {
   'ui.js': resolve(repoRoot, 'web/ui.js'),
   'repl.js': resolve(repoRoot, 'web/repl.js'),
   'examples.js': resolve(repoRoot, 'web/examples.js'),
+  'highlight.js': resolve(repoRoot, 'web/highlight.js'),
+  'sdl-validate.js': resolve(repoRoot, 'web/sdl-validate.js'),
 };
 
 // The 100%-or-bust set. Every file the gate enforces; a file missing from the
@@ -30,7 +32,9 @@ export const FIRST_PARTY = [
   resolve(repoRoot, 'src/cli.mjs'),
   resolve(repoRoot, 'test/browser/serve.mjs'),
   resolve(repoRoot, 'web/examples.js'),
+  resolve(repoRoot, 'web/highlight.js'),
   resolve(repoRoot, 'web/render-client.js'),
+  resolve(repoRoot, 'web/sdl-validate.js'),
   resolve(repoRoot, 'web/ui.js'),
   resolve(repoRoot, 'web/repl.js'),
 ];
@@ -43,7 +47,9 @@ export const IGNORE_SCAN_FILES = [
   resolve(repoRoot, 'src/cli.mjs'),
   resolve(repoRoot, 'test/browser/serve.mjs'),
   resolve(repoRoot, 'web/examples.js'),
+  resolve(repoRoot, 'web/highlight.js'),
   resolve(repoRoot, 'web/render-client.js'),
+  resolve(repoRoot, 'web/sdl-validate.js'),
   resolve(repoRoot, 'web/ui.js'),
   resolve(repoRoot, 'web/repl.js'),
 ];

@@ -10,6 +10,8 @@ import {
   PovrayError,
 } from './render-client.js';
 import { EXAMPLES, getExample } from './examples.js';
+import { highlight } from './highlight.js';
+import { validateScene } from './sdl-validate.js';
 
 const isoWarning = document.getElementById('iso-warning');
 if (crossOriginIsolated) {
@@ -36,7 +38,10 @@ if (crossOriginIsolated) {
 
 const examplesSelect = document.getElementById('examples');
 const editor = document.getElementById('editor');
+const editorHighlight = document.getElementById('editor-highlight');
+const editorCode = document.getElementById('editor-code');
 const gutter = document.getElementById('gutter');
+const liveToggle = document.getElementById('live-toggle');
 const widthInput = document.getElementById('width');
 const heightInput = document.getElementById('height');
 const qualitySelect = document.getElementById('quality');
@@ -78,6 +83,9 @@ let mode = 'still';
 // True once a still render has produced an image: lets a mode switch back to
 // 'still' re-show that image instead of the empty-state hint.
 let hasStillImage = false;
+// Live-draft auto-render: ON by default, persisted. Drafts fire only in still
+// mode; the full machinery lives in the "live draft" section near the bottom.
+let liveDraft = true;
 
 // ---- examples + persisted state ----
 
@@ -119,6 +127,7 @@ function saveState() {
         threads: threadsInput.value,
         example: examplesSelect.value,
         mode,
+        liveDraft,
         frames: framesInput.value,
         fps: fpsInput.value,
       })
@@ -162,6 +171,7 @@ let lastLoadedSource = '';
       antialiasSelect.value = saved.antialias;
     }
     if (typeof saved.threads === 'string') threadsInput.value = saved.threads;
+    if (typeof saved.liveDraft === 'boolean') liveDraft = saved.liveDraft;
     if (saved.mode === 'still' || saved.mode === 'animate') mode = saved.mode;
     const savedFrames = parseInt(saved.frames, 10);
     if (Number.isInteger(savedFrames) && savedFrames >= 1 && savedFrames <= 240) {
@@ -198,7 +208,9 @@ examplesSelect.addEventListener('change', () => {
   editor.value = source;
   lastLoadedSource = source;
   renderGutter();
+  paintHighlight();
   scheduleSave();
+  scheduleDraft();
 });
 
 // ---- editor gutter (line numbers) ----
@@ -216,14 +228,30 @@ function renderGutter() {
   }
   gutter.scrollTop = editor.scrollTop;
 }
+
+// Repaint the syntax overlay from the current text. Cheap synchronous string
+// scan (no debounce: that's only for the render in the live-draft section), so
+// it sits beside every renderGutter() call site. The HTML is byte-escaped in
+// highlight.js, so it can never break or inject markup.
+function paintHighlight() {
+  editorCode.innerHTML = highlight(editor.value);
+}
+
+// The overlay is overflow:hidden and never scrolls itself; mirror BOTH axes
+// from the textarea (the gutter only needs the vertical mirror).
 editor.addEventListener('scroll', () => {
   gutter.scrollTop = editor.scrollTop;
+  editorHighlight.scrollTop = editor.scrollTop;
+  editorHighlight.scrollLeft = editor.scrollLeft;
 });
 editor.addEventListener('input', () => {
   renderGutter();
+  paintHighlight();
   scheduleSave();
+  scheduleDraft();
 });
 renderGutter();
+paintHighlight();
 
 // ---- editor Tab handling (Esc then Tab moves focus, per the title hint) ----
 // setRangeText keeps the native undo stack intact.
@@ -266,7 +294,9 @@ editor.addEventListener('keydown', (e) => {
     if (e.shiftKey) outdentSelection();
     else indentSelection();
     renderGutter();
+    paintHighlight();
     scheduleSave();
+    scheduleDraft();
     return;
   }
   if (e.key !== 'Shift') escapePrimed = false;
@@ -281,18 +311,17 @@ function clamp(n, lo, hi) {
   return Math.min(hi, Math.max(lo, n));
 }
 
-// Read the controls into render options, writing clamped dims back into the
-// inputs so the UI always shows the values actually used.
-function collectOptions() {
+// Read + clamp the controls into render options WITHOUT writing back to the
+// inputs. The draft path uses this so an auto-render never clobbers the
+// width/height fields the user is mid-typing.
+function readRenderOptions() {
   let width = parseInt(widthInput.value, 10);
   if (Number.isNaN(width)) width = 512;
   width = clamp(width, 8, 2048);
-  widthInput.value = String(width);
 
   let height = parseInt(heightInput.value, 10);
   if (Number.isNaN(height)) height = 384;
   height = clamp(height, 8, 2048);
-  heightInput.value = String(height);
 
   const quality = qualitySelect.value === '' ? undefined : Number(qualitySelect.value);
   const antialias = antialiasSelect.value === 'off' ? false : Number(antialiasSelect.value);
@@ -302,6 +331,15 @@ function collectOptions() {
   if (!Number.isNaN(threadsRaw)) threads = clamp(threadsRaw, 1, 32);
 
   return { width, height, quality, antialias, threads };
+}
+
+// The explicit-render path: read + clamp, then write the clamped dims back into
+// the inputs so the UI always shows the values actually used.
+function collectOptions() {
+  const opts = readRenderOptions();
+  widthInput.value = String(opts.width);
+  heightInput.value = String(opts.height);
+  return opts;
 }
 
 for (const el of [
@@ -542,6 +580,8 @@ function selectEditorLine(n) {
   const lineHeight = parseFloat(getComputedStyle(editor).lineHeight) || 19;
   editor.scrollTop = Math.max(0, (n - 3) * lineHeight);
   gutter.scrollTop = editor.scrollTop;
+  editorHighlight.scrollTop = editor.scrollTop;
+  editorHighlight.scrollLeft = editor.scrollLeft;
 }
 
 // ---- render ----
@@ -588,7 +628,141 @@ let lastUrl = null;
 // render's silence is wasm startup, later renders go straight to parsing.
 let engineSeen = false;
 
+// One image-swap path shared by the explicit render and the live draft: a
+// single lastUrl revoke, and the zoom label recomputes off the #output 'load'
+// listener.
+function showImage(blobUrl, alt) {
+  if (lastUrl) URL.revokeObjectURL(lastUrl);
+  lastUrl = blobUrl;
+  output.src = blobUrl;
+  output.hidden = false;
+  playerCanvas.hidden = true;
+  hasStillImage = true;
+  output.alt = alt;
+  output.classList.remove('stale');
+  plateHint.hidden = true;
+}
+
+// ---- live draft (auto-render as you type, still mode only) ----
+// Reuses render-client's renderScene + the single `busy` singleton + an
+// AbortSignal; it never duplicates orchestration. Explicit renders always win
+// (see startRender). The persisted `liveDraft` toggle is wired further down.
+
+const DRAFT_DEBOUNCE_MIN_MS = 250;
+const DRAFT_DEBOUNCE_MAX_MS = 2000;
+const DRAFT_DEBOUNCE_FACTOR = 0.75;
+const DRAFT_MAX_EDGE = 320; // longest draft edge in px (downscaled fast preview)
+
+let draftTimer = null; // pending debounce timeout, or null
+let draftCtl = null; // AbortController for the in-flight DRAFT, or null
+let draftingSource = ''; // the source the in-flight draft is rendering
+let lastDraftSource = null; // last source actually attempted (draft or explicit)
+let lastDraftMs = 0; // last draft's elapsed ms; drives the adaptive debounce
+let pendingFull = false; // an explicit render is waiting on a draft to abort
+
+// Scale the debounce with the last draft's elapsed time so a slow scene waits
+// longer between auto-renders and a fast one fires near the floor. Simple
+// last-duration scaling, clamped; no hysteresis/EWMA/multi-pass.
+function computeDraftDebounce() {
+  return clamp(lastDraftMs * DRAFT_DEBOUNCE_FACTOR, DRAFT_DEBOUNCE_MIN_MS, DRAFT_DEBOUNCE_MAX_MS);
+}
+
+// Fast + clearly lower-res than the full Render: antialias always off and the
+// longest edge capped to DRAFT_MAX_EDGE, aspect ratio preserved so the draft
+// composition matches the eventual full render. Reads (never writes) the inputs
+// so a mid-type width/height isn't clobbered.
+function draftOptions() {
+  const { width, height, quality, threads } = readRenderOptions();
+  const s = Math.min(1, DRAFT_MAX_EDGE / Math.max(width, height));
+  return {
+    width: Math.max(8, Math.round(width * s)),
+    height: Math.max(8, Math.round(height * s)),
+    quality,
+    threads,
+    antialias: false,
+  };
+}
+
+function scheduleDraft() {
+  if (mode !== 'still' || !liveDraft) return;
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(fireDraft, computeDraftDebounce());
+}
+
+function fireDraft() {
+  draftTimer = null;
+  // Re-read the newest text every time: that's what makes coalescing collapse a
+  // burst of keystrokes to a single render of the FINAL text (no queue).
+  const src = editor.value;
+  if (mode !== 'still' || !liveDraft || !crossOriginIsolated) return;
+  if (src === lastDraftSource) return; // nothing changed since the last attempt
+  if (!validateScene(src).ready) return; // looks mid-edit; stay quiet
+  if (abortCtl) return; // an explicit render owns the engine; its finally reschedules
+  if (draftCtl) {
+    if (src === draftingSource) return; // already rendering this exact text
+    draftCtl.abort(); // supersede with the newer text; the abort's finally reschedules
+    return;
+  }
+  if (isBusy()) return; // defensive: never pile up on the busy singleton
+  runDraft(src);
+}
+
+async function runDraft(src) {
+  draftCtl = new AbortController();
+  const ctl = draftCtl;
+  draftingSource = src;
+  const opts = draftOptions();
+  const dims = `${opts.width}×${opts.height}`;
+  setStatus(`live draft · ${dims}`, 'draft');
+  try {
+    const { blobUrl, elapsedMs } = await renderScene(src, { ...opts, signal: ctl.signal });
+    lastDraftMs = elapsedMs;
+    lastDraftSource = src;
+    // Success is the ONLY time the image swaps (a draft error keeps the last
+    // good one). Drafts never touch the progress bar or the render log.
+    errorBox.hidden = true;
+    errorBox.textContent = '';
+    errorBox.classList.remove('draft');
+    showImage(blobUrl, `live draft, ${sceneName()}, ${dims}`);
+    downloadBtn.hidden = true; // the preview is low-res, not a downloadable full render
+    setStatus(`live draft · ${dims}`, 'draft');
+  } catch (err) {
+    if (!isAbortError(err)) {
+      // Non-destructive: keep the last good image (no #output.src change, no
+      // .stale, no canvas clear). Surface the message quietly inline and do NOT
+      // jump the caret (hostile while typing).
+      errorBox.textContent = formatError(err);
+      errorBox.classList.add('draft');
+      errorBox.hidden = false;
+      setStatus('live draft · error', 'draft');
+    }
+    // On abort (superseded by newer text) do nothing: keep the image.
+  } finally {
+    draftCtl = null;
+    if (pendingFull) {
+      // An explicit render is waiting on this abort; renderScene cleared `busy`
+      // synchronously in its finally before ours, so the restart is race-free.
+      pendingFull = false;
+      startRender();
+    } else {
+      // Backstop: re-read the latest text even if the user stopped typing right
+      // at an abort.
+      scheduleDraft();
+    }
+  }
+}
+
 async function startRender() {
+  // An explicit render always wins over a live draft. Drop any pending draft
+  // timer, and if a draft is mid-flight, abort it and let its finally restart
+  // us once `busy` clears.
+  clearTimeout(draftTimer);
+  draftTimer = null;
+  if (draftCtl) {
+    pendingFull = true;
+    draftCtl.abort();
+    return;
+  }
   // Bail while busy or non-isolated (first-visit SW install window: the
   // banner is visible and the page will reload itself once installed).
   if (abortCtl || isBusy()) return;
@@ -623,6 +797,7 @@ async function startRender() {
 
   abortCtl = new AbortController();
   const ctl = abortCtl;
+  const renderedSource = editor.value;
   let sawLine = engineSeen;
   let tracing = false;
 
@@ -631,7 +806,7 @@ async function startRender() {
       blobUrl,
       elapsedMs,
       log: rawLog,
-    } = await renderScene(editor.value, {
+    } = await renderScene(renderedSource, {
       ...opts,
       signal: ctl.signal,
       onEvent: (ev) => {
@@ -657,15 +832,7 @@ async function startRender() {
     });
     commitProgressLine();
 
-    if (lastUrl) URL.revokeObjectURL(lastUrl);
-    lastUrl = blobUrl;
-    output.src = blobUrl;
-    output.hidden = false;
-    playerCanvas.hidden = true;
-    hasStillImage = true;
-    output.alt = `render output, ${sceneName()}, ${opts.width}×${opts.height}`;
-    output.classList.remove('stale');
-    plateHint.hidden = true;
+    showImage(blobUrl, `render output, ${sceneName()}, ${opts.width}×${opts.height}`);
     downloadBtn.href = blobUrl;
     downloadBtn.download = downloadName(opts);
     downloadBtn.hidden = false;
@@ -711,6 +878,11 @@ async function startRender() {
     // focus to <body>).
     if (document.activeElement === cancelBtn) renderBtn.focus();
     cancelBtn.hidden = true;
+    // Mark this exact source as already attempted so the backstop draft no-ops
+    // until the next edit. If the user typed during the render, editor.value
+    // now differs from renderedSource, so the draft fires for the latest text.
+    lastDraftSource = renderedSource;
+    scheduleDraft();
   }
 }
 
@@ -1014,10 +1186,18 @@ const player = createPlayer();
 
 function setMode(next) {
   if (next === mode) return;
-  if (abortCtl || isBusy()) return; // don't switch mid-render
+  if (abortCtl) return; // an explicit/animate render locks the mode
+  // A live draft is still-only; aborting it must not block the switch (its
+  // finally re-checks mode and won't reschedule in animate).
+  if (draftCtl) draftCtl.abort();
+  clearTimeout(draftTimer);
+  draftTimer = null;
   mode = next;
   applyMode();
   scheduleSave();
+  // Switching back to still refreshes the preview; switching to animate leaves
+  // drafts suppressed (scheduleDraft early-returns when mode !== 'still').
+  if (mode === 'still' && liveDraft) scheduleDraft();
 }
 
 function applyMode() {
@@ -1047,6 +1227,23 @@ function refreshPlate() {
 
 modeStillBtn.addEventListener('click', () => setMode('still'));
 modeAnimateBtn.addEventListener('click', () => setMode('animate'));
+
+// Live-draft toggle: reflect the restored state, then flip + persist on click.
+// Turning it on schedules a draft; turning it off cancels any pending/in-flight
+// draft (no accent: it's the quiet grey .toggle-btn invert).
+liveToggle.setAttribute('aria-pressed', String(liveDraft));
+liveToggle.addEventListener('click', () => {
+  liveDraft = !liveDraft;
+  liveToggle.setAttribute('aria-pressed', String(liveDraft));
+  scheduleSave();
+  if (liveDraft) {
+    scheduleDraft();
+  } else {
+    clearTimeout(draftTimer);
+    draftTimer = null;
+    draftCtl?.abort();
+  }
+});
 playBtn.addEventListener('click', () => player.toggle());
 scrubber.addEventListener('input', () => player.seek(Number(scrubber.value)));
 loopBtn.addEventListener('click', () => {
