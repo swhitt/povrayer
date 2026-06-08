@@ -463,22 +463,62 @@ const COMMANDS = [
   { name: 'reset', usage: ':reset', desc: 'clear scene, settings, and saved state' },
 ];
 
-const HELP_TEXT = [
-  'commands:',
-  ...COMMANDS.map((c) => `${c.usage} - ${c.desc}`),
-  '',
-  'anything else is POV-Ray scene code; each entry re-renders the whole scene.',
-  'a fresh entry that fails (or is cancelled) rolls back automatically;',
-  ':undo/:del/:edit/:render/:example keep their state on failure.',
-  'Enter or run submits · Esc or cancel stops · Shift+Enter inserts a newline.',
-  'ArrowUp/ArrowDown recall history · Tab completes :commands · click an old',
-  'entry to copy it back into the input.',
-  'the scene always starts with #version 3.8; missing global_settings/camera/',
-  'light_source/background are injected with defaults. error line numbers',
-  'refer to the assembled scene; :source shows it.',
+// :help as structured DOM: aligned usage/description grid per section instead
+// of a flowed text wall (the dl grid keeps descriptions in a single scannable
+// column regardless of usage-string length).
+const HELP_KEYS = [
+  ['Enter / run', 'submit'],
+  ['Shift+Enter', 'insert a newline'],
+  ['Esc / cancel', 'stop a render (fresh entries roll back)'],
+  ['ArrowUp / ArrowDown', 'recall input history'],
+  ['Tab', 'complete :commands'],
+  ['click an old entry', 'copy it back into the input'],
+];
+
+const HELP_NOTES = [
+  'anything that is not a :command is POV-Ray scene code; each entry re-renders the whole scene.',
+  'a fresh entry that fails or is cancelled rolls back automatically; :undo/:del/:edit/:render/:example keep their state on failure.',
+  'the assembled scene always starts with #version 3.8; missing global_settings/camera/light_source/background are injected with defaults. error line numbers refer to the assembled scene (:source shows it).',
   'settings (:size/:q/:aa/:threads/:args) take effect on the next render.',
   'scene, settings, and history persist in this browser; :reset clears them.',
-].join('\n');
+];
+
+function buildHelpBlock() {
+  const block = document.createElement('div');
+  block.className = 'info help';
+
+  const addHead = (text) => {
+    const h = document.createElement('div');
+    h.className = 'help-head';
+    h.textContent = text;
+    block.appendChild(h);
+  };
+  const addGrid = (pairs) => {
+    const dl = document.createElement('dl');
+    dl.className = 'help-grid';
+    for (const [term, desc] of pairs) {
+      const dt = document.createElement('dt');
+      dt.textContent = term;
+      const dd = document.createElement('dd');
+      dd.textContent = desc;
+      dl.append(dt, dd);
+    }
+    block.appendChild(dl);
+  };
+
+  addHead('commands');
+  addGrid(COMMANDS.map((c) => [c.usage, c.desc]));
+  addHead('keys');
+  addGrid(HELP_KEYS);
+  addHead('notes');
+  for (const note of HELP_NOTES) {
+    const p = document.createElement('p');
+    p.className = 'help-note';
+    p.textContent = note;
+    block.appendChild(p);
+  }
+  return block;
+}
 
 function listEntries() {
   if (!entries.length) return 'scene empty';
@@ -554,7 +594,7 @@ function dispatchCommand(text) {
 
   switch (name) {
     case 'help':
-      appendBlock('info', HELP_TEXT);
+      appendNode(buildHelpBlock());
       break;
 
     case 'reset':

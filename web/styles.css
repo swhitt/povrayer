@@ -783,3 +783,55 @@ figure.result.pending > div {
 @keyframes rise {
   from { opacity: 0; transform: translateY(-4px); }
 }
+
+/* ---- :help reference card (REPL) ----------------------------------------
+   Structured usage/description grids per section; replaces the flowed text
+   wall. Lives at file end deliberately: layout passes edit the sections
+   above, and these rules are purely additive. */
+#scrollback div.help {
+  margin-left: var(--repl-indent);
+  margin-top: 4px;
+  color: var(--dim);
+  font-size: var(--fs-out);
+  line-height: 1.5;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+}
+.help .help-head {
+  color: var(--text);
+  margin: 12px 0 4px;
+}
+.help .help-head:first-child {
+  margin-top: 0;
+}
+.help dl.help-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 18px;
+  row-gap: 2px;
+  margin: 0;
+}
+.help dt {
+  color: var(--accent);
+  white-space: nowrap;
+}
+.help dd {
+  margin: 0;
+}
+.help p.help-note {
+  margin: 0 0 6px;
+  max-width: 70ch;
+}
+.help p.help-note:last-child {
+  margin-bottom: 0;
+}
+/* Narrow screens: usage above description instead of side-by-side. */
+@media (max-width: 480px) {
+  .help dl.help-grid {
+    grid-template-columns: 1fr;
+  }
+  .help dl.help-grid dd {
+    margin: 0 0 6px 12px;
+  }
+}
