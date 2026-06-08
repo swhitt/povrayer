@@ -1,9 +1,50 @@
 # povrayer
 
-POV-Ray 3.8 compiled to WebAssembly. One build that runs in Node and the
-browser: pthreads for multithreaded rendering, the standard include library
-embedded in the binary, PNG output. Distributed as a Docker image on GHCR,
-with the raw wasm bundle extractable as a build artifact.
+**POV-Ray 3.8, ray-tracing in your browser.** No install, no upload, no server
+round-trip: type a scene and watch it render as you go. The exact same
+WebAssembly build runs headless in Node and ships as a Docker image.
+
+[![CI](https://github.com/swhitt/povrayer/actions/workflows/ci.yml/badge.svg)](https://github.com/swhitt/povrayer/actions/workflows/ci.yml)
+[![Pages](https://github.com/swhitt/povrayer/actions/workflows/pages.yml/badge.svg)](https://github.com/swhitt/povrayer/actions/workflows/pages.yml)
+[![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-ffd23f)](#license)
+
+### Try it live, no install: [swhitt.github.io/povrayer](https://swhitt.github.io/povrayer/)
+
+The browser playground is a real renderer, not a gallery of pre-baked images.
+POV-Ray traces every pixel locally on `SharedArrayBuffer`-backed pthreads;
+nothing leaves the page.
+
+- **Live draft.** Edit the SDL and it re-renders as you type (debounced, low-res
+  preview). Hit Render for the full-quality, downloadable image.
+- **Syntax highlighting + validation.** The editor speaks POV-Ray SDL and flags
+  the obvious mistakes inline, before you spend a render on them.
+- **Animation.** Drive POV-Ray's native `clock` loop, then scrub the frames in a
+  built-in player.
+- **Examples gallery.** A spread of scenes to fork from (CSG, isosurfaces,
+  radiosity, media, depth of field, clock-driven animation, ...).
+- **REPL.** An incremental mode where each entry appends to the scene and
+  auto-renders, rolling back on error: [repl.html](https://swhitt.github.io/povrayer/repl.html).
+
+One build, three surfaces: the [browser playground](#try-it-in-the-browser), a
+[Docker CLI](#render-with-docker), and a small [Node/browser wrapper API](#wrapper-api).
+
+## Try it in the browser
+
+Live, no install: <https://swhitt.github.io/povrayer/> (scene editor) and
+<https://swhitt.github.io/povrayer/repl.html> (the SDL REPL: each entry appends
+to the scene and auto-renders; a failed entry rolls back).
+
+REPL commands: `:help`, `:reset`, `:list`, `:source`, `:undo`, `:del N`,
+`:size WxH`, `:q N`, `:aa [threshold|off]`, `:threads N`, `:render`,
+`:anim N`, `:example [name]`.
+
+GitHub Pages can't send COOP/COEP headers, so the pages use a vendored
+[coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker) to get
+cross-origin isolation; the first visit reloads once while the worker installs.
+
+Locally: `make web` builds `dist/` if needed and serves the same pages at
+<http://127.0.0.1:8080/> with real COOP/COEP headers (no service worker
+involved; the server binds the IPv4 loopback, so use the numeric address).
 
 ## Render with docker
 
@@ -133,24 +174,15 @@ Two hard requirements:
    Mark it external in your bundler and copy both files through untouched.
    (`index.js` itself is safe to bundle.)
 
-## Try it in the browser
+## How it's built
 
-Live, no install: <https://swhitt.github.io/povrayer/> (scene editor) and
-<https://swhitt.github.io/povrayer/repl.html> (an SDL REPL: each entry
-appends to the scene and auto-renders; a failed entry rolls back).
-
-REPL commands: `:help`, `:reset`, `:list`, `:source`, `:undo`, `:del N`,
-`:size WxH`, `:q N`, `:aa [threshold|off]`, `:threads N`, `:render`,
-`:anim N`, `:example [name]`.
-
-GitHub Pages can't send COOP/COEP headers, so the pages use a vendored
-[coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker) to get
-cross-origin isolation; the first visit reloads once while the worker
-installs.
-
-Locally: `make web` builds `dist/` if needed and serves the same pages at
-<http://127.0.0.1:8080/> with real COOP/COEP headers (no service worker
-involved; the server binds the IPv4 loopback, so use the numeric address).
+POV-Ray 3.8 (pinned to one upstream commit) is compiled to WebAssembly with
+Emscripten: pthreads for multithreaded tracing, wasm exception handling, and the
+standard include library baked into the binary so there's no `.data` sidecar to
+ship. The whole toolchain lives in the `Dockerfile`, whose `artifact` stage
+exports the raw bundle and whose `runtime` stage is the CLI image. CI rebuilds
+the bundle from source on every push, so `dist/` is a build output, never a
+committed blob.
 
 ## Memory
 
