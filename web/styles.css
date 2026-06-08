@@ -536,11 +536,14 @@ body.ui main > * {
   color: var(--syn-directive);
 }
 
+/* Three-level spacing rhythm: 6px label-to-control (pair), 10px within a
+   .ctl-group (below), 20px between groups here. Row-gap 12px so wrapped tiers
+   read as deliberate rows, not an accidental overflow. */
 #controls {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 18px; /* pair-gap (6px, below) beats group-gap */
+  gap: 12px 20px;
   margin-top: 8px;
 }
 
@@ -554,9 +557,32 @@ body.ui main > * {
   width: 5.5em;
 }
 
-/* Render + Cancel wrap as a unit and anchor the row's right edge. */
+/* Cluster the controls into legible groups (mode/behavior, dimensions,
+   quality) so the row reads as deliberate pairs/groups instead of one long
+   undifferentiated run, and wraps fall on group boundaries. The tighter
+   within-group gap is the middle tier of the rhythm above. flex-wrap lets a
+   wide group break internally on a narrow screen instead of overflowing. */
+.ctl-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+/* Quiet hairline separating the live-draft toggle from the still/animate
+   mutex so live stops reading as a third mode segment. --border weight (the
+   non-interactive hairline used in the header/footer), square, no accent;
+   still-only so it hides with live in animate mode. */
+.ctl-rule {
+  align-self: stretch;
+  width: 1px;
+  background: var(--border);
+}
+
+/* Render + Cancel wrap as a unit and trail the last control as a tight
+   end-cap. (No margin-left:auto: on a toolbar that always wraps it stranded
+   the hero CTA at the far edge of a near-empty row.) */
 .actions {
-  margin-left: auto;
   display: flex;
   gap: 8px;
 }

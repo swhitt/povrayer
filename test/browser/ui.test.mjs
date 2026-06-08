@@ -679,7 +679,7 @@ try {
   await page.fill('#editor', VALID_SCENE);
   await page.fill('#width', '64');
   await page.fill('#height', '48');
-  await page.selectOption('#quality', '9');
+  await page.selectOption('#quality', '8'); // 8 is the highest explicit quality option
   await page.selectOption('#antialias', '0.3');
   await page.fill('#threads', '4');
   await page.evaluate(() => document.getElementById('threads').focus());
@@ -689,7 +689,7 @@ try {
   await page.waitForTimeout(300); // let the decode().then(scrollIntoView) chain settle
   assert.match(
     await page.evaluate(() => document.getElementById('download-btn').getAttribute('download')),
-    /^render-64x48-q9-a03\.png$/,
+    /^render-64x48-q8-a03\.png$/,
     'download name should encode quality + antialias'
   );
   await page.setViewportSize({ width: 1280, height: 720 });
@@ -851,7 +851,7 @@ try {
       quality: document.getElementById('quality').value,
       antialias: document.getElementById('antialias').value,
     })),
-    { example: 'csg-die', width: '512', quality: '', antialias: '0.3' },
+    { example: 'csg-die', width: '512', quality: '', antialias: '0.1' },
     'invalid saved fields should fall back to defaults'
   );
 
@@ -1367,7 +1367,7 @@ try {
 
   // Floor the adaptive debounce by rendering one fast (sphere) draft and letting
   // it settle, so lastDraftMs (which the debounce scales off) is small. A slow
-  // prior draft (e.g. the q11 cornell below) otherwise inflates the debounce
+  // prior draft (e.g. the radiosity cornell below) otherwise inflates the debounce
   // toward its 2s cap; a draft scheduled then fires a full ~2s later and can
   // linger into the next section, leaving a stray render in flight under an
   // assertion that expects idle. Flooring it keeps every fireDraft prompt.
@@ -1670,9 +1670,12 @@ try {
   // scales off.
   await floorDebounce();
 
-  // q11 cornell on one thread stays in flight for seconds, so every fireDraft
-  // below (now firing at the floored debounce) lands while it is still live.
-  await page.selectOption('#quality', '11');
+  // The radiosity cornell at the default quality (9, the empty option) on one
+  // thread stays in flight for seconds, so every fireDraft below (now firing at
+  // the floored debounce) lands while it is still live. Quality 9 already
+  // computes radiosity (the slow part); 10/11 only add antialiasing/jitter,
+  // which an AA-off draft skips, so the default is as slow as the old +Q11.
+  await page.selectOption('#quality', '');
   await typeScene(cornellA);
   await page.waitForFunction(
     (s) => {
@@ -1701,11 +1704,10 @@ try {
     timeout: 60_000,
   });
   await waitIdle();
-  await page.selectOption('#quality', '');
 
-  // The q11 cornell draft just inflated the debounce back toward its cap; floor
-  // it again so the busy-guard / isolation drafts below fire promptly and never
-  // linger into a later section's idle assertion.
+  // The radiosity cornell draft just inflated the debounce back toward its cap;
+  // floor it again so the busy-guard / isolation drafts below fire promptly and
+  // never linger into a later section's idle assertion.
   await floorDebounce();
 
   // Busy guard: a direct render-client call holds the engine while a draft is

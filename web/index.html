@@ -58,65 +58,71 @@
           </div>
         </div>
         <div id="controls">
-          <span class="seg-group" id="mode-toggle" role="group" aria-label="render mode">
-            <button id="mode-still" class="toggle-btn" type="button" aria-pressed="true">
-              still
-            </button>
-            <button id="mode-animate" class="toggle-btn" type="button" aria-pressed="false">
-              animate
+          <span class="ctl-group">
+            <span class="seg-group" id="mode-toggle" role="group" aria-label="render mode">
+              <button id="mode-still" class="toggle-btn" type="button" aria-pressed="true">
+                still
+              </button>
+              <button id="mode-animate" class="toggle-btn" type="button" aria-pressed="false">
+                animate
+              </button>
+            </span>
+            <span class="ctl-rule still-only" aria-hidden="true"></span>
+            <button
+              id="live-toggle"
+              class="toggle-btn still-only"
+              type="button"
+              aria-pressed="true"
+              title="Live draft: auto-render as you type (fast preview)"
+            >
+              live draft
             </button>
           </span>
-          <button
-            id="live-toggle"
-            class="toggle-btn still-only"
-            type="button"
-            aria-pressed="true"
-            title="Live draft: auto-render as you type (fast preview)"
-          >
-            live
-          </button>
-          <label title="width (pixels)"
-            >width <input id="width" type="number" min="8" max="2048" value="512"
-          /></label>
-          <label title="height (pixels)"
-            >height <input id="height" type="number" min="8" max="2048" value="384"
-          /></label>
-          <label title="render quality, 0..11 (lower is faster)"
-            >quality
-            <select id="quality">
-              <option value="" selected>9 (default)</option>
-              <option>0</option>
-              <option>1</option>
-              <option>2</option>
-              <option>3</option>
-              <option>4</option>
-              <option>5</option>
-              <option>6</option>
-              <option>7</option>
-              <option>8</option>
-              <option>9</option>
-              <option>10</option>
-              <option>11</option>
-            </select></label
-          >
-          <label title="antialias threshold (off is fastest)"
-            >aa
-            <select id="antialias">
-              <option value="off">off</option>
-              <option value="0.3" selected>0.3</option>
-              <option value="0.1">0.1</option>
-              <option value="0.05">0.05</option>
-            </select></label
-          >
-          <label title="worker threads (auto = hardware concurrency)"
-            >threads <input id="threads" type="number" min="1" max="32" placeholder="auto"
-          /></label>
-          <label class="animate-only" title="frame count (1..240)"
-            >frames <input id="frames" type="number" min="1" max="240" value="24"
-          /></label>
-          <label class="animate-only" title="playback frames per second (1..60)"
-            >fps <input id="fps" type="number" min="1" max="60" value="12"
-          /></label>
+          <span class="ctl-group">
+            <label title="width (pixels)"
+              >width <input id="width" type="number" min="8" max="2048" step="8" value="512"
+            /></label>
+            <label title="height (pixels)"
+              >height <input id="height" type="number" min="8" max="2048" step="8" value="384"
+            /></label>
+          </span>
+          <span class="ctl-group">
+            <label title="render quality 0-9 (lower is faster); 9 is the default"
+              >quality
+              <select id="quality">
+                <option value="" selected>9</option>
+                <option>0</option>
+                <option>1</option>
+                <option>2</option>
+                <option>3</option>
+                <option>4</option>
+                <option>5</option>
+                <option>6</option>
+                <option>7</option>
+                <option>8</option>
+              </select></label
+            >
+            <label title="antialias threshold (off is fastest)"
+              >antialias
+              <select id="antialias">
+                <option value="off">off</option>
+                <option value="0.3">0.3</option>
+                <option value="0.1" selected>0.1</option>
+                <option value="0.05">0.05</option>
+              </select></label
+            >
+            <label title="worker threads (auto = hardware concurrency)"
+              >threads <input id="threads" type="number" min="1" max="32" placeholder="auto"
+            /></label>
+          </span>
+          <span class="ctl-group animate-only">
+            <label title="frame count (1..240)"
+              >frames <input id="frames" type="number" min="1" max="240" value="24"
+            /></label>
+            <label title="playback frames per second (1..60)"
+              >fps <input id="fps" type="number" min="1" max="60" value="12"
+            /></label>
+          </span>
           <span class="actions">
             <button id="render-btn" type="button" title="Ctrl/Cmd+Enter">Render</button>
             <button id="cancel-btn" type="button" title="Esc" hidden>Cancel</button>
