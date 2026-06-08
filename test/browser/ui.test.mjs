@@ -8,6 +8,10 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { startServer } from './serve.mjs';
+import {
+  startBrowserCoverage,
+  saveBrowserCoverage,
+} from '../../tools/coverage/browser-collect.mjs';
 
 // Hard watchdog: only cleared on success, after browser and server have shut
 // down cleanly.
@@ -19,12 +23,16 @@ const watchdog = setTimeout(() => {
 const consoleLines = [];
 let server;
 let browser;
+let page;
 let failure;
 
 try {
   server = await startServer();
   browser = await chromium.launch();
-  const page = await browser.newPage();
+  page = await browser.newPage();
+  // Start V8 coverage before navigation so ui.js/render-client.js/examples.js
+  // are captured (no-op unless POVRAYER_COVERAGE is set).
+  await startBrowserCoverage(page);
   page.on('console', (msg) => consoleLines.push(`[${msg.type()}] ${msg.text()}`));
   page.on('pageerror', (err) => consoleLines.push(`[pageerror] ${err.message}`));
 
@@ -92,9 +100,7 @@ try {
     `download filename should reflect the render opts, got: ${downloadName}`
   );
   // The raw log lives behind a disclosure whose summary carries the line count.
-  const logSummary = await page.evaluate(
-    () => document.getElementById('log-summary').textContent
-  );
+  const logSummary = await page.evaluate(() => document.getElementById('log-summary').textContent);
   assert.match(
     logSummary,
     /render log \(\d+ lines\)/,
@@ -130,10 +136,557 @@ try {
     160,
     'cancelled render must not replace the previous image'
   );
+
+  // --- render-client.js direct coverage --------------------------------------
+  // The UI's happy/cancel paths leave a handful of render-client branches
+  // unreached: parseStats with no timing lines, errorHeadline on a worker-crash
+  // log (no file reference), formatError's abort voice, the onProgress callback
+  // (pages pass onEvent, never onProgress), the onEvent-absent branch, and the
+  // busy backstop throw. render-client is an ES-module singleton keyed by URL,
+  // so a dynamic import returns the very instance ui.js loaded; V8 coverage
+  // attributes these hits to web/render-client.js.
+
+  // Pure helpers first (no wasm). Each covers a render-client branch the
+  // happy/cancel UI paths skip; the inline comments name the source line.
+  const helpers = await page.evaluate(async () => {
+    const mod = await import('/render-client.js');
+    return {
+      // parseStats: log with no Trace/Parse/Rays lines -> the undefined branches.
+      noStats: mod.parseStats('Persistence Of Vision Raytracer 3.8\n(no timing lines here)\n'),
+      // errorHeadline: no error-looking line at all -> early `i < 0` return null.
+      headlineNoError: mod.errorHeadline('just a clean log\nTrace Time: 0.1\nall done'),
+      // errorHeadline: `File '...' line N` sits ABOVE the error line, so the
+      // scan-back lands on j !== i and the message falls to lines[i].trim().
+      headlineFileAbove: mod.errorHeadline(
+        "File 'scene.pov' line 5:\nParse Error: Expected ; but found }"
+      ),
+      // errorHeadline: error line present but no file reference -> trailing null.
+      headlineNull: mod.errorHeadline('worker sent an error: boom\nnothing useful follows'),
+      // formatError(PovrayError) whose log has no error line: the excerpt falls
+      // to lines.slice(-12) and the synthesized head is null (no head prefix).
+      povNoErrorLine: mod.formatError(
+        new mod.PovrayError(
+          'crash',
+          -1,
+          'POV-Ray wasm runtime aborted: out of memory\nstack unavailable\ndone'
+        )
+      ),
+      // formatError abort voice.
+      abortMsg: mod.formatError(new DOMException('stop', 'AbortError')),
+      // formatError generic error WITH a message (the err.message side of `??`).
+      genericMsg: mod.formatError(new Error('boom')),
+      // formatError of a message-less value (the `?? err` fallback side).
+      genericNoMsg: mod.formatError('plain string failure'),
+    };
+  });
+  assert.deepEqual(
+    [helpers.noStats.traceSeconds, helpers.noStats.parseSeconds, helpers.noStats.rays],
+    [undefined, undefined, undefined],
+    'parseStats must return undefined for a log missing Trace/Parse/Rays lines'
+  );
+  assert.equal(helpers.headlineNoError, null, 'errorHeadline must be null with no error line');
+  assert.equal(
+    helpers.headlineFileAbove,
+    'line 5 · Parse Error: Expected ; but found }',
+    'errorHeadline must map a file ref that precedes the error line'
+  );
+  assert.equal(helpers.headlineNull, null, 'errorHeadline must be null without a file reference');
+  assert.ok(
+    helpers.povNoErrorLine.includes('out of memory') && !helpers.povNoErrorLine.startsWith('line'),
+    'formatError must fall back to the log tail (no head) when there is no error line'
+  );
+  assert.equal(
+    helpers.abortMsg,
+    'render cancelled',
+    'formatError must voice an AbortError as cancelled'
+  );
+  assert.equal(helpers.genericMsg, 'boom', 'formatError must surface a generic error message');
+  assert.equal(
+    helpers.genericNoMsg,
+    'plain string failure',
+    'formatError must stringify a message-less failure value'
+  );
+
+  // A real (tiny) render with onProgress and no onEvent covers the onProgress
+  // call + onEvent-absent branches. A second concurrent call proves the busy
+  // backstop throw. wasm is already warm from the renders above, so this is
+  // sub-second.
+  const direct = await page.evaluate(async () => {
+    const mod = await import('/render-client.js');
+    const scene = [
+      '#version 3.8;',
+      'global_settings { assumed_gamma 1.0 }',
+      'camera { location <0,0,-4> look_at 0 }',
+      'light_source { <2,4,-3> rgb 1 }',
+      'sphere { 0, 1 pigment { rgb <1,0,0> } }',
+      '',
+    ].join('\n');
+    let progress = 0;
+    const p = mod.renderScene(scene, {
+      width: 32,
+      height: 24,
+      antialias: false,
+      onProgress: () => {
+        progress++;
+      },
+    });
+    // p is now in flight (renderScene set busy synchronously before its await),
+    // so this second call must hit the backstop and throw immediately.
+    let busyThrew = false;
+    try {
+      await mod.renderScene(scene, { width: 8, height: 8, antialias: false });
+    } catch (e) {
+      busyThrew = /already in progress/.test(e.message);
+    }
+    const res = await p;
+    return {
+      busyThrew,
+      progress,
+      busyAfter: mod.isBusy(),
+      bytes: res.bytes.length,
+      blob: res.blobUrl.startsWith('blob:'),
+      logLen: res.log.length,
+    };
+  });
+  assert.ok(direct.busyThrew, 'a second concurrent renderScene must throw the busy backstop');
+  assert.ok(direct.progress > 0, 'onProgress must fire for a real render');
+  assert.equal(direct.busyAfter, false, 'isBusy must clear after the render resolves');
+  assert.ok(direct.bytes > 0 && direct.blob, 'direct render should resolve bytes + a blob url');
+  assert.ok(direct.logLen > 0, 'direct render should carry a raw log');
+
+  // ===========================================================================
+  // ui.js DOM-controller coverage: example switch + dirty guard, editor
+  // mechanics, persistence restore, zoom, error path, status throttle, and the
+  // render shortcuts. Everything below drives controller branches the happy +
+  // cancel paths above never reach.
+  // ===========================================================================
+
+  const VALID_SCENE = [
+    'camera { location <0,0,-4> look_at 0 }',
+    'light_source { <5,5,-5> color rgb 1 }',
+    'sphere { 0, 1 pigment { color rgb <1,0,0> } }',
+  ].join('\n');
+  const BROKEN_SCENE = [
+    'camera { location <0,0,-4> look_at 0 }',
+    'light_source { <5,5,-5> color rgb 1 }',
+    'sphere { 0, 1 pigment { color BROKEN_NOPE } }',
+  ].join('\n');
+
+  const waitState = (s, t = 120_000) =>
+    page.waitForFunction((st) => document.getElementById('status').dataset.state === st, s, {
+      timeout: t,
+    });
+  const editorValue = () => page.evaluate(() => document.getElementById('editor').value);
+
+  // --- zoom toggle (the kept 160x120 image from the cancel path is on screen) -
+  await page.waitForFunction(
+    () => {
+      const o = document.getElementById('output');
+      return !o.hidden && o.naturalWidth === 160;
+    },
+    null,
+    { timeout: 5_000 }
+  );
+  await page.waitForFunction(
+    () => !document.querySelector('#output-pane .zoom-toggle').hidden,
+    null,
+    {
+      timeout: 5_000,
+    }
+  );
+  assert.match(
+    await page.evaluate(() => document.querySelector('#output-pane .zoom-toggle').textContent),
+    /^fit/,
+    'zoom toggle should read fit before engaging 1:1'
+  );
+  await page.click('#output-pane .zoom-toggle'); // toggleZoom -> 1:1
+  assert.equal(
+    await page.evaluate(() => document.getElementById('output').classList.contains('zoom-1x')),
+    true,
+    'zoom toggle should engage 1:1'
+  );
+  assert.equal(
+    await page.evaluate(() => document.querySelector('#output-pane .zoom-toggle').textContent),
+    '1:1',
+    'zoom label should read 1:1 when engaged'
+  );
+  await page.click('#output'); // clicking the visible image toggles back to fit
+  assert.equal(
+    await page.evaluate(() => document.getElementById('output').classList.contains('zoom-1x')),
+    false,
+    'clicking the image should toggle back to fit'
+  );
+  await page.evaluate(() => window.dispatchEvent(new Event('resize'))); // updateZoomLabel fit path
+
+  // --- example switch + dirty guard ------------------------------------------
+  const switchExample = (name) =>
+    page.evaluate((n) => {
+      const sel = document.getElementById('examples');
+      sel.value = n;
+      sel.dispatchEvent(new Event('change'));
+    }, name);
+
+  // Pristine editor (=== the loaded example) switches with no confirm.
+  await switchExample('blobs');
+  await page.waitForFunction(() => document.getElementById('examples').value === 'blobs', null, {
+    timeout: 5_000,
+  });
+  assert.ok((await editorValue()).length > 0, 'switching example should load its source');
+
+  // A change event whose value resolves to no example (getExample undefined)
+  // hits the defensive guard that restores the previous selection.
+  await page.evaluate(() => {
+    const sel = document.getElementById('examples');
+    sel.value = '__no-such-option__'; // no matching <option> -> value becomes ''
+    sel.dispatchEvent(new Event('change'));
+  });
+  assert.equal(
+    await page.evaluate(() => document.getElementById('examples').value),
+    'blobs',
+    'an unresolvable example change must restore the previous selection'
+  );
+
+  // Edited editor + confirm() rejected -> revert the select, keep the edit.
+  await page.fill('#editor', 'EDITED scene one');
+  await page.evaluate(() => {
+    window.confirm = () => false;
+  });
+  await switchExample('glass');
+  await page.waitForFunction(() => document.getElementById('examples').value === 'blobs', null, {
+    timeout: 5_000,
+  });
+  assert.equal(
+    await editorValue(),
+    'EDITED scene one',
+    'a rejected example switch must keep the edited editor'
+  );
+
+  // Edited editor + confirm() accepted -> stash the edit, load the new example.
+  await page.evaluate(() => {
+    window.confirm = () => true;
+  });
+  await switchExample('glass');
+  await page.waitForFunction(() => document.getElementById('examples').value === 'glass', null, {
+    timeout: 5_000,
+  });
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem('povrayer.ui.stash')),
+    'EDITED scene one',
+    'an accepted example switch must stash the replaced edit'
+  );
+  assert.notEqual(
+    await editorValue(),
+    'EDITED scene one',
+    'an accepted example switch must replace the editor with the new example'
+  );
+
+  // Accepted switch while localStorage.setItem throws: the stash write is
+  // best-effort, so the catch swallows it and the example still loads.
+  await page.fill('#editor', 'EDITED scene two');
+  await page.evaluate(() => {
+    window.__origSetItem = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = () => {
+      throw new Error('storage blocked');
+    };
+  });
+  await switchExample('blobs');
+  await page.waitForFunction(() => document.getElementById('examples').value === 'blobs', null, {
+    timeout: 5_000,
+  });
+  assert.notEqual(
+    await editorValue(),
+    'EDITED scene two',
+    'a stash-write failure must not block the example switch'
+  );
+  await page.evaluate(() => {
+    localStorage.setItem = window.__origSetItem;
+  });
+
+  // --- editor mechanics: Tab indent/outdent, Escape trap, scroll, blur -------
+  const setEditor = (value, a, b) =>
+    page.evaluate(
+      (args) => {
+        const ed = document.getElementById('editor');
+        ed.value = args.value;
+        ed.focus();
+        ed.setSelectionRange(args.a, args.b);
+      },
+      { value, a, b }
+    );
+
+  // Caret (no selection): Tab inserts two spaces.
+  await setEditor('aaa\nbbb\nccc', 3, 3);
+  await page.keyboard.press('Tab');
+  assert.ok(
+    (await editorValue()).startsWith('aaa  '),
+    'Tab with no selection should insert two spaces'
+  );
+
+  // Single-line selection (no newline): Tab replaces it with two spaces.
+  await setEditor('hello world', 2, 5);
+  await page.keyboard.press('Tab');
+  assert.ok(
+    (await editorValue()).startsWith('he  '),
+    'Tab over a single-line selection indents inline'
+  );
+
+  // Multi-line selection: Tab indents every selected line.
+  await setEditor('aaa\nbbb\nccc', 0, 7);
+  await page.keyboard.press('Tab');
+  assert.ok(
+    (await editorValue()).startsWith('  aaa\n  bbb'),
+    'Tab over a multi-line selection should indent each line'
+  );
+
+  // Multi-line selection with leading spaces: Shift+Tab outdents each line.
+  await setEditor('  aaa\n  bbb\nccc', 0, 11);
+  await page.keyboard.press('Shift+Tab');
+  assert.ok(
+    (await editorValue()).startsWith('aaa\nbbb'),
+    'Shift+Tab over a multi-line selection should outdent each line'
+  );
+
+  // Single indented line, caret only: Shift+Tab outdents that line (preserve).
+  await setEditor('  aaa\nbbb', 3, 3);
+  await page.keyboard.press('Shift+Tab');
+  assert.ok((await editorValue()).startsWith('aaa\n'), 'Shift+Tab should outdent the caret line');
+
+  // Line with no leading space: Shift+Tab is a no-op (out === block early return).
+  await setEditor('ccc\nddd', 1, 1);
+  await page.keyboard.press('Shift+Tab');
+  assert.equal(await editorValue(), 'ccc\nddd', 'Shift+Tab on an unindented line is a no-op');
+
+  // Escape primes the focus escape; the next Tab moves focus instead of indenting.
+  await setEditor('keep\nme', 2, 2);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Tab');
+  assert.equal(await editorValue(), 'keep\nme', 'Escape-then-Tab should move focus, not indent');
+
+  // A non-Shift key clears the escape prime; Shift alone leaves it untouched.
+  await page.evaluate(() => document.getElementById('editor').focus());
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('x'); // key !== Shift -> clears prime
+  await page.keyboard.press('Shift'); // key === Shift -> prime untouched
+
+  // scroll handler syncs the gutter; blur clears the escape prime.
+  await page.evaluate(() => {
+    const ed = document.getElementById('editor');
+    ed.value = Array.from({ length: 60 }, (_, i) => 'line ' + i).join('\n');
+    ed.dispatchEvent(new Event('input'));
+    ed.scrollTop = 40;
+    ed.dispatchEvent(new Event('scroll'));
+    ed.blur();
+  });
+
+  // --- non-isolated bail inside startRender ----------------------------------
+  await page.evaluate(() => {
+    document.getElementById('iso-warning').hidden = true;
+    Object.defineProperty(window, 'crossOriginIsolated', { configurable: true, get: () => false });
+  });
+  await page.click('#render-btn'); // startRender bails before any render begins
+  assert.equal(
+    await page.evaluate(() => document.getElementById('iso-warning').hidden),
+    false,
+    'a non-isolated render attempt must surface the iso warning'
+  );
+  await page.evaluate(() => {
+    Object.defineProperty(window, 'crossOriginIsolated', { configurable: true, get: () => true });
+    document.getElementById('iso-warning').hidden = true;
+  });
+
+  // --- success with full opts: mobile viewport, quality+aa+threads, shortcut --
+  await page.setViewportSize({ width: 480, height: 900 });
+  await page.fill('#editor', VALID_SCENE);
+  await page.fill('#width', '64');
+  await page.fill('#height', '48');
+  await page.selectOption('#quality', '9');
+  await page.selectOption('#antialias', '0.3');
+  await page.fill('#threads', '4');
+  await page.evaluate(() => document.getElementById('threads').focus());
+  await page.keyboard.press('Control+Enter'); // startRender via the document shortcut
+  await page.keyboard.press('Meta+Enter'); // busy re-entry guard returns immediately
+  await waitState('done');
+  await page.waitForTimeout(300); // let the decode().then(scrollIntoView) chain settle
+  assert.match(
+    await page.evaluate(() => document.getElementById('download-btn').getAttribute('download')),
+    /^render-64x48-q9-a03\.png$/,
+    'download name should encode quality + antialias'
+  );
+  await page.setViewportSize({ width: 1280, height: 720 });
+
+  // --- failing render: error box, exit summary, editor line jump -------------
+  // Triggered from a number input's Enter; blank dims exercise the NaN clamps.
+  await page.fill('#editor', BROKEN_SCENE);
+  await page.fill('#width', '');
+  await page.fill('#height', '');
+  await page.selectOption('#antialias', 'off');
+  await page.evaluate(() => document.getElementById('width').focus());
+  await page.keyboard.press('Enter'); // number-input Enter -> startRender
+  await waitState('error');
+  assert.match(
+    await page.evaluate(() => document.getElementById('error').textContent),
+    /line 3/,
+    'a parse error should surface a line reference'
+  );
+  assert.match(
+    await page.evaluate(() => document.getElementById('log-summary').textContent),
+    /exit \d+/,
+    'a PovrayError should label the log summary with its exit code'
+  );
+
+  // --- status throttle: immediate path (stepped clock forces now - last >= 1s)
+  await page.fill('#editor', VALID_SCENE);
+  await page.fill('#width', '64');
+  await page.fill('#height', '48');
+  await page.selectOption('#antialias', 'off');
+  await page.selectOption('#quality', '');
+  await page.fill('#threads', '');
+  await page.evaluate(() => {
+    window.__origNow = performance.now.bind(performance);
+    let t = 0;
+    performance.now = () => (t += 5000);
+  });
+  await page.click('#render-btn');
+  await waitState('done');
+  await page.evaluate(() => {
+    performance.now = window.__origNow;
+  });
+
+  // --- status throttle: timer-callback path (frozen clock + slow render) -----
+  // A frozen clock makes every setBusyStatus throttle (now - last === 0), so the
+  // first one schedules the 1s timer; cornell-mood at 700x700 renders ~2s, well
+  // past the timer, so it fires mid-render with a pending text.
+  await page.evaluate(async () => {
+    const { getExample } = await import('/examples.js');
+    const ed = document.getElementById('editor');
+    ed.value = getExample('cornell-mood');
+    ed.dispatchEvent(new Event('input'));
+  });
+  await page.fill('#width', '700');
+  await page.fill('#height', '700');
+  await page.selectOption('#antialias', '0.1');
+  await page.evaluate(() => {
+    window.__origNow = performance.now.bind(performance);
+    const frozen = window.__origNow();
+    performance.now = () => frozen;
+  });
+  await page.click('#render-btn');
+  await waitState('done');
+  await page.evaluate(() => {
+    performance.now = window.__origNow;
+  });
+
+  // --- Escape aborts an in-flight render (document-level shortcut) ------------
+  await page.fill('#editor', VALID_SCENE);
+  await page.fill('#width', '900');
+  await page.fill('#height', '700');
+  await page.selectOption('#antialias', '0.05');
+  await page.click('#render-btn');
+  await page.waitForFunction(
+    () => document.getElementById('status').textContent.startsWith('rendering'),
+    null,
+    { timeout: 15_000 }
+  );
+  await page.keyboard.press('Escape');
+  await waitState('cancelled', 30_000);
+
+  // --- persistence: restore a full saved blob, then reload variants ----------
+  // Seed via an init script (runs on the NEXT document, after the unloading
+  // page's pagehide->saveState fires) so the app's own save can't clobber the
+  // blob we're trying to restore. addInitScript stacks across reloads; the most
+  // recently added runs last and wins.
+  const seedReload = async (blob) => {
+    await page.addInitScript((b) => {
+      localStorage.setItem('povrayer.ui.v1', b);
+    }, blob);
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(
+      () => document.getElementById('examples')?.options.length >= 4,
+      null,
+      {
+        timeout: 30_000,
+      }
+    );
+  };
+
+  await seedReload(
+    JSON.stringify({
+      source: 'SAVED restore source',
+      width: '200',
+      height: '150',
+      quality: '5',
+      antialias: '0.1',
+      threads: '6',
+      example: 'glass',
+    })
+  );
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      source: document.getElementById('editor').value,
+      width: document.getElementById('width').value,
+      height: document.getElementById('height').value,
+      quality: document.getElementById('quality').value,
+      antialias: document.getElementById('antialias').value,
+      threads: document.getElementById('threads').value,
+      example: document.getElementById('examples').value,
+    })),
+    {
+      source: 'SAVED restore source',
+      width: '200',
+      height: '150',
+      quality: '5',
+      antialias: '0.1',
+      threads: '6',
+      example: 'glass',
+    },
+    'a full saved blob should restore every control'
+  );
+
+  // Partial / wrong-typed fields each fall back to their default.
+  await seedReload(
+    JSON.stringify({
+      source: 123,
+      width: '',
+      height: 7,
+      quality: '99',
+      antialias: 'weird',
+      threads: 5,
+      example: 'no-such-example',
+    })
+  );
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      example: document.getElementById('examples').value,
+      width: document.getElementById('width').value,
+      quality: document.getElementById('quality').value,
+      antialias: document.getElementById('antialias').value,
+    })),
+    { example: 'csg-die', width: '512', quality: '', antialias: '0.3' },
+    'invalid saved fields should fall back to defaults'
+  );
+
+  // Non-object JSON: readSavedState returns null via the typeof guard.
+  await seedReload('5');
+  // Malformed JSON: readSavedState swallows the parse error.
+  await seedReload('{ not valid json');
+  // Fresh load with output hidden: resize + image-click are both no-ops.
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('resize')); // updateZoomLabel early return
+    document.getElementById('output').dispatchEvent(new Event('click')); // hidden -> no toggle
+  });
+
+  // saveState catch + pagehide handler: setItem throws, pagehide still no-ops.
+  await page.evaluate(() => {
+    localStorage.setItem = () => {
+      throw new Error('storage blocked');
+    };
+    window.dispatchEvent(new Event('pagehide'));
+  });
 } catch (err) {
   failure = err;
 } finally {
   // Browser first (drops its keep-alive connections), then the server.
+  if (page) await saveBrowserCoverage(page, 'ui');
   if (browser) await browser.close().catch(() => {});
   if (server) await server.close().catch(() => {});
 }

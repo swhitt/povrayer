@@ -17,32 +17,32 @@
    inherit the same pixel indent instead of recomputing 4ch at their own
    font size. Unsupported browsers fall back to per-use-site ch (~2px drift). */
 @property --repl-indent {
-  syntax: "<length>";
+  syntax: '<length>';
   inherits: true;
   initial-value: 0px;
 }
 
 :root {
-  --bg:            #0b0d10; /* page */
-  --panel:         #14171c; /* inputs, log, plates, error box bg */
-  --border:        #2b303a; /* decorative hairlines on non-interactive panels */
+  --bg: #0b0d10; /* page */
+  --panel: #14171c; /* inputs, log, plates, error box bg */
+  --border: #2b303a; /* decorative hairlines on non-interactive panels */
   --border-strong: #606a7a; /* form-control + secondary-button boundaries (WCAG 1.4.11) */
-  --text:          #d7dbe0;
-  --dim:           #98a1ab;
-  --accent:        #ffd23f;
-  --accent-ink:    #0b0d10; /* text on accent buttons */
-  --error:         #ff6b5e;
-  --mat-a:         #181b21; /* checker mat squares (decorative) */
-  --mat-b:         #121419;
+  --text: #d7dbe0;
+  --dim: #98a1ab;
+  --accent: #ffd23f;
+  --accent-ink: #0b0d10; /* text on accent buttons */
+  --error: #ff6b5e;
+  --mat-a: #181b21; /* checker mat squares (decorative) */
+  --mat-b: #121419;
 
   /* Type scale: 4 steps, monospace only. */
-  --fs-brand:  20px; /* / 1.2, w700, wordmark only */
-  --fs-body:   13px; /* / 1.45, editor, REPL src+input, controls, status */
-  --fs-out:    12px; /* / 1.5, log, error box, figcaptions */
+  --fs-brand: 20px; /* / 1.2, w700, wordmark only */
+  --fs-body: 13px; /* / 1.45, editor, REPL src+input, controls, status */
+  --fs-out: 12px; /* / 1.5, log, error box, figcaptions */
   --fs-chrome: 11px; /* / 1.4, footer, #repl-status */
 
   --t-fast: 120ms; /* color/border on chrome */
-  --t-med:  200ms; /* progress width, image opacity */
+  --t-med: 200ms; /* progress width, image opacity */
 
   /* The renderer's own alpha-mat convention; shows through transparent
      pixels. Use as: background: var(--mat) 0 0 / 16px 16px */
@@ -67,8 +67,9 @@ body {
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Cascadia Mono",
-               "DejaVu Sans Mono", "Liberation Mono", monospace;
+  font-family:
+    ui-monospace, 'SF Mono', Menlo, Consolas, 'Cascadia Mono', 'DejaVu Sans Mono',
+    'Liberation Mono', monospace;
   font-variant-ligatures: none;
   font-size: var(--fs-body);
   line-height: 1.45;
@@ -120,8 +121,7 @@ header nav {
   width: 0.8em;
   height: 0.8em;
   border-radius: 50%;
-  background: radial-gradient(circle at 33% 28%,
-              #fff 0%, var(--accent) 38%, #15151a 78%);
+  background: radial-gradient(circle at 33% 28%, #fff 0%, var(--accent) 38%, #15151a 78%);
 }
 
 h1 .orb {
@@ -267,13 +267,13 @@ label {
   color: var(--dim);
 }
 
-#status[data-state="done"],
-#repl-status[data-state="done"] {
+#status[data-state='done'],
+#repl-status[data-state='done'] {
   color: var(--text); /* the payoff line stops camouflaging as a label */
 }
 
-#status[data-state="error"],
-#repl-status[data-state="error"],
+#status[data-state='error'],
+#repl-status[data-state='error'],
 #status.error {
   color: var(--error);
 }
@@ -281,10 +281,10 @@ label {
 /* Pulsing trailing ellipsis: alive is distinguishable from hung. The busy
    text already reads "rendering…"; this appends the animated tail. The pulse
    animation itself is gated in the motion block below. */
-#status[data-state="busy"]::after,
-#repl-status[data-state="busy"]::after,
+#status[data-state='busy']::after,
+#repl-status[data-state='busy']::after,
 figure.result.pending figcaption::after {
-  content: "…";
+  content: '…';
 }
 
 /* ---- progress bar (#progress / #repl-progress) ----
@@ -301,7 +301,7 @@ figure.result.pending figcaption::after {
 
 #progress::before,
 #repl-progress::before {
-  content: "";
+  content: '';
   position: absolute;
   top: 0;
   bottom: 0;
@@ -311,9 +311,9 @@ figure.result.pending figcaption::after {
 }
 
 #progress.determinate::before,
-#progress[data-mode="determinate"]::before,
+#progress[data-mode='determinate']::before,
 #repl-progress.determinate::before,
-#repl-progress[data-mode="determinate"]::before {
+#repl-progress[data-mode='determinate']::before {
   width: calc(var(--pct, 0) * 1%);
 }
 
@@ -438,7 +438,7 @@ body.ui main > * {
   gap: 6px;
 }
 
-#controls input[type="number"] {
+#controls input[type='number'] {
   width: 5.5em;
 }
 
@@ -780,21 +780,21 @@ figure.result.pending > div {
     transition: color var(--t-fast) ease-out;
   }
 
-  #status[data-state="busy"]::after,
-  #repl-status[data-state="busy"]::after,
+  #status[data-state='busy']::after,
+  #repl-status[data-state='busy']::after,
   figure.result.pending figcaption::after {
     animation: pulse 1.2s ease-out infinite;
   }
 
-  #progress:not(.determinate):not([data-mode="determinate"])::before,
-  #repl-progress:not(.determinate):not([data-mode="determinate"])::before {
+  #progress:not(.determinate):not([data-mode='determinate'])::before,
+  #repl-progress:not(.determinate):not([data-mode='determinate'])::before {
     animation: sweep 0.9s linear infinite;
   }
 
   #progress.determinate::before,
-  #progress[data-mode="determinate"]::before,
+  #progress[data-mode='determinate']::before,
   #repl-progress.determinate::before,
-  #repl-progress[data-mode="determinate"]::before {
+  #repl-progress[data-mode='determinate']::before {
     transition: width var(--t-med) linear;
   }
 
@@ -807,7 +807,9 @@ figure.result.pending > div {
   /* .stale settles both ways. */
   #output,
   #download-btn {
-    transition: opacity 150ms ease-out, filter 150ms ease-out;
+    transition:
+      opacity 150ms ease-out,
+      filter 150ms ease-out;
   }
 
   #error,
@@ -818,29 +820,40 @@ figure.result.pending > div {
 
 @media (prefers-reduced-motion: reduce) {
   /* Indeterminate mode: a static full-width bar at 40% opacity, no sweep. */
-  #progress:not(.determinate):not([data-mode="determinate"])::before,
-  #repl-progress:not(.determinate):not([data-mode="determinate"])::before {
+  #progress:not(.determinate):not([data-mode='determinate'])::before,
+  #repl-progress:not(.determinate):not([data-mode='determinate'])::before {
     width: 100%;
     opacity: 0.4;
   }
 }
 
 @keyframes pulse {
-  50% { opacity: 0.2; }
+  50% {
+    opacity: 0.2;
+  }
 }
 
 @keyframes sweep {
-  from { transform: translateX(-100%); }
+  from {
+    transform: translateX(-100%);
+  }
   /* 250% of the 40%-wide bar = one full track width */
-  to { transform: translateX(250%); }
+  to {
+    transform: translateX(250%);
+  }
 }
 
 @keyframes settle {
-  from { opacity: 0; }
+  from {
+    opacity: 0;
+  }
 }
 
 @keyframes rise {
-  from { opacity: 0; transform: translateY(-4px); }
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
 }
 
 /* ---- :help reference card (REPL) ----------------------------------------

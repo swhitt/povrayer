@@ -38,7 +38,8 @@ function parseArgs(argv) {
   let out;
   const num = (flag, value) => {
     const n = Number(value);
-    if (value === undefined || value === '' || !Number.isFinite(n)) fail(`${flag} expects a number`);
+    if (value === undefined || value === '' || !Number.isFinite(n))
+      fail(`${flag} expects a number`);
     return n;
   };
   for (let i = 0; i < argv.length; i++) {
@@ -64,7 +65,9 @@ function parseArgs(argv) {
       // Optional threshold: consume the next token only if it parses as a number.
       const next = argv[i + 1];
       options.antialias =
-        next !== undefined && next !== '' && Number.isFinite(Number(next)) ? Number(argv[++i]) : true;
+        next !== undefined && next !== '' && Number.isFinite(Number(next))
+          ? Number(argv[++i])
+          : true;
     } else if (scene === undefined && (arg === '-' || !arg.startsWith('-'))) {
       scene = arg;
     } else {
@@ -129,6 +132,10 @@ try {
     process.stderr.write(`povrayer: render failed (exit code ${err.exitCode})\n`);
   } else {
     process.exitCode = 1;
+    // The `?? err` fallback only fires for a thrown non-Error (no `.message`).
+    // render() and writeFileSync() only ever throw Error/PovrayError, so it is
+    // unreachable through the CLI.
+    /* c8 ignore next -- defensive non-Error fallback, unreachable via the CLI */
     process.stderr.write(`povrayer: ${err?.message ?? err}\n`);
   }
 }

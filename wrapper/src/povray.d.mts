@@ -13,49 +13,47 @@
 
 /** Subset of the emscripten FS API the wrapper uses. */
 export interface PovrayFS {
-    mkdir(path: string): void;
-    writeFile(path: string, data: string | Uint8Array): void;
-    /**
-     * Binary read. The result may reference memory owned by the module;
-     * callers must copy before handing the bytes to anyone else.
-     */
-    readFile(path: string): Uint8Array;
+  mkdir(path: string): void;
+  writeFile(path: string, data: string | Uint8Array): void;
+  /**
+   * Binary read. The result may reference memory owned by the module;
+   * callers must copy before handing the bytes to anyone else.
+   */
+  readFile(path: string): Uint8Array;
 }
 
 /** Subset of one instantiated povray module the wrapper uses. */
 export interface PovrayModule {
-    /**
-     * Under PROXY_TO_PTHREAD this returns immediately; completion is signaled
-     * via the `onExit` factory option, never via the return value.
-     */
-    callMain(argv: string[]): void;
-    FS: PovrayFS;
-    PThread: {
-        /** Violently terminates every live pthread worker. */
-        terminateAllThreads(): void;
-    };
+  /**
+   * Under PROXY_TO_PTHREAD this returns immediately; completion is signaled
+   * via the `onExit` factory option, never via the return value.
+   */
+  callMain(argv: string[]): void;
+  FS: PovrayFS;
+  PThread: {
+    /** Violently terminates every live pthread worker. */
+    terminateAllThreads(): void;
+  };
 }
 
 /** Module overrides accepted by the emscripten factory. */
 export interface PovrayModuleOptions {
-    print?: (line: string) => void;
-    printErr?: (line: string) => void;
-    /**
-     * Fired when the runtime exits (`EXIT_RUNTIME=1`); this is the real
-     * end-of-render event.
-     */
-    onExit?: (exitCode: number) => void;
-    /** Fired on a fatal wasm abort (OOM, trap, failed assertion). */
-    onAbort?: (what: unknown) => void;
-    /** Overrides the default exit behavior (`process.exit` in Node). */
-    quit?: (exitCode: number, toThrow?: unknown) => void;
-    locateFile?: (file: string, prefix: string) => string;
+  print?: (line: string) => void;
+  printErr?: (line: string) => void;
+  /**
+   * Fired when the runtime exits (`EXIT_RUNTIME=1`); this is the real
+   * end-of-render event.
+   */
+  onExit?: (exitCode: number) => void;
+  /** Fired on a fatal wasm abort (OOM, trap, failed assertion). */
+  onAbort?: (what: unknown) => void;
+  /** Overrides the default exit behavior (`process.exit` in Node). */
+  quit?: (exitCode: number, toThrow?: unknown) => void;
+  locateFile?: (file: string, prefix: string) => string;
 }
 
 /**
  * MODULARIZE + EXPORT_ES6 factory: each call produces one isolated module
  * instance with its own memory, FS, and worker pool.
  */
-export default function createPovray(
-    options?: PovrayModuleOptions,
-): Promise<PovrayModule>;
+export default function createPovray(options?: PovrayModuleOptions): Promise<PovrayModule>;

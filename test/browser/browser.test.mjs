@@ -7,6 +7,10 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { startServer } from './serve.mjs';
+import {
+  startBrowserCoverage,
+  saveBrowserCoverage,
+} from '../../tools/coverage/browser-collect.mjs';
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const be32 = (bytes, off) =>
@@ -24,12 +28,16 @@ const watchdog = setTimeout(() => {
 const consoleLines = [];
 let server;
 let browser;
+let page;
 let failure;
 
 try {
   server = await startServer();
   browser = await chromium.launch();
-  const page = await browser.newPage();
+  page = await browser.newPage();
+  // Start V8 coverage before navigation so the page's module scripts are
+  // captured (no-op unless POVRAYER_COVERAGE is set).
+  await startBrowserCoverage(page);
   page.on('console', (msg) => consoleLines.push(`[${msg.type()}] ${msg.text()}`));
   page.on('pageerror', (err) => consoleLines.push(`[pageerror] ${err.message}`));
 
@@ -59,6 +67,7 @@ try {
   failure = err;
 } finally {
   // Browser first (drops its keep-alive connections), then the server.
+  if (page) await saveBrowserCoverage(page, 'browser');
   if (browser) await browser.close().catch(() => {});
   if (server) await server.close().catch(() => {});
 }

@@ -7,6 +7,7 @@ import { EXAMPLES, getExample } from './examples.js';
 const isoWarning = document.getElementById('iso-warning');
 if (crossOriginIsolated) {
   sessionStorage.removeItem('coi-retry');
+  /* c8 ignore start -- COI service-worker fallback: the test harness is always cross-origin isolated, and the SW controllerchange/reload race is non-deterministic */
 } else {
   isoWarning.hidden = false;
   // coi-serviceworker first-visit race: on a fast load the SW can install,
@@ -24,6 +25,7 @@ if (crossOriginIsolated) {
   if (navigator.serviceWorker?.controller) coiRetry();
   else navigator.serviceWorker?.addEventListener('controllerchange', coiRetry);
 }
+/* c8 ignore stop -- closes the ignore block opened above */
 
 const scrollback = document.getElementById('scrollback');
 const form = document.getElementById('input-form');
@@ -49,8 +51,7 @@ const STORAGE_KEY = 'povrayer.repl.v1';
 // `#include "colors.inc"`, so `color Red` would fail with an undeclared
 // identifier. The suggested first-contact snippet has to render as-is.
 const TRY_LINE = 'sphere { <0,1,0>, 1 pigment { color rgb <1,0,0> } }';
-const GREETING =
-  `type POV-Ray scene code, get an image · try: ${TRY_LINE} · :example for scenes, :help for commands`;
+const GREETING = `type POV-Ray scene code, get an image · try: ${TRY_LINE} · :example for scenes, :help for commands`;
 
 const entries = []; // [{ id, source }], order = scene order; ids increase from 1
 let history = []; // submitted raw inputs (commands included), newest last
@@ -110,11 +111,16 @@ function loadState() {
   if (s && typeof s === 'object') {
     if (Number.isInteger(s.width) && s.width >= 8 && s.width <= 2048) settings.width = s.width;
     if (Number.isInteger(s.height) && s.height >= 8 && s.height <= 2048) settings.height = s.height;
-    if (Number.isInteger(s.quality) && s.quality >= 0 && s.quality <= 11) settings.quality = s.quality;
-    if (s.antialias === true || (typeof s.antialias === 'number' && s.antialias > 0 && s.antialias <= 3)) {
+    if (Number.isInteger(s.quality) && s.quality >= 0 && s.quality <= 11)
+      settings.quality = s.quality;
+    if (
+      s.antialias === true ||
+      (typeof s.antialias === 'number' && s.antialias > 0 && s.antialias <= 3)
+    ) {
       settings.antialias = s.antialias;
     }
-    if (Number.isInteger(s.threads) && s.threads >= 1 && s.threads <= 32) settings.threads = s.threads;
+    if (Number.isInteger(s.threads) && s.threads >= 1 && s.threads <= 32)
+      settings.threads = s.threads;
     if (typeof s.args === 'string' && s.args.trim()) settings.args = s.args;
   }
   if (Array.isArray(data.history)) {
@@ -179,6 +185,7 @@ function mapAssembledLine(n) {
       return { entry: i + 1, line: n - lastSpans[i].start + 1 };
     }
   }
+  /* c8 ignore next -- POV-Ray reports error lines inside the offending entry; the scaffold is always valid and never the error site, so an assembled line never maps outside the entry spans */
   return null; // scaffold or out of range
 }
 
@@ -278,9 +285,11 @@ function completeResult(fig, blobUrl, w, h, elapsedMs, log) {
   if (log) {
     try {
       stats = parseStats(log);
+      /* c8 ignore start -- parseStats never throws on a string log; the catch is defensive */
     } catch {
       stats = null; // fall back to the short caption
     }
+    /* c8 ignore stop -- closes the ignore block opened above */
   }
   if (typeof stats?.rays === 'number' && stats.rays > 0) {
     parts.push(`${stats.rays.toLocaleString('en-US')} rays`);
@@ -318,6 +327,7 @@ function updateStatus() {
   const busy = abortCtl !== null;
   // Bare head carries no trailing ellipsis: the busy-state ::after owns the
   // animated one, so "rendering…" would render a double "rendering……".
+  /* c8 ignore next -- renderPct only reaches >=0 after a second progress event; the dist emits one progress burst per render, so the determinate percent in the head is unreachable */
   const head = busy ? (renderPct >= 0 ? `rendering ${renderPct}%` : 'rendering') : 'idle';
   const parts = [head, `${settings.width}×${settings.height}`];
   if (settings.quality !== undefined) parts.push(`q ${settings.quality}`);
@@ -370,12 +380,14 @@ function handleRenderEvent(ev) {
     renderPrimed = true;
     return; // one lone percent never leaves the sweep; wait for a second
   }
+  /* c8 ignore start -- the dist emits one progress burst per render, so the second-percent determinate path never runs */
   if (ev.percent <= renderPct) return; // monotonic clamp
   renderPct = ev.percent;
   progressEl.classList.add('determinate');
   progressEl.style.setProperty('--pct', String(renderPct));
   // Live-region hygiene: the bar moves freely, the text at most once per second.
   if (performance.now() - statusStamp >= 1000) updateStatus();
+  /* c8 ignore stop -- closes the ignore block opened above */
 }
 
 // --- error presentation --------------------------------------------------------
@@ -478,7 +490,11 @@ const COMMANDS = [
   { name: 'aa', usage: ':aa [threshold|off]', desc: 'antialias (no arg = 0.3)' },
   { name: 'threads', usage: ':threads N', desc: 'worker threads 1..32' },
   { name: 'args', usage: ':args [switches]', desc: 'raw POV-Ray switches (:args alone clears)' },
-  { name: 'log', usage: ':log [full]', desc: "last render's stats and warnings, 'full' for the raw log" },
+  {
+    name: 'log',
+    usage: ':log [full]',
+    desc: "last render's stats and warnings, 'full' for the raw log",
+  },
   { name: 'reset', usage: ':reset', desc: 'clear scene, settings, and saved state' },
 ];
 
@@ -773,12 +789,14 @@ function dispatchCommand(text) {
         appendBlock('info', lastLog.trimEnd());
         break;
       }
-      let stats = null;
+      let stats;
       try {
         stats = parseStats(lastLog);
+        /* c8 ignore start -- parseStats never throws on a string log; the catch is defensive */
       } catch {
         stats = null;
       }
+      /* c8 ignore stop -- closes the ignore block opened above */
       const parts = [];
       if (typeof stats?.parseSeconds === 'number') parts.push(`parse ${stats.parseSeconds}s`);
       if (typeof stats?.traceSeconds === 'number') parts.push(`trace ${stats.traceSeconds}s`);
@@ -816,7 +834,10 @@ function dispatchCommand(text) {
       entries.length = 0;
       entries.push({ id: nextId++, source: src });
       saveState();
-      appendBlock('info', `loaded '${arg}' (${src.trimEnd().split('\n').length} lines) · :source to view`);
+      appendBlock(
+        'info',
+        `loaded '${arg}' (${src.trimEnd().split('\n').length} lines) · :source to view`
+      );
       runRender();
       break;
     }

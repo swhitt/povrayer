@@ -192,11 +192,8 @@ export function formatError(err, { mapLine } = {}) {
   if (err instanceof PovrayError) {
     const lines = err.log.split('\n');
     const i = lines.findIndex((l) => ERROR_LINE.test(l));
-    const excerpt =
-      i >= 0 ? lines.slice(Math.max(0, i - 6), i + 6) : lines.slice(-12);
-    const relevant = excerpt.filter(
-      (l) => !BANNER_NOISE.test(l) && l.trim() !== 'Render failed'
-    );
+    const excerpt = i >= 0 ? lines.slice(Math.max(0, i - 6), i + 6) : lines.slice(-12);
+    const relevant = excerpt.filter((l) => !BANNER_NOISE.test(l) && l.trim() !== 'Render failed');
     const head = errorHeadline(err.log, mapLine);
     const text = (head ? head + '\n' : '') + relevant.join('\n');
     return text.replaceAll("'/work/scene.pov'", 'scene').trimEnd();

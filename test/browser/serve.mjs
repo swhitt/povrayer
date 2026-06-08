@@ -60,11 +60,13 @@ async function handle(req, res) {
 export function startServer(port = 0) {
   return new Promise((resolveStart, rejectStart) => {
     const server = createServer((req, res) => {
+      /* c8 ignore start -- defensive 500: handle() catches its own errors and always responds, so this net never fires */
       handle(req, res).catch((err) => {
         console.error(err);
         if (!res.headersSent) res.writeHead(500);
         res.end();
       });
+      /* c8 ignore stop -- end defensive 500 net */
     });
     server.once('error', rejectStart);
     server.listen(port, '127.0.0.1', () => {
@@ -79,7 +81,9 @@ export function startServer(port = 0) {
   });
 }
 
+/* c8 ignore start -- CLI entrypoint guard: only runs via `node serve.mjs`, never under the import-based test suite */
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const { url } = await startServer(8080);
   console.log(`povrayer test server: ${url}`);
 }
+/* c8 ignore stop -- end CLI entrypoint guard */

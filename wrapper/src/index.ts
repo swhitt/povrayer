@@ -155,10 +155,7 @@ function abortError(signal: AbortSignal | undefined): Error {
  *         failure) or the wasm runtime aborts; `AbortError` when cancelled
  *         via `options.signal`.
  */
-export async function render(
-    source: string,
-    options: RenderOptions = {},
-): Promise<Uint8Array> {
+export async function render(source: string, options: RenderOptions = {}): Promise<Uint8Array> {
     const {
         width = 800,
         height = 600,
@@ -205,13 +202,10 @@ export async function render(
         // printErr -- with this fixed prefix, then rethrows outside any
         // promise chain, which would leave `exited` pending forever. Detect
         // the report and fail the render instead of hanging.
+        /* c8 ignore next 3 -- emscripten only emits "worker sent an error!" on a real pthread crash, which can't be provoked deterministically in a test */
         if (line.startsWith("worker sent an error!")) {
             rejectExit(
-                new PovrayError(
-                    `POV-Ray render thread crashed: ${line}`,
-                    -1,
-                    logLines.join("\n"),
-                ),
+                new PovrayError(`POV-Ray render thread crashed: ${line}`, -1, logLines.join("\n")),
             );
         }
     };
@@ -223,6 +217,7 @@ export async function render(
         // immediately, so onExit (fired when EXIT_RUNTIME tears the runtime
         // down) is the ONLY reliable end-of-render event.
         onExit: (code) => resolveExit(code),
+        /* c8 ignore next -- onAbort only fires on a wasm runtime abort (assertion/OOM); a normal render exits through onExit instead */
         onAbort: (what) =>
             rejectExit(
                 new PovrayError(
@@ -232,6 +227,7 @@ export async function render(
                 ),
             ),
         // Never let the module exit the host process.
+        /* c8 ignore next -- deliberate no-op; with EXIT_RUNTIME the runtime ends via onExit, so the module never calls quit */
         quit: () => {},
         ...(locateFile ? { locateFile } : {}),
     });
@@ -239,6 +235,7 @@ export async function render(
     const onSignalAbort = () => {
         // Violent, by design: the instance is discarded after this render and
         // the next render gets a fresh one, so termination mid-render is safe.
+        /* c8 ignore next 6 -- terminateAllThreads only throws once the runtime is already torn down; the live mid-render abort path always succeeds */
         try {
             instance.PThread.terminateAllThreads();
         } catch {
@@ -304,6 +301,7 @@ export async function render(
         // Safety net on every exit path: a no-op after a clean EXIT_RUNTIME
         // teardown, but it reaps preallocated pool workers on early-throw
         // paths that would otherwise keep a Node process alive forever.
+        /* c8 ignore next 6 -- terminateAllThreads only throws once the runtime is already torn down; the success/throw exit paths reach this with a live instance */
         try {
             instance.PThread.terminateAllThreads();
         } catch {
