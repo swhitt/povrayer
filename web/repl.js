@@ -127,12 +127,18 @@ function loadState() {
 // are an accepted v1 tradeoff), so a user-supplied camera never collides with
 // the default one (POV-Ray errors on duplicate cameras).
 const SCAFFOLD = [
-  [/^\s*#version\b/m, '#version 3.8;'],
   [/\bglobal_settings\b/, 'global_settings { assumed_gamma 1.0 }'],
   [/\bcamera\b/, 'camera { location <0, 2, -5> look_at <0, 0.5, 0> }'],
   [/\blight_source\b/, 'light_source { <5, 10, -5> color rgb 1 }'],
   [/\bbackground\b/, 'background { color rgb <0.15, 0.15, 0.18> }'],
 ];
+
+// #version is NOT scaffold-conditional: POV-Ray fatals when a scene's first
+// #version appears after any other statement, so injected scaffold lines above
+// an entry that declares its own #version would break it (every standalone
+// example does). A leading #version makes any later in-entry #version a legal
+// mid-scene version change, so the assembled scene ALWAYS starts with one.
+const VERSION_LINE = '#version 3.8;';
 
 // Comments must not satisfy a scaffold test: "// fix camera later" would
 // otherwise suppress the camera scaffold and silently render black from
@@ -150,16 +156,17 @@ function assembleScene() {
   const body = entries.map((e) => e.source).join('\n');
   const probe = stripComments(body);
   const injected = SCAFFOLD.filter(([re]) => !re.test(probe)).map(([, line]) => line);
-  // Span math mirrors the string assembly below: k scaffold lines, one blank
+  const preamble = [VERSION_LINE, ...injected];
+  // Span math mirrors the string assembly below: preamble lines, one blank
   // separator, then the entries joined by single newlines.
-  let line = injected.length ? injected.length + 2 : 1;
+  let line = preamble.length + 2;
   lastSpans = entries.map((e) => {
     const n = e.source.split('\n').length;
     const span = { start: line, end: line + n - 1 };
     line += n;
     return span;
   });
-  return injected.length ? injected.join('\n') + '\n\n' + body : body;
+  return preamble.join('\n') + '\n\n' + body;
 }
 
 function mapAssembledLine(n) {
@@ -466,9 +473,9 @@ const HELP_TEXT = [
   'Enter or run submits · Esc or cancel stops · Shift+Enter inserts a newline.',
   'ArrowUp/ArrowDown recall history · Tab completes :commands · click an old',
   'entry to copy it back into the input.',
-  'missing #version/global_settings/camera/light_source/background are',
-  'injected with defaults. error line numbers refer to the assembled scene;',
-  ':source shows it.',
+  'the scene always starts with #version 3.8; missing global_settings/camera/',
+  'light_source/background are injected with defaults. error line numbers',
+  'refer to the assembled scene; :source shows it.',
   'settings (:size/:q/:aa/:threads/:args) take effect on the next render.',
   'scene, settings, and history persist in this browser; :reset clears them.',
 ].join('\n');

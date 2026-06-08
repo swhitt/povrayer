@@ -167,6 +167,25 @@ try {
     `:EXAMPLE should lowercase-dispatch to the example listing, got: ${exampleListing}`
   );
 
+  // 4b. Loading a standalone example must render through the assembly path.
+  // Regression: examples declare their own `#version`, which POV-Ray fatals
+  // on when any injected scaffold line precedes it; the assembled scene now
+  // always leads with #version so in-entry directives are legal mid-scene
+  // changes. csg-die is the canonical repro (it lacks `background`, so one
+  // scaffold line is always injected above it).
+  const imgsBeforeLoad = await page.evaluate(
+    () => document.querySelectorAll('#scrollback img.preview').length
+  );
+  await submit(page, ':example csg-die');
+  await page.waitForFunction(
+    (n) => {
+      const imgs = document.querySelectorAll('#scrollback img.preview');
+      return imgs.length > n && imgs[imgs.length - 1].naturalWidth === 64;
+    },
+    imgsBeforeLoad,
+    { timeout: 120_000 }
+  );
+
   // ...and an unknown command suggests the nearest real one (:sz is not a
   // prefix of :size, so this exercises the edit-distance pass).
   const childrenBeforeSz = await page.evaluate(
