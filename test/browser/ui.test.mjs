@@ -3090,6 +3090,225 @@ try {
   await page.keyboard.press('Escape');
 
   // ===========================================================================
+  // Drag-and-drop asset import: drop an image/.inc to stage it into the render
+  // FS (relative refs resolve via the wrapper's +L/work), drop a .pov to replace
+  // the scene. The pure snippet logic is node-tested; here the DOM + FS round
+  // trip and the chip management.
+  // ===========================================================================
+  await page.evaluate(() => {
+    const e = document.getElementById('editor');
+    e.value = '';
+    e.selectionStart = e.selectionEnd = 0;
+    e.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+
+  // dragover marks the editor as a drop target and shows the hint overlay.
+  await page.evaluate(() =>
+    document
+      .getElementById('editor-wrap')
+      .dispatchEvent(new DragEvent('dragover', { dataTransfer: new DataTransfer(), bubbles: true }))
+  );
+  assert.ok(
+    await page.evaluate(() =>
+      document.getElementById('editor-wrap').classList.contains('drag-over')
+    ),
+    'dragover marks the editor as a drop target'
+  );
+  assert.equal(
+    await page.evaluate(() => getComputedStyle(document.getElementById('drop-hint')).display),
+    'flex',
+    'the drop hint shows while a file is dragged over the editor'
+  );
+  // dragleave onto a CHILD (the textarea) keeps the marker; leaving the editor clears it.
+  await page.evaluate(() =>
+    document.getElementById('editor-wrap').dispatchEvent(
+      new DragEvent('dragleave', {
+        relatedTarget: document.getElementById('editor'),
+        bubbles: true,
+      })
+    )
+  );
+  assert.ok(
+    await page.evaluate(() =>
+      document.getElementById('editor-wrap').classList.contains('drag-over')
+    ),
+    'dragleave onto a child element does not clear the marker'
+  );
+  await page.evaluate(() =>
+    document
+      .getElementById('editor-wrap')
+      .dispatchEvent(new DragEvent('dragleave', { bubbles: true }))
+  );
+  assert.equal(
+    await page.evaluate(() =>
+      document.getElementById('editor-wrap').classList.contains('drag-over')
+    ),
+    false,
+    'leaving the editor clears the drop-target marker'
+  );
+
+  // Drop a PNG and an unsupported .txt together: the image stages + inserts a
+  // pigment declare and a chip; the .txt is ignored (covers the loop + reject).
+  await page.evaluate(async () => {
+    const cv = document.createElement('canvas');
+    cv.width = 2;
+    cv.height = 2;
+    cv.getContext('2d').fillRect(0, 0, 2, 2);
+    const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
+    const dt = new DataTransfer();
+    dt.items.add(new File([blob], 'swatch.png', { type: 'image/png' }));
+    dt.items.add(new File(['notes'], 'notes.txt', { type: 'text/plain' }));
+    document
+      .getElementById('editor-wrap')
+      .dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true }));
+  });
+  await page.waitForFunction(
+    () => document.getElementById('editor').value.includes('#declare P_swatch'),
+    null,
+    { timeout: 5_000 }
+  );
+  const chipNames = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('#assets .asset-name')].map((s) => s.textContent)
+    );
+  assert.deepEqual(
+    await chipNames(),
+    ['swatch.png'],
+    'only the image stages a chip; the .txt is ignored'
+  );
+  assert.equal(
+    await page.evaluate(() => document.getElementById('assets').hidden),
+    false,
+    'the assets strip shows once something is loaded'
+  );
+  assert.match(
+    await page.evaluate(() => document.getElementById('asset-note').textContent),
+    /notes\.txt/,
+    'the rejected .txt is named in the skip note'
+  );
+
+  // End-to-end: a scene referencing the staged image by RELATIVE name renders,
+  // proving the files round trip + the +L/work search path.
+  await page.evaluate(() => {
+    const e = document.getElementById('editor');
+    e.value = [
+      '#version 3.8;',
+      'global_settings { assumed_gamma 1.0 }',
+      'camera { location <0,0,-3> look_at 0 }',
+      'light_source { <2,4,-3> rgb 1 }',
+      'plane { z, 1.5 pigment { image_map { png "swatch.png" } } }',
+      '',
+    ].join('\n');
+    e.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.fill('#width', '64');
+  await page.fill('#height', '64');
+  await page.selectOption('#antialias', 'off');
+  await page.click('#render-btn');
+  await page.waitForFunction(
+    () => /^done in/.test(document.getElementById('status').textContent),
+    null,
+    { timeout: 30_000 }
+  );
+  assert.equal(
+    await page.evaluate(() => document.getElementById('output').naturalWidth),
+    64,
+    'a dropped image renders via its relative image_map reference'
+  );
+
+  // Drop a .inc: it stages and inserts an #include (the text-asset path).
+  await page.evaluate(async () => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(['#declare Extra = 1;'], 'extra.inc', { type: 'text/plain' }));
+    document
+      .getElementById('editor-wrap')
+      .dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true }));
+  });
+  await page.waitForFunction(
+    () => document.getElementById('editor').value.includes('#include "extra.inc"'),
+    null,
+    { timeout: 5_000 }
+  );
+  assert.deepEqual(
+    await chipNames(),
+    ['swatch.png', 'extra.inc'],
+    'the include stages a second chip'
+  );
+  assert.equal(
+    await page.evaluate(() => document.getElementById('asset-note').hidden),
+    true,
+    'a clean drop clears the skip note'
+  );
+
+  // Drop a .pov: dismissing the confirm leaves the scene; accepting replaces it.
+  const beforeReplace = await page.evaluate(() => document.getElementById('editor').value);
+  page.once('dialog', (d) => d.dismiss());
+  await page.evaluate(async () => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(['// REPLACEMENT A'], 'a.pov', { type: 'text/plain' }));
+    document
+      .getElementById('editor-wrap')
+      .dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true }));
+  });
+  await page.waitForTimeout(200);
+  assert.equal(
+    await page.evaluate(() => document.getElementById('editor').value),
+    beforeReplace,
+    'dismissing the replace confirm leaves the scene untouched'
+  );
+  page.once('dialog', (d) => d.accept());
+  await page.evaluate(async () => {
+    const dt = new DataTransfer();
+    dt.items.add(new File(['// REPLACEMENT B'], 'b.pov', { type: 'text/plain' }));
+    document
+      .getElementById('editor-wrap')
+      .dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true }));
+  });
+  await page.waitForFunction(
+    () => document.getElementById('editor').value.includes('REPLACEMENT B'),
+    null,
+    { timeout: 5_000 }
+  );
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem('povrayer.ui.stash')),
+    beforeReplace,
+    'an accepted .pov replace stashes the prior scene for recovery'
+  );
+
+  // A drop with the caret MID-line prefixes a newline so the declare lands on its
+  // own line (the line-start guard's false arm).
+  await page.evaluate(async () => {
+    const e = document.getElementById('editor');
+    e.value = 'abc';
+    e.selectionStart = e.selectionEnd = 1;
+    const cv = document.createElement('canvas');
+    cv.width = 2;
+    cv.height = 2;
+    cv.getContext('2d').fillRect(0, 0, 2, 2);
+    const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
+    const dt = new DataTransfer();
+    dt.items.add(new File([blob], 'mid.png', { type: 'image/png' }));
+    document
+      .getElementById('editor-wrap')
+      .dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true }));
+  });
+  await page.waitForFunction(
+    () => document.getElementById('editor').value.startsWith('a\n'),
+    null,
+    { timeout: 5_000 }
+  );
+
+  // Removing every asset chip unloads them and hides the strip.
+  await page.evaluate(() => {
+    document.querySelectorAll('#assets .asset-remove').forEach((b) => b.click());
+  });
+  assert.equal(
+    await page.evaluate(() => document.getElementById('assets').hidden),
+    true,
+    'removing every asset hides the strip'
+  );
+
+  // ===========================================================================
   // Mobile UX (coarse pointer): the iPhone fixes. A separate context emulates a
   // touch, mobile-viewport, coarse-pointer device so the @media (pointer:coarse)
   // editor/example rules actually apply (the default desktop page is fine-

@@ -322,6 +322,12 @@ async function runEngine<T>(
         // Animation flags (+KFI/+KFF/+KI/+KF) go here, between the antialias
         // flag and the include path, so they precede any caller-supplied args.
         argv.push(...extraArgs);
+        // /work first so a staged file resolves by bare name: POV-Ray searches
+        // the library paths (NOT the input file's own directory) for `#include`
+        // targets and image_map/height_field files, so without this a scene
+        // referencing a staged `"wood.png"` fails to find it. Ahead of the stdlib
+        // path so a deliberately staged override (e.g. a custom colors.inc) wins.
+        argv.push("+L/work");
         // Explicit even though the compiled-in POVLIBDIR fallback covers it.
         argv.push("+L/usr/share/povray-3.8/include");
         argv.push(...args);

@@ -19,6 +19,7 @@ import { formatStats } from './stats.js';
 import { encodeGif } from './gif.js';
 import { encodeApng } from './apng.js';
 import { buildPool, complete, applyCompletion, signatureText } from './complete.js';
+import { classifyAsset, assetSnippet, safeName, uniqueName } from './assets.js';
 
 const isoWarning = document.getElementById('iso-warning');
 if (crossOriginIsolated) {
@@ -61,8 +62,12 @@ const exampleAttrSrc = /** @type {HTMLAnchorElement} */ (
 const editor = /** @type {HTMLTextAreaElement} */ (document.getElementById('editor'));
 const editorCode = document.getElementById('editor-code');
 const editorStack = document.getElementById('editor-stack');
+const editorWrap = document.getElementById('editor-wrap');
 const completeBox = document.getElementById('complete');
 const completeStatus = document.getElementById('complete-status');
+const assetsStrip = document.getElementById('assets');
+const assetChips = document.getElementById('asset-chips');
+const assetNote = document.getElementById('asset-note');
 const gutter = document.getElementById('gutter');
 const liveToggle = document.getElementById('live-toggle');
 const widthInput = /** @type {HTMLInputElement} */ (document.getElementById('width'));
@@ -433,11 +438,7 @@ function selectExample(name) {
   const source = record.source;
   if (editor.value !== lastLoadedSource) {
     if (!confirm('Replace your edited scene?')) return; // selectedExample unchanged, no load
-    try {
-      localStorage.setItem(STASH_KEY, editor.value);
-    } catch {
-      // best-effort stash
-    }
+    stashScene();
   }
   selectedExample = name;
   editor.value = source;
@@ -1062,6 +1063,141 @@ function handleCompleteKeydown(e) {
   return false;
 }
 
+// ---- drag-and-drop asset import ----
+// Drop an image on the editor and it's staged into the render filesystem (the
+// wrapper writes the `files` map to /work/<name>) with an image_map pigment
+// declare inserted at the caret; drop a .inc to stage + #include it; drop a .pov
+// to replace the scene. Assets are session-only (raw bytes, not part of the
+// permalink) and shown as removable chips so it's always clear what's loaded.
+
+/** @type {Map<string, Uint8Array | string>} */
+const assetRegistry = new Map();
+const EMPTY_ASSET = new Uint8Array(0); // placeholder while a dropped file is being read
+
+// The staged assets as the wrapper's `files` map, or undefined when there are
+// none (so the render opts stay clean and the wrapper skips FS staging).
+function assetFiles() {
+  return assetRegistry.size > 0 ? Object.fromEntries(assetRegistry) : undefined;
+}
+
+function renderAssetChips() {
+  assetChips.replaceChildren();
+  for (const name of assetRegistry.keys()) {
+    const chip = document.createElement('span');
+    chip.className = 'asset-chip';
+    const label = document.createElement('span');
+    label.className = 'asset-name';
+    label.textContent = name;
+    chip.appendChild(label);
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'asset-remove';
+    remove.textContent = '×';
+    remove.setAttribute('aria-label', `unload ${name}`);
+    // Spell out that removal only unstages the bytes; the scene's snippet stays.
+    remove.title = `Unload ${name} from the next render (its snippet stays in the scene)`;
+    remove.addEventListener('click', () => {
+      assetRegistry.delete(name);
+      renderAssetChips();
+    });
+    chip.appendChild(remove);
+    assetChips.appendChild(chip);
+  }
+  assetsStrip.hidden = assetRegistry.size === 0;
+}
+
+// Report the files a drop couldn't import (unsupported type or unreadable), or
+// clear the note when the drop was fully clean.
+function showDropNote(skipped) {
+  if (skipped.length > 0) {
+    assetNote.textContent = `skipped (unsupported or unreadable): ${skipped.join(', ')}`;
+    assetNote.hidden = false;
+  } else {
+    assetNote.hidden = true;
+  }
+}
+
+// Stash the current scene as the single recovery copy before it's replaced
+// (shared with the example-browser replace flow).
+function stashScene() {
+  try {
+    localStorage.setItem(STASH_KEY, editor.value);
+  } catch {
+    // best-effort stash
+  }
+}
+
+// Insert text at the caret, advancing past it, and resync the overlay/gutter and
+// the save + live-draft schedules (setRangeText fires no input event). A
+// newline is prefixed unless the caret is already at the start of a line, so a
+// dropped declare never splits a token mid-line.
+function insertAtCaret(text) {
+  const at = editor.selectionStart;
+  const atLineStart = at === 0 || editor.value[at - 1] === '\n';
+  editor.setRangeText(atLineStart ? text : '\n' + text, at, editor.selectionEnd, 'end');
+  renderGutter();
+  paintHighlight();
+  scheduleSave();
+  scheduleDraft();
+}
+
+async function handleDrop(fileList) {
+  const skipped = [];
+  for (const file of fileList) {
+    const kind = classifyAsset(file.name);
+    if (kind === 'unknown') {
+      skipped.push(file.name);
+      continue;
+    }
+    if (kind === 'scene') {
+      const text = await file.text();
+      if (confirm(`Replace the scene with ${file.name}?`)) {
+        stashScene();
+        editor.value = text;
+        renderGutter();
+        paintHighlight();
+        scheduleSave();
+        scheduleDraft();
+      }
+      continue;
+    }
+    // Reserve the (sanitized, unique) name synchronously so a second drop racing
+    // through here can't claim the same name before the async read finishes.
+    const name = uniqueName(safeName(file.name), assetRegistry);
+    assetRegistry.set(name, EMPTY_ASSET);
+    let data;
+    try {
+      data = kind === 'image' ? new Uint8Array(await file.arrayBuffer()) : await file.text();
+    } catch {
+      /* c8 ignore next 4 -- an in-memory dropped File doesn't reject on read in the harness; releases the reservation and reports */
+      assetRegistry.delete(name);
+      skipped.push(file.name);
+      continue;
+    }
+    assetRegistry.set(name, data);
+    insertAtCaret(assetSnippet(name, kind));
+    renderAssetChips();
+  }
+  showDropNote(skipped);
+}
+
+editorWrap.addEventListener('dragover', (e) => {
+  e.preventDefault(); // allow the drop
+  editorWrap.classList.add('drag-over');
+});
+editorWrap.addEventListener('dragleave', (e) => {
+  // Ignore the dragleave fired when the pointer crosses onto a child (gutter,
+  // overlay, textarea); only clear when the drag truly leaves the editor.
+  if (!editorWrap.contains(/** @type {Node | null} */ (e.relatedTarget))) {
+    editorWrap.classList.remove('drag-over');
+  }
+});
+editorWrap.addEventListener('drop', (e) => {
+  e.preventDefault();
+  editorWrap.classList.remove('drag-over');
+  handleDrop(e.dataTransfer.files);
+});
+
 // ---- controls ----
 
 function clamp(n, lo, hi) {
@@ -1100,6 +1236,7 @@ function collectOptions() {
   const opts = readRenderOptions();
   widthInput.value = String(opts.width);
   heightInput.value = String(opts.height);
+  opts.files = assetFiles(); // undefined when no assets are loaded; the wrapper skips it
   const args = parseFlags(flagsInput.value);
   return args.length ? { ...opts, args } : opts;
 }
@@ -1485,6 +1622,7 @@ function draftOptions() {
     quality,
     threads,
     antialias: false,
+    files: assetFiles(), // staged dropped assets (undefined when none)
   };
 }
 

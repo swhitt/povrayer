@@ -107,8 +107,22 @@
                  aria-activedescendant alone. -->
             <ul id="complete" role="listbox" aria-label="completions" hidden></ul>
             <span id="complete-status" class="sr-only" aria-live="polite"></span>
+            <!-- Drop affordance: shown only while a file is dragged over the editor
+                 (CSS keys off #editor-wrap.drag-over). pointer-events:none so the
+                 drop still lands on the textarea. -->
+            <div id="drop-hint" aria-hidden="true">drop an image, .inc, or .pov to import</div>
           </div>
         </div>
+        <!-- Dropped-asset chips (images/.inc staged into the render FS); ui.js
+             fills #asset-chips and hides the strip when empty. The note flags
+             that staged bytes aren't saved in a shared link. -->
+        <div id="assets" class="assets" aria-label="loaded assets" hidden>
+          <span class="assets-label">staged</span>
+          <span id="asset-chips"></span>
+          <span class="assets-note">not saved in links</span>
+        </div>
+        <!-- Transient feedback for a drop that couldn't be imported. -->
+        <p id="asset-note" class="asset-note" role="status" aria-live="polite" hidden></p>
         <div id="controls">
           <span class="ctl-group">
             <span class="seg-group" id="mode-toggle" role="group" aria-label="render mode">
