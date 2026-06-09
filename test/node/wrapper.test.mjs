@@ -91,19 +91,25 @@ test('a files entry named scene.pov cannot clobber the rendered source', async (
 });
 
 test('rejects a files key that escapes /work', async () => {
-  await assert.rejects(render(scene, { files: { '../escape.inc': 'nope' } }), (err) => {
-    assert.ok(!(err instanceof PovrayError), 'should be a plain staging Error, not PovrayError');
-    assert.match(err.message, /Invalid extra-file path/);
-    assert.match(err.message, /must be a relative path/);
-    return true;
-  });
+  await assert.rejects(
+    render(scene, { files: { '../escape.inc': 'nope' } }),
+    /** @param {Error} err */ (err) => {
+      assert.ok(!(err instanceof PovrayError), 'should be a plain staging Error, not PovrayError');
+      assert.match(err.message, /Invalid extra-file path/);
+      assert.match(err.message, /must be a relative path/);
+      return true;
+    }
+  );
 });
 
 test('rejects a files key that is only dot/slash segments', async () => {
-  await assert.rejects(render(scene, { files: { './/': 'nope' } }), (err) => {
-    assert.match(err.message, /Invalid extra-file path/);
-    return true;
-  });
+  await assert.rejects(
+    render(scene, { files: { './/': 'nope' } }),
+    /** @param {Error} err */ (err) => {
+      assert.match(err.message, /Invalid extra-file path/);
+      return true;
+    }
+  );
 });
 
 test('antialias: true appends +A0.3', async () => {
@@ -129,10 +135,13 @@ test('a pre-aborted signal rejects before any work', async () => {
   // loadFactory) rejects, so the factory is never instantiated.
   const controller = new AbortController();
   controller.abort();
-  await assert.rejects(render(scene, { signal: controller.signal }), (err) => {
-    assert.equal(err.name, 'AbortError');
-    return true;
-  });
+  await assert.rejects(
+    render(scene, { signal: controller.signal }),
+    /** @param {Error} err */ (err) => {
+      assert.equal(err.name, 'AbortError');
+      return true;
+    }
+  );
 });
 
 test('a signal aborted during instantiation rejects at the post-instantiation re-check', async () => {
@@ -143,10 +152,13 @@ test('a signal aborted during instantiation rejects at the post-instantiation re
   const controller = new AbortController();
   const promise = render(scene, { signal: controller.signal });
   controller.abort();
-  await assert.rejects(promise, (err) => {
-    assert.equal(err.name, 'AbortError');
-    return true;
-  });
+  await assert.rejects(
+    promise,
+    /** @param {Error} err */ (err) => {
+      assert.equal(err.name, 'AbortError');
+      return true;
+    }
+  );
 });
 
 test('aborting mid-render with an Error reason rejects with that exact error', async () => {
@@ -194,7 +206,7 @@ test('aborting mid-render with a non-Error reason synthesizes an AbortError', as
       signal: controller.signal,
       onProgress,
     }),
-    (err) => {
+    /** @param {Error} err */ (err) => {
       assert.equal(err.name, 'AbortError');
       assert.equal(err.message, 'The render was aborted');
       return true;

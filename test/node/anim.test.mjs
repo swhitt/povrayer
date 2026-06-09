@@ -192,11 +192,20 @@ test('invalid frames reject synchronously without rendering', async () => {
   //  - frames omitted -> undefined is not an integer (first operand again)
   // None of these may be a PovrayError: validation precedes any engine work.
   for (const bad of [{ frames: 0 }, { frames: 2.5 }, {}]) {
-    await assert.rejects(renderAnimation(CLOCK_SCENE, { ...TINY, ...bad }), (err) => {
-      assert.ok(!(err instanceof PovrayError), 'frame validation must be a plain Error');
-      assert.match(err.message, /frames must be an integer >= 1/);
-      return true;
+    // Deliberately invalid AnimationOptions (frames missing or non-integer); the
+    // cast is the point of the test, that renderAnimation rejects before work.
+    const opts = /** @type {import('../../dist/index.js').AnimationOptions} */ ({
+      ...TINY,
+      ...bad,
     });
+    await assert.rejects(
+      renderAnimation(CLOCK_SCENE, opts),
+      /** @param {Error} err */ (err) => {
+        assert.ok(!(err instanceof PovrayError), 'frame validation must be a plain Error');
+        assert.match(err.message, /frames must be an integer >= 1/);
+        return true;
+      }
+    );
   }
 });
 
@@ -205,7 +214,7 @@ test('a pre-aborted signal rejects with AbortError', async () => {
   controller.abort();
   await assert.rejects(
     renderAnimation(CLOCK_SCENE, { ...TINY, frames: 2, signal: controller.signal }),
-    (err) => {
+    /** @param {Error} err */ (err) => {
       assert.equal(err.name, 'AbortError');
       return true;
     }

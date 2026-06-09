@@ -12,6 +12,10 @@ import {
   saveBrowserCoverage,
 } from '../../tools/coverage/browser-collect.mjs';
 
+// The harness page (test/browser/harness.html) stamps these onto window for the
+// driver to poke; they aren't part of the standard Window type.
+/** @typedef {Window & typeof globalThis & { runRender: () => Promise<Uint8Array>; iso: boolean }} HarnessWindow */
+
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const be32 = (bytes, off) =>
   ((bytes[off] << 24) | (bytes[off + 1] << 16) | (bytes[off + 2] << 8) | bytes[off + 3]) >>> 0;
@@ -61,13 +65,19 @@ try {
 
   // Bounded wait for the module script: if /index.js fails to import, fail in
   // 30s with the page console attached instead of riding out the watchdog.
-  await page.waitForFunction(() => typeof window.runRender === 'function', null, {
-    timeout: 30_000,
-  });
-  assert.equal(await page.evaluate(() => window.iso), true, 'window.iso should be true');
+  await page.waitForFunction(
+    () => typeof (/** @type {HarnessWindow} */ (window).runRender) === 'function',
+    null,
+    { timeout: 30_000 }
+  );
+  assert.equal(
+    await page.evaluate(() => /** @type {HarnessWindow} */ (window).iso),
+    true,
+    'window.iso should be true'
+  );
 
   const bytes = await Promise.race([
-    page.evaluate(() => window.runRender()),
+    page.evaluate(() => /** @type {HarnessWindow} */ (window).runRender()),
     rejectAfter(120_000, 'render did not complete within 120s'),
   ]);
 

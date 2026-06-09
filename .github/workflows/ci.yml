@@ -46,6 +46,11 @@ jobs:
         run: npm ci
       - name: Install Chromium for browser tests
         run: npx playwright install --with-deps chromium
+      # checkJs needs the built wrapper's types in dist/ (resolved by the .d.ts
+      # shims + test imports), so it runs in this dist-bearing job rather than
+      # the no-wasm lint job. Mirrors the pre-push hook.
+      - name: Typecheck first-party JS (checkJs)
+        run: npm run typecheck:js
       # `npm run coverage` runs the ENTIRE suite (node + browser) under c8, so it
       # is the authoritative test run AND produces the merged report. Test
       # commands are single-sourced in package.json (see the Makefile for the

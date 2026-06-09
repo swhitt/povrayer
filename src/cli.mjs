@@ -45,6 +45,16 @@ function fail(msg) {
 }
 
 function parseArgs(argv) {
+  // Accumulates render options across flags. `frames`/`initialClock`/`finalClock`
+  // are the animation extras (only set by --frames et al.); the whole object is
+  // handed to render() or, in the animation branch, renderAnimation().
+  /**
+   * @type {import('./index.js').RenderOptions & {
+   *   frames?: number;
+   *   initialClock?: number;
+   *   finalClock?: number;
+   * }}
+   */
   const options = { args: [] };
   let scene;
   let out;
@@ -108,6 +118,7 @@ async function readStdin() {
 // local .inc/texture assets resolve inside the renderer's in-memory FS.
 function stageSceneDir(scenePath) {
   const dir = dirname(scenePath);
+  /** @type {Record<string, string | Uint8Array>} */
   const files = {};
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (entry.isFile()) files[entry.name] = readFileSync(join(dir, entry.name));
@@ -180,7 +191,12 @@ if (options.frames !== undefined) {
   // Imported lazily so --help and usage errors never pay for wasm setup.
   const { renderAnimation } = await import('./index.js');
   try {
-    const pngs = await renderAnimation(source, options);
+    // Guarded by `options.frames !== undefined` above, so frames is set and the
+    // object satisfies AnimationOptions (frames is the one required extra).
+    const pngs = await renderAnimation(
+      source,
+      /** @type {import('./index.js').AnimationOptions} */ (options)
+    );
     for (let k = 1; k <= pngs.length; k++) writeFileSync(framePath(k), pngs[k - 1]);
     process.stderr.write(
       `povrayer: wrote ${pngs.length} frames (${framePath(1)} … ${framePath(pngs.length)})\n`

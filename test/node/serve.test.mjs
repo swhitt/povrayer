@@ -41,6 +41,7 @@ test('maps each known extension to its content-type', async () => {
   // (dist/, web/, test/browser/). The lookup itself is one object, so this is
   // belt-and-suspenders for the table; the branch that matters is the
   // octet-stream fallback below.
+  /** @type {Array<[string, RegExp]>} */
   const cases = [
     ['/index.html', /^text\/html/], // web/index.html
     ['/styles.css', /^text\/css/], // web/styles.css

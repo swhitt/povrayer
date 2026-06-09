@@ -70,7 +70,10 @@ export function startServer(port = 0) {
     });
     server.once('error', rejectStart);
     server.listen(port, '127.0.0.1', () => {
-      const url = `http://127.0.0.1:${server.address().port}/`;
+      // A listening TCP server always reports an AddressInfo (never the string
+      // form, which is for pipe/UDS servers), so .port is present.
+      const addr = /** @type {import('node:net').AddressInfo} */ (server.address());
+      const url = `http://127.0.0.1:${addr.port}/`;
       const close = () =>
         new Promise((resolveClose, rejectClose) => {
           server.closeIdleConnections();

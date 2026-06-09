@@ -36,53 +36,61 @@ if (crossOriginIsolated) {
 }
 /* c8 ignore stop -- closes the ignore block opened above */
 
+// Page elements. The `/** @type {...} */ (...)` casts pin each lookup to the
+// concrete element it is in index.html (verified against the markup) so checkJs
+// can flag a `.value` on a div or a `.disabled` on a span. The ids all exist at
+// module-eval time, so the cast (which also drops the `| null`) is safe here.
 const exampleField = document.getElementById('example-field');
 const exampleTrigger = document.getElementById('example-trigger');
 const exampleTriggerText = document.getElementById('example-trigger-text');
 const exampleBrowser = document.getElementById('example-browser');
-const exampleSearch = document.getElementById('example-search');
+const exampleSearch = /** @type {HTMLInputElement} */ (document.getElementById('example-search'));
 const exampleListbox = document.getElementById('example-listbox');
 const exampleEmpty = document.getElementById('example-empty');
 const exampleAttrText = document.querySelector('#example-attribution .ex-attr-text');
-const exampleAttrSrc = document.querySelector('#example-attribution .ex-attr-src');
-const editor = document.getElementById('editor');
+const exampleAttrSrc = /** @type {HTMLAnchorElement} */ (
+  document.querySelector('#example-attribution .ex-attr-src')
+);
+const editor = /** @type {HTMLTextAreaElement} */ (document.getElementById('editor'));
 const editorHighlight = document.getElementById('editor-highlight');
 const editorCode = document.getElementById('editor-code');
 const gutter = document.getElementById('gutter');
 const liveToggle = document.getElementById('live-toggle');
-const widthInput = document.getElementById('width');
-const heightInput = document.getElementById('height');
-const qualitySelect = document.getElementById('quality');
-const antialiasSelect = document.getElementById('antialias');
-const threadsInput = document.getElementById('threads');
-const renderBtn = document.getElementById('render-btn');
-const cancelBtn = document.getElementById('cancel-btn');
+const widthInput = /** @type {HTMLInputElement} */ (document.getElementById('width'));
+const heightInput = /** @type {HTMLInputElement} */ (document.getElementById('height'));
+const qualitySelect = /** @type {HTMLSelectElement} */ (document.getElementById('quality'));
+const antialiasSelect = /** @type {HTMLSelectElement} */ (document.getElementById('antialias'));
+const threadsInput = /** @type {HTMLInputElement} */ (document.getElementById('threads'));
+const renderBtn = /** @type {HTMLButtonElement} */ (document.getElementById('render-btn'));
+const cancelBtn = /** @type {HTMLButtonElement} */ (document.getElementById('cancel-btn'));
 const status = document.getElementById('status');
 const statusSpinner = document.getElementById('status-spinner');
-const stopBtn = document.getElementById('stop-btn');
+const stopBtn = /** @type {HTMLButtonElement} */ (document.getElementById('stop-btn'));
 const errorBox = document.getElementById('error');
-const output = document.getElementById('output');
-const downloadBtn = document.getElementById('download-btn');
+const output = /** @type {HTMLImageElement} */ (document.getElementById('output'));
+const downloadBtn = /** @type {HTMLAnchorElement} */ (document.getElementById('download-btn'));
 const log = document.getElementById('log');
 const logDetails = document.getElementById('log-details');
 const logSummary = document.getElementById('log-summary');
 const progressBar = document.getElementById('progress');
-const plateHint = document.querySelector('#output-plate .hint');
-const zoomBtn = document.querySelector('#output-pane .zoom-toggle');
+const plateHint = /** @type {HTMLElement} */ (document.querySelector('#output-plate .hint'));
+const zoomBtn = /** @type {HTMLButtonElement} */ (
+  document.querySelector('#output-pane .zoom-toggle')
+);
 
 // Animate-mode controls + the inline frame player.
-const modeStillBtn = document.getElementById('mode-still');
-const modeAnimateBtn = document.getElementById('mode-animate');
-const framesInput = document.getElementById('frames');
-const fpsInput = document.getElementById('fps');
-const playerCanvas = document.getElementById('player-canvas');
+const modeStillBtn = /** @type {HTMLButtonElement} */ (document.getElementById('mode-still'));
+const modeAnimateBtn = /** @type {HTMLButtonElement} */ (document.getElementById('mode-animate'));
+const framesInput = /** @type {HTMLInputElement} */ (document.getElementById('frames'));
+const fpsInput = /** @type {HTMLInputElement} */ (document.getElementById('fps'));
+const playerCanvas = /** @type {HTMLCanvasElement} */ (document.getElementById('player-canvas'));
 const playerControls = document.getElementById('player-controls');
-const playBtn = document.getElementById('play-btn');
-const scrubber = document.getElementById('scrubber');
+const playBtn = /** @type {HTMLButtonElement} */ (document.getElementById('play-btn'));
+const scrubber = /** @type {HTMLInputElement} */ (document.getElementById('scrubber'));
 const frameReadout = document.getElementById('frame-readout');
 const fpsReadout = document.getElementById('fps-readout');
-const loopBtn = document.getElementById('loop-btn');
-const exportBtn = document.getElementById('export-btn');
+const loopBtn = /** @type {HTMLButtonElement} */ (document.getElementById('loop-btn'));
+const exportBtn = /** @type {HTMLButtonElement} */ (document.getElementById('export-btn'));
 
 const STORAGE_KEY = 'povrayer.ui.v1';
 const STASH_KEY = 'povrayer.ui.stash';
@@ -540,13 +548,14 @@ exampleListbox.addEventListener('mousedown', (e) => e.preventDefault());
 // roving onto that head); an option click loads it. A click that lands on
 // neither (padding / the empty note) selects nothing.
 exampleListbox.addEventListener('click', (e) => {
-  const head = e.target.closest('.ex-group-head');
+  const target = /** @type {Element} */ (e.target);
+  const head = target.closest('.ex-group-head');
   if (head) {
     toggleGroup(groupFor(head));
     setActive(head);
     return;
   }
-  const opt = e.target.closest('.ex-option');
+  const opt = target.closest('.ex-option');
   if (!opt) return;
   commitOption(opt);
 });
@@ -554,7 +563,7 @@ exampleListbox.addEventListener('click', (e) => {
 // Outside pointerdown closes WITHOUT stealing focus back to the trigger.
 document.addEventListener('pointerdown', (e) => {
   if (exampleBrowser.hidden) return;
-  if (exampleField.contains(e.target)) return;
+  if (exampleField.contains(/** @type {Node} */ (e.target))) return;
   closeBrowser(false);
 });
 
@@ -563,7 +572,7 @@ document.addEventListener('pointerdown', (e) => {
 // focus move that stays inside the panel, is ignored.
 exampleBrowser.addEventListener('focusout', (e) => {
   if (exampleBrowser.hidden) return;
-  if (exampleBrowser.contains(e.relatedTarget)) return;
+  if (exampleBrowser.contains(/** @type {Node} */ (e.relatedTarget))) return;
   closeBrowser(false);
 });
 
@@ -1035,7 +1044,7 @@ let pendingFull = false; // an explicit render is waiting on a draft to abort
 // coverage suite can await the coalescing / supersede / mid-flight-abort
 // transitions deterministically instead of racing the adaptive debounce with
 // fixed sleeps (which broke whenever a cold, slow prior draft inflated it).
-window.__liveDraftProbe = () => ({
+/** @type {Window & { __liveDraftProbe?: () => unknown }} */ (window).__liveDraftProbe = () => ({
   pending: draftTimer !== null,
   inFlight: draftCtl !== null,
   source: draftingSource,

@@ -20,6 +20,13 @@ npm run lint
 say 'tsc --noEmit (wrapper)'
 npm run typecheck
 
+# checkJs over the first-party plain JS (JSDoc types). Lives here, not in
+# pre-commit, because it resolves the built wrapper's types from dist/ (the
+# .d.ts shims + test imports), which pre-commit doesn't guarantee but this gate
+# does (the coverage run below needs dist too). Mirrors CI's build-test job.
+say 'tsc --noEmit (first-party JS, checkJs)'
+npm run typecheck:js
+
 say 'full suite + merged coverage (node + browser)'
 npm run coverage
 

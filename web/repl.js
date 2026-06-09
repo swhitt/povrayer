@@ -36,7 +36,9 @@ if (crossOriginIsolated) {
 
 const scrollback = document.getElementById('scrollback');
 const form = document.getElementById('input-form');
-const input = document.getElementById('input');
+// `input` is the <textarea> in repl.html; the cast lets checkJs see .value /
+// .readOnly / .selectionStart and flags misuse on the other (untyped) elements.
+const input = /** @type {HTMLTextAreaElement} */ (document.getElementById('input'));
 const statusEl = document.getElementById('repl-status');
 const progressEl = document.getElementById('repl-progress');
 const cancelBtn = document.getElementById('cancel-render');
@@ -46,6 +48,19 @@ const sourceCode = document.getElementById('source-code');
 const sourceClose = document.getElementById('source-close');
 
 // --- state -----------------------------------------------------------------
+
+/**
+ * Mutable render/scene settings. Spelled out so checkJs widens past the frozen
+ * defaults' literal types (`antialias` is really `boolean|number`, not `false`),
+ * which is what lets `:size`, `:q`, and `:aa` reassign them.
+ * @typedef {object} ReplSettings
+ * @property {number} width
+ * @property {number} height
+ * @property {number} [quality]
+ * @property {boolean|number} antialias
+ * @property {number} [threads]
+ * @property {string} [args] raw POV-Ray switches as one string, e.g. '+UA +AM2'
+ */
 
 const DEFAULT_SETTINGS = Object.freeze({
   width: 320,
@@ -66,6 +81,7 @@ const GREETING = `type POV-Ray scene code, get an image · try: ${TRY_LINE} · :
 
 const entries = []; // [{ id, source }], order = scene order; ids increase from 1
 let history = []; // submitted raw inputs (commands included), newest last
+/** @type {ReplSettings} */
 const settings = { ...DEFAULT_SETTINGS };
 let abortCtl = null; // AbortController for the in-flight render, else null
 
@@ -155,6 +171,7 @@ function loadState() {
 // accumulated source (word-boundary regex; false positives in string literals
 // are an accepted v1 tradeoff), so a user-supplied camera never collides with
 // the default one (POV-Ray errors on duplicate cameras).
+/** @type {Array<[RegExp, string]>} */
 const SCAFFOLD = [
   [/\bglobal_settings\b/, 'global_settings { assumed_gamma 1.0 }'],
   [/\bcamera\b/, 'camera { location <0, 2, -5> look_at <0, 0.5, 0> }'],
@@ -227,8 +244,15 @@ function appendNode(node) {
   // Cap scrollback size; revoke blob URLs in evicted children so old renders
   // don't pin their PNGs in memory forever.
   while (scrollback.children.length > SCROLLBACK_CAP) {
-    const oldest = scrollback.firstElementChild;
-    for (const img of oldest.querySelectorAll('img.preview')) URL.revokeObjectURL(img.src);
+    // The eviction hook (__animDestroy) is stamped onto the player wrapper by the
+    // inline animation mount; it isn't part of the DOM element type.
+    const oldest = /** @type {Element & { __animDestroy?: () => void }} */ (
+      scrollback.firstElementChild
+    );
+    const previews = /** @type {NodeListOf<HTMLImageElement>} */ (
+      oldest.querySelectorAll('img.preview')
+    );
+    for (const img of previews) URL.revokeObjectURL(img.src);
     // Inline animation players hold ImageBitmaps + blob URLs that live outside
     // any <img>, so they expose a destroy hook for the eviction path to free.
     oldest.__animDestroy?.();
@@ -451,6 +475,11 @@ function describeError(err) {
 // triggered by :undo/:del/:edit/:render/:example pass no rollback: the user
 // asked for that state explicitly, so a failure shows the error and keeps the
 // state.
+/**
+ * @param {{ rollback?: () => void, echoNode?: Element, entrySource?: string }} [opts]
+ *   `rollback` undoes a fresh SDL entry on any failure; `echoNode` is that
+ *   entry's echo (marked rolled-back); `entrySource` its raw text for the tip.
+ */
 async function runRender({ rollback, echoNode, entrySource } = {}) {
   abortCtl = new AbortController();
   input.readOnly = true; // readOnly, not disabled: focus and caret survive
@@ -1316,8 +1345,9 @@ sourceClose.addEventListener('click', () => toggleSource(false));
 // Tap/click an echoed entry to copy it back into the input (the touch path to
 // history). Skipped while the user is selecting text to copy.
 scrollback.addEventListener('click', (e) => {
-  if (e.target.closest('a')) return;
-  const entry = e.target.closest('.entry');
+  const target = /** @type {Element} */ (e.target);
+  if (target.closest('a')) return;
+  const entry = target.closest('.entry');
   if (!entry || !scrollback.contains(entry)) return;
   const sel = window.getSelection();
   if (sel && !sel.isCollapsed) return;

@@ -240,6 +240,9 @@ export function errorHeadline(log, mapLine = (n) => `line ${n}`) {
  * emitted: the status line and the log summary carry the exit code.
  *
  * opts.mapLine is forwarded to errorHeadline (the REPL's entry-offset hook).
+ *
+ * @param {*} err The thrown value (PovrayError, AbortError, or anything else).
+ * @param {{ mapLine?: (line: number) => string }} [opts]
  */
 export function formatError(err, { mapLine } = {}) {
   if (err instanceof PovrayError) {

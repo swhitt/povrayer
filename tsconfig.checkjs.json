@@ -1,0 +1,75 @@
+{
+  // Static type-checking for the first-party plain JS (JSDoc types, no .ts
+  // rewrite). The wrapper (wrapper/src/*.ts) has its own tsconfig and is checked
+  // separately by `npm run typecheck` -> the wrapper line; it is excluded here.
+  //
+  // Strictness: deliberately the DEFAULT `checkJs` behavior (NOT `strict`). That
+  // catches the bugs worth catching here, wrong argument types, bad call
+  // signatures, typos on known object shapes, calling a non-function, while
+  // staying quiet about the "possibly null" noise that full strictness would
+  // spray across DOM-heavy UI code. `noImplicitAny` is therefore off, so an
+  // un-annotated parameter is `any` rather than an error. We turn on the cheap,
+  // high-signal extras (unused locals/params, fallthrough, override checks)
+  // since they stayed clean.
+  "compilerOptions": {
+    "noEmit": true,
+    "checkJs": true,
+    "allowJs": true,
+
+    // ESM everywhere: root package.json is "type": "module", web/ ships as ESM,
+    // and the Node code is .mjs. NodeNext resolves the explicit-extension
+    // relative imports (`./examples.js`) these files use.
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+
+    // One config covers both worlds: DOM globals for the browser UI/REPL modules
+    // and @types/node for the CLI, tooling, and test drivers. Loading both lib
+    // sets is harmless for the files that only use one of them.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+
+    // Don't type-check the contents of .d.ts files we don't own (DOM/node libs,
+    // the built wrapper declaration); we only care about our own JS.
+    "skipLibCheck": true,
+
+    // Default checkJs strictness (strict:false), plus the high-signal extras.
+    "strict": false,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "forceConsistentCasingInFileNames": true
+  },
+
+  "include": [
+    "web/ui.js",
+    "web/repl.js",
+    "web/render-client.js",
+    "web/highlight.js",
+    "web/sdl-validate.js",
+    "web/examples.js",
+    "src/cli.mjs",
+    "test/**/*.mjs",
+    "tools/**/*.mjs"
+  ],
+
+  "exclude": [
+    "node_modules",
+    "dist",
+    "coverage",
+    "wrapper",
+    "web/coi-serviceworker.js",
+
+    // The two Playwright UI drivers are ~95% inline browser snippets handed to
+    // page.evaluate() as serialized functions: they run in Chromium against the
+    // real DOM, not in Node, and are verified by actually executing (plus the
+    // 100% coverage gate). Type-checking that browser code from Node's vantage
+    // point would mean ~170 element-subtype casts (`getElementById(...).value`)
+    // for essentially no bug-catching value, so they're out of scope here. The
+    // Node-side render/CLI/tooling code and the non-evaluate test logic (incl.
+    // test/browser/serve.mjs + browser.test.mjs) are still fully checked.
+    "test/browser/ui.test.mjs",
+    "test/browser/repl.test.mjs"
+  ]
+}

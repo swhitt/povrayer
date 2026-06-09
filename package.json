@@ -16,12 +16,14 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit -p wrapper/tsconfig.json",
+    "typecheck:js": "tsc --noEmit -p tsconfig.checkjs.json",
     "coverage": "node tools/coverage/run.mjs",
     "coverage:check": "node tools/coverage/check.mjs",
     "prepare": "node tools/install-hooks.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@types/node": "22.19.20",
     "c8": "11.0.0",
     "eslint": "10.4.1",
     "globals": "17.6.0",
