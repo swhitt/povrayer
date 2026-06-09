@@ -228,6 +228,40 @@ select {
   opacity: 1;
 }
 
+/* Field polish, applied app-wide so every input/select reads as one family.
+   Selects shed the OS-native dropdown chrome (rounded, platform-specific) for a
+   flat square field with our own dim chevron, matching the optical-bench look.
+   The chevron is a dim (--dim #7a8493) stroke so it stays greyscale, never accent. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 26px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%237a8493' stroke-width='1.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+}
+
+/* Drop the native number spinners: they vary per browser and clutter the tidy
+   size / threads / frames fields. Keyboard arrows and the step attr still work. */
+input[type='number'] {
+  appearance: textfield;
+  -webkit-appearance: textfield;
+}
+
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Quiet hover affordance: brighten the boundary one step (border-strong -> dim)
+   so a field invites interaction without borrowing the accent. Instant, no
+   transition (motion stays confined to the gated census). */
+input:hover:not(:disabled):not(:focus),
+select:hover:not(:disabled):not(:focus) {
+  border-color: var(--dim);
+}
+
 /* Secondary button (Cancel, zoom toggle, ...): quiet until hovered. */
 button {
   background: transparent;
@@ -924,19 +958,34 @@ body.ui main > * {
   display: none;
 }
 
+/* Scene params: the auto-sliders are the scene's OWN knobs, not app settings, so
+   they sit in a labeled disclosure set off by a hairline divider and an indent.
+   That boundary is what keeps the scene's content from reading as another tier of
+   render chrome (the two used identical typography before). Same quiet dim summary
+   as #advanced / the log, so the page speaks one disclosure language. */
+#scene-params {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.disclosure-count {
+  margin-left: 6px;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Auto-sliders for `#declare NAME = <number>` params. The range control is the
    one place a slider's filled track reads as a value affordance, so it borrows
    the accent via accent-color (the same family as the progress bar), and nothing
-   else here does. Names dim, values tabular like the rest of the readouts. */
+   else here does. Names dim, values tabular like the rest of the readouts. The
+   left indent reinforces "these belong to the scene above, not the toolbar". */
 #sliders {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 16px;
-  margin-top: 8px;
-}
-
-#sliders[hidden] {
-  display: none;
+  margin-top: 10px;
+  padding-left: 12px;
 }
 
 .slider-row {
@@ -993,8 +1042,24 @@ body.ui main > * {
   gap: 6px;
 }
 
-#controls input[type='number'] {
-  width: 5.5em;
+#controls input[type='number'],
+.advanced-body input[type='number'] {
+  width: 4.5em;
+}
+
+/* "size  512 × 384": width and height read as one dimension control, not two
+   stray fields. The dim label leads, the dim × ties the pair, tighter inner gap
+   than the inter-group rhythm so it groups optically. */
+#size-group {
+  gap: 8px;
+}
+
+.ctl-label {
+  color: var(--dim);
+}
+
+.ctl-x {
+  color: var(--dim);
 }
 
 /* Cluster the controls into legible groups (mode/behavior, dimensions,
@@ -1033,15 +1098,22 @@ body.ui main > * {
   min-width: 8.5em;
 }
 
-/* Advanced disclosure: the raw-flags escape hatch, collapsed by default so the
-   toolbar stays uncluttered (it only matters to power users). Its own row under
-   the controls; the summary is the same quiet dim marker as the log disclosure. */
+/* Advanced disclosure: the render-tuning controls (quality / antialias / threads)
+   plus the raw-flags escape hatch, collapsed by default so the toolbar stays a
+   short, calm row (these matter every few renders to a power user, ~never to a
+   newcomer). ui.js persists the open state, so a power user opens it once and it
+   stays. Same quiet dim marker as the log disclosure. */
 #advanced {
   margin-top: 12px;
 }
 
+/* Stack the demoted tuning controls above the raw-flags field; each row reads as
+   one concept (render fidelity, then the engine escape hatch). */
 .advanced-body {
-  margin-top: 8px;
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 /* The flags field stretches to the editor width: long +flag strings need room,

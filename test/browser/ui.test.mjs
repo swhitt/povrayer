@@ -50,6 +50,28 @@ try {
 
   await page.goto(server.url, { waitUntil: 'load' });
 
+  // quality/antialias/threads live in the collapsed "advanced" disclosure; using
+  // them means expanding it first (as a user would). These wrappers open advanced
+  // before each interaction so the steps stay robust across the reloads below that
+  // reset the disclosure to its saved/default state.
+  const openAdvanced = () => page.evaluate(() => (document.getElementById('advanced').open = true));
+  const selAdvanced = async (sel, val) => {
+    await openAdvanced();
+    await page.selectOption(sel, val);
+  };
+  const fillAdvanced = async (sel, val) => {
+    await openAdvanced();
+    await page.fill(sel, val);
+  };
+  // Set the editor source and fire the input event the app listens on (rebuilds
+  // the scene-params panel, schedules a save/draft). Shared by the slider steps.
+  const setSceneSource = (val) =>
+    page.evaluate((v) => {
+      const e = document.getElementById('editor');
+      e.value = v;
+      e.dispatchEvent(new Event('input', { bubbles: true }));
+    }, val);
+
   // FIRST: cross-origin isolation, so a header regression fails distinctly
   // from a UI regression.
   const iso = await page.evaluate(() => globalThis.crossOriginIsolated);
@@ -92,6 +114,11 @@ try {
     'true',
     'live draft should default to on'
   );
+  assert.equal(
+    await page.evaluate(() => document.getElementById('advanced').open),
+    false,
+    'advanced disclosure should default closed (calm toolbar on first load)'
+  );
   await page.waitForFunction(
     () => {
       const img = document.getElementById('output');
@@ -109,7 +136,7 @@ try {
   // Happy path: small fast render, wait for the decoded blob image.
   await page.fill('#width', '160');
   await page.fill('#height', '120');
-  await page.selectOption('#antialias', 'off');
+  await selAdvanced('#antialias', 'off');
   await page.click('#render-btn');
   await page.waitForFunction(
     () => {
@@ -206,7 +233,7 @@ try {
   // sets that text, so this proves cancellation actually rejects the render.
   await page.fill('#width', '1024');
   await page.fill('#height', '768');
-  await page.selectOption('#antialias', '0.05');
+  await selAdvanced('#antialias', '0.05');
   await page.click('#render-btn');
   await page.waitForFunction(
     () => document.getElementById('status').textContent.startsWith('rendering'),
@@ -260,7 +287,7 @@ try {
   // flight, and activating it cancels exactly like the toolbar Cancel.
   await page.fill('#width', '1024');
   await page.fill('#height', '768');
-  await page.selectOption('#antialias', '0.05');
+  await selAdvanced('#antialias', '0.05');
   await page.click('#render-btn');
   await page.waitForFunction(
     () =>
@@ -1178,9 +1205,9 @@ try {
   await page.fill('#editor', VALID_SCENE);
   await page.fill('#width', '64');
   await page.fill('#height', '48');
-  await page.selectOption('#quality', '8'); // 8 is the highest explicit quality option
-  await page.selectOption('#antialias', '0.3');
-  await page.fill('#threads', '4');
+  await selAdvanced('#quality', '8'); // 8 is the highest explicit quality option
+  await selAdvanced('#antialias', '0.3');
+  await fillAdvanced('#threads', '4');
   await page.evaluate(() => document.getElementById('threads').focus());
   await page.keyboard.press('Control+Enter'); // startRender via the document shortcut
   await page.keyboard.press('Meta+Enter'); // busy re-entry guard returns immediately
@@ -1212,7 +1239,7 @@ try {
   await page.fill('#editor', BROKEN_SCENE);
   await page.fill('#width', '');
   await page.fill('#height', '');
-  await page.selectOption('#antialias', 'off');
+  await selAdvanced('#antialias', 'off');
   await page.evaluate(() => document.getElementById('width').focus());
   await page.keyboard.press('Enter'); // number-input Enter -> startRender
   await waitState('error');
@@ -1241,9 +1268,9 @@ try {
   await page.fill('#editor', VALID_SCENE);
   await page.fill('#width', '64');
   await page.fill('#height', '48');
-  await page.selectOption('#antialias', 'off');
-  await page.selectOption('#quality', '');
-  await page.fill('#threads', '');
+  await selAdvanced('#antialias', 'off');
+  await selAdvanced('#quality', '');
+  await fillAdvanced('#threads', '');
   await page.evaluate(() => {
     window.__origNow = performance.now.bind(performance);
     let t = 0;
@@ -1267,7 +1294,7 @@ try {
   });
   await page.fill('#width', '700');
   await page.fill('#height', '700');
-  await page.selectOption('#antialias', '0.1');
+  await selAdvanced('#antialias', '0.1');
   await page.evaluate(() => {
     window.__origNow = performance.now.bind(performance);
     const frozen = window.__origNow();
@@ -1283,7 +1310,7 @@ try {
   await page.fill('#editor', VALID_SCENE);
   await page.fill('#width', '900');
   await page.fill('#height', '700');
-  await page.selectOption('#antialias', '0.05');
+  await selAdvanced('#antialias', '0.05');
   await page.click('#render-btn');
   await page.waitForFunction(
     () => document.getElementById('status').textContent.startsWith('rendering'),
@@ -1327,6 +1354,7 @@ try {
       threads: '6',
       flags: '+R3',
       example: 'glass',
+      advancedOpen: true,
     })
   );
   assert.deepEqual(
@@ -1339,6 +1367,7 @@ try {
       threads: document.getElementById('threads').value,
       flags: document.getElementById('flags').value,
       example: document.getElementById('example-trigger').dataset.name,
+      advancedOpen: document.getElementById('advanced').open,
     })),
     {
       source: 'SAVED restore source',
@@ -1349,6 +1378,7 @@ try {
       threads: '6',
       flags: '+R3',
       example: 'glass',
+      advancedOpen: true,
     },
     'a full saved blob should restore every control'
   );
@@ -1460,7 +1490,7 @@ try {
   await page.fill('#fps', '12');
   await page.fill('#width', '48');
   await page.fill('#height', '36');
-  await page.selectOption('#antialias', 'off');
+  await selAdvanced('#antialias', 'off');
   await page.click('#render-btn');
   await waitDone();
   assert.equal(
@@ -1727,7 +1757,7 @@ try {
   await page.fill('#fps', '');
   await page.fill('#width', '400');
   await page.fill('#height', '300');
-  await page.selectOption('#antialias', '0.1');
+  await selAdvanced('#antialias', '0.1');
   await page.click('#render-btn');
   await page.waitForFunction(
     () => document.getElementById('status').textContent.startsWith('rendering'),
@@ -1747,7 +1777,7 @@ try {
   await page.fill('#frames', '2');
   await page.fill('#width', '48');
   await page.fill('#height', '36');
-  await page.selectOption('#antialias', 'off');
+  await selAdvanced('#antialias', 'off');
   await page.click('#render-btn');
   await page.waitForFunction(
     () => document.getElementById('status').dataset.state === 'error',
@@ -1811,7 +1841,7 @@ try {
   await page.fill('#editor', VALID_SCENE);
   await page.fill('#width', '48');
   await page.fill('#height', '36');
-  await page.selectOption('#antialias', 'off');
+  await selAdvanced('#antialias', 'off');
   await page.click('#render-btn');
   await waitDone();
   assert.equal(
@@ -2194,14 +2224,14 @@ try {
   );
   const cornellA = cornell + '\n// inflight-a\n';
   const cornellB = cornell + '\n// inflight-b\n';
-  await page.fill('#threads', '1');
+  await fillAdvanced('#threads', '1');
 
   // Explicit-render priority: a draft in flight is aborted by clicking Render
   // (the pendingFull hand-off), and the result is a FULL-dimension image, not
   // the 320 draft cap.
   await page.fill('#width', '400');
   await page.fill('#height', '300');
-  await page.selectOption('#antialias', 'off');
+  await selAdvanced('#antialias', 'off');
   await typeScene(cornell);
   // Click Render from page context the instant the draft is in flight: two
   // synchronous statements with no round-trip, so draftCtl is guaranteed still
@@ -2252,7 +2282,7 @@ try {
   // the floored debounce) lands while it is still live. Quality 9 already
   // computes radiosity (the slow part); 10/11 only add antialiasing/jitter,
   // which an AA-off draft skips, so the default is as slow as the old +Q11.
-  await page.selectOption('#quality', '');
+  await selAdvanced('#quality', '');
   await typeScene(cornellA);
   await page.waitForFunction(
     (s) => {
@@ -2463,7 +2493,7 @@ try {
     { timeout: 5_000 }
   );
 
-  await page.fill('#threads', '');
+  await fillAdvanced('#threads', '');
 
   // ===========================================================================
   // Gist deep-link (?gist=<id>): load a scene from a GitHub gist on page init,
@@ -2691,8 +2721,8 @@ try {
   await plBootGoto('');
   await page.fill('#width', '321');
   await page.fill('#height', '258');
-  await page.selectOption('#quality', '4');
-  await page.selectOption('#antialias', '0.3');
+  await selAdvanced('#quality', '4');
+  await selAdvanced('#antialias', '0.3');
   await page.evaluate(() => {
     const ed = document.getElementById('editor');
     ed.value = '#version 3.8;\n// permalink copy test\nsphere { 0, 1 }';
@@ -3204,7 +3234,7 @@ try {
   });
   await page.fill('#width', '64');
   await page.fill('#height', '64');
-  await page.selectOption('#antialias', 'off');
+  await selAdvanced('#antialias', 'off');
   await page.click('#render-btn');
   await page.waitForFunction(
     () => /^done in/.test(document.getElementById('status').textContent),
@@ -3314,15 +3344,40 @@ try {
   // Alt+drag scrubbing of any numeric literal. The parse/format logic is
   // node-tested; here the panel, the in-place rewrites, and the pointer wiring.
   // ===========================================================================
-  await page.evaluate(() => {
-    const e = document.getElementById('editor');
-    e.value = '#declare A = 5;\n#declare B = 7;';
-    e.dispatchEvent(new Event('input', { bubbles: true }));
-  });
+  // Scene-params disclosure: hidden with no params; a busy scene (more than the
+  // auto-open max) reveals it COLLAPSED with the count; a handful auto-opens it.
+  // Exercised empty -> many -> empty -> few so every count branch is hit.
+  await setSceneSource('camera { location 0 look_at z }'); // no top-level #declare numbers
   assert.equal(
-    await page.evaluate(() => document.getElementById('sliders').hidden),
-    false,
-    'declared numbers reveal the slider panel'
+    await page.evaluate(() => document.getElementById('scene-params').hidden),
+    true,
+    'no #declare params hides the scene-params region'
+  );
+  await setSceneSource('#declare A=1;\n#declare B=2;\n#declare C=3;\n#declare D=4;\n#declare E=5;');
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      hidden: document.getElementById('scene-params').hidden,
+      open: document.getElementById('scene-params').open,
+      count: document.getElementById('scene-params-count').textContent,
+    })),
+    { hidden: false, open: false, count: '(5)' },
+    'a busy scene reveals scene-params collapsed, labelled with the count'
+  );
+  await setSceneSource('// just a comment, no params');
+  assert.equal(
+    await page.evaluate(() => document.getElementById('scene-params').hidden),
+    true,
+    'clearing the params hides the region again'
+  );
+
+  await setSceneSource('#declare A = 5;\n#declare B = 7;');
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      hidden: document.getElementById('scene-params').hidden,
+      open: document.getElementById('scene-params').open,
+    })),
+    { hidden: false, open: true },
+    'a couple of params reveal the region auto-opened'
   );
   assert.deepEqual(
     await page.evaluate(() =>
@@ -3447,16 +3502,16 @@ try {
     'releasing Alt clears the scrub cursor'
   );
 
-  // A scene with no declared numbers hides the slider panel again.
+  // A scene with no declared numbers hides the scene-params region again.
   await page.evaluate(() => {
     const e = document.getElementById('editor');
     e.value = 'sphere { 0, 1 }';
     e.dispatchEvent(new Event('input', { bubbles: true }));
   });
   assert.equal(
-    await page.evaluate(() => document.getElementById('sliders').hidden),
+    await page.evaluate(() => document.getElementById('scene-params').hidden),
     true,
-    'a scene with no declared numbers hides the slider panel'
+    'a scene with no declared numbers hides the scene-params region'
   );
 
   // ===========================================================================

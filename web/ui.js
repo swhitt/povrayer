@@ -70,6 +70,9 @@ const assetsStrip = document.getElementById('assets');
 const assetChips = document.getElementById('asset-chips');
 const assetNote = document.getElementById('asset-note');
 const slidersPanel = document.getElementById('sliders');
+const sceneParams = /** @type {HTMLDetailsElement} */ (document.getElementById('scene-params'));
+const sceneParamsCount = document.getElementById('scene-params-count');
+const advanced = /** @type {HTMLDetailsElement} */ (document.getElementById('advanced'));
 const gutter = document.getElementById('gutter');
 const liveToggle = document.getElementById('live-toggle');
 const widthInput = /** @type {HTMLInputElement} */ (document.getElementById('width'));
@@ -278,6 +281,7 @@ function saveState() {
         example: selectedExample,
         mode,
         liveDraft,
+        advancedOpen: advanced.open,
         frames: framesInput.value,
         fps: fpsInput.value,
       })
@@ -385,6 +389,7 @@ let lastLoadedSource = '';
     if (typeof saved.threads === 'string') threadsInput.value = saved.threads;
     if (typeof saved.flags === 'string') flagsInput.value = saved.flags;
     if (typeof saved.liveDraft === 'boolean') liveDraft = saved.liveDraft;
+    if (typeof saved.advancedOpen === 'boolean') advanced.open = saved.advancedOpen;
     if (saved.mode === 'still' || saved.mode === 'animate') mode = saved.mode;
     const savedFrames = parseInt(saved.frames, 10);
     if (Number.isInteger(savedFrames) && savedFrames >= 1 && savedFrames <= 240) {
@@ -1204,6 +1209,13 @@ editorWrap.addEventListener('drop', (e) => {
  */
 let sliderModels = [];
 
+// A scene with more than this many params opens collapsed, so a busy scene (loop
+// counters, lots of declares) doesn't wall off the editor. The auto open/close is
+// applied only when the panel first appears (see buildSliders): once it's showing,
+// the user's manual toggle wins, since typing rebuilds the rows on every keystroke.
+const SCENE_PARAMS_OPEN_MAX = 4;
+let sceneParamsWasEmpty = true;
+
 // The panel is rebuilt from the source on every edit, so a slider's DEFAULT is
 // always the number currently written in the code: editing `#declare A = 5` to
 // `= 20` makes 20 the new default and the new slider position. A drag/scrub does
@@ -1246,7 +1258,16 @@ function buildSliders() {
     slidersPanel.appendChild(row);
     return model;
   });
-  slidersPanel.hidden = sliderModels.length === 0;
+  const count = sliderModels.length;
+  sceneParamsCount.textContent = count ? `(${count})` : '';
+  sceneParams.hidden = count === 0;
+  // Set the open state only as the region appears (empty -> populated); leave a
+  // showing panel's open/closed alone so a rebuild-on-keystroke can't slam shut a
+  // panel the user just expanded.
+  if (count > 0 && sceneParamsWasEmpty) {
+    sceneParams.open = count <= SCENE_PARAMS_OPEN_MAX;
+  }
+  sceneParamsWasEmpty = count === 0;
 }
 
 // Rewrite a tracked literal to the exact text `literal`, keeping the spans of the
@@ -2491,6 +2512,11 @@ function refreshPlate() {
 
 modeStillBtn.addEventListener('click', () => setMode('still'));
 modeAnimateBtn.addEventListener('click', () => setMode('animate'));
+
+// Persist the advanced disclosure's open state (a personal preference, like
+// liveDraft, so it rides in saveState but NOT the share URL): a power user opens
+// it once and it stays open across renders and reloads.
+advanced.addEventListener('toggle', scheduleSave);
 
 // Live-draft toggle: reflect the restored state, then flip + persist on click.
 // Turning it on schedules a draft; turning it off cancels any pending/in-flight
