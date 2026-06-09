@@ -376,16 +376,10 @@ let lastLoadedSource = '';
   if (saved) {
     if (typeof saved.width === 'string' && saved.width) widthInput.value = saved.width;
     if (typeof saved.height === 'string' && saved.height) heightInput.value = saved.height;
-    if (
-      typeof saved.quality === 'string' &&
-      Array.from(qualitySelect.options).some((o) => o.value === saved.quality)
-    ) {
+    if (typeof saved.quality === 'string' && selectAllows(qualitySelect, saved.quality)) {
       qualitySelect.value = saved.quality;
     }
-    if (
-      typeof saved.antialias === 'string' &&
-      Array.from(antialiasSelect.options).some((o) => o.value === saved.antialias)
-    ) {
+    if (typeof saved.antialias === 'string' && selectAllows(antialiasSelect, saved.antialias)) {
       antialiasSelect.value = saved.antialias;
     }
     if (typeof saved.threads === 'string') threadsInput.value = saved.threads;
@@ -416,16 +410,11 @@ function applyUrlParams() {
   if (p.threads !== undefined) threadsInput.value = p.threads;
   if (p.frames !== undefined) framesInput.value = p.frames;
   if (p.fps !== undefined) fpsInput.value = p.fps;
-  if (
-    p.quality !== undefined &&
-    Array.from(qualitySelect.options).some((o) => o.value === p.quality)
-  ) {
+  if (p.flags !== undefined) flagsInput.value = p.flags;
+  if (p.quality !== undefined && selectAllows(qualitySelect, p.quality)) {
     qualitySelect.value = p.quality;
   }
-  if (
-    p.antialias !== undefined &&
-    Array.from(antialiasSelect.options).some((o) => o.value === p.antialias)
-  ) {
+  if (p.antialias !== undefined && selectAllows(antialiasSelect, p.antialias)) {
     antialiasSelect.value = p.antialias;
   }
   if (p.mode === 'still' || p.mode === 'animate') mode = p.mode;
@@ -1365,6 +1354,13 @@ buildSliders(); // initial panel from the loaded scene
 
 function clamp(n, lo, hi) {
   return Math.min(hi, Math.max(lo, n));
+}
+
+// True when a <select> currently offers `value`. The option set lives in the
+// DOM, so the saved/URL/permalink hydration paths all validate against it here
+// rather than trusting an out-of-range value.
+function selectAllows(select, value) {
+  return [...select.options].some((o) => o.value === value);
 }
 
 // Read + clamp the controls into render options WITHOUT writing back to the
@@ -2548,10 +2544,10 @@ function hydrateFromState(state) {
   heightInput.value = state.height;
   // Only adopt a select value the markup actually offers; an out-of-range
   // payload leaves the current option (matches the saved-state restore guard).
-  if (Array.from(qualitySelect.options).some((o) => o.value === state.quality)) {
+  if (selectAllows(qualitySelect, state.quality)) {
     qualitySelect.value = state.quality;
   }
-  if (Array.from(antialiasSelect.options).some((o) => o.value === state.antialias)) {
+  if (selectAllows(antialiasSelect, state.antialias)) {
     antialiasSelect.value = state.antialias;
   }
   threadsInput.value = state.threads;

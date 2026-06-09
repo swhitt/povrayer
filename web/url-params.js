@@ -32,6 +32,7 @@ function clampInt(v, lo, hi) {
  * @property {string} [mode]
  * @property {string} [frames]
  * @property {string} [fps]
+ * @property {string} [flags]
  */
 
 /**
@@ -68,6 +69,11 @@ export function parseRenderParams(search) {
   if (q !== null) out.quality = q;
   const aa = pick('antialias', 'aa');
   if (aa !== null) out.antialias = aa;
+
+  // Raw extra flags (matches the saved-state + permalink field set), passed
+  // through verbatim like quality/antialias.
+  const flags = pick('flags');
+  if (flags !== null) out.flags = flags;
 
   const m = pick('mode');
   if (m === 'still' || m === 'animate') out.mode = m;

@@ -76,3 +76,8 @@ test('mode only accepts still | animate', () => {
   assert.equal(parseRenderParams('?mode=spin').mode, undefined);
   assert.equal('mode' in parseRenderParams('?mode=spin'), false);
 });
+
+test('flags pass through raw', () => {
+  assert.equal(parseRenderParams('?flags=%2BA0.05+%2BAM2').flags, '+A0.05 +AM2');
+  assert.equal('flags' in parseRenderParams('?width=8'), false);
+});

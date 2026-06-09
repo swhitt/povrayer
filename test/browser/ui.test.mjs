@@ -2861,7 +2861,7 @@ try {
   // unknown select values are ignored, keeping the default option.
   // ===========================================================================
   await plBootGoto(
-    '?width=1024&height=768&threads=4&frames=30&fps=20&quality=5&antialias=0.3&mode=animate'
+    '?width=1024&height=768&threads=4&frames=30&fps=20&quality=5&antialias=0.3&flags=%2BAM2&mode=animate'
   );
   assert.equal(await ctlValue('width'), '1024', 'url param sets width');
   assert.equal(await ctlValue('height'), '768', 'url param sets height');
@@ -2870,6 +2870,7 @@ try {
   assert.equal(await ctlValue('fps'), '20', 'url param sets fps');
   assert.equal(await ctlValue('quality'), '5', 'url param sets a valid quality option');
   assert.equal(await ctlValue('antialias'), '0.3', 'url param sets a valid antialias option');
+  assert.equal(await ctlValue('flags'), '+AM2', 'url param sets the raw flags field');
   assert.equal(await bodyMode(), 'animate', 'url param sets animate mode');
 
   // Unknown select values are ignored (kept at default); mode=still covers the
