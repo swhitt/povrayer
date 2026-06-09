@@ -1718,12 +1718,112 @@ exportBtn.addEventListener('click', () => player.exportVideo());
 player.setFps(Number(fpsInput.value));
 applyMode();
 
-// Kick an initial draft so the restored scene renders on load, before any
-// keystroke. Without this a cold page load sits on the empty-state hint until
-// you type, which reads as "live is broken" (it isn't). scheduleDraft()
-// self-guards to still-mode + liveDraft, so animate mode or a saved live-off
-// preference correctly render nothing here. Mirrors the example-select path.
-scheduleDraft();
+// ---- load a scene from a GitHub gist (?gist=<id>) -------------------------
+// Optional deep-link: ?gist=<id> on the editor URL loads a gist's scene into
+// the editor on page load, OVERRIDING the normally-restored saved scene. The
+// value may be a bare gist id, a `user/id`, or a full gist URL; we take the
+// last path segment (the gist JSON API keys on the id alone).
+//
+// Cross-origin: the page is cross-origin isolated (COEP: require-corp). A CORS
+// fetch to api.github.com works (it sends Access-Control-Allow-Origin), but the
+// raw gist host (gist.githubusercontent.com) sends no CORS, so we read the file
+// text from the JSON API's files[name].content and never touch the raw_url. (A
+// file past the API's inline cap comes back `truncated` with only partial
+// content; v1 uses that partial text and doesn't chase raw_url.)
+
+/**
+ * Pull a gist id out of the ?gist= value. Returns null when the trailing path
+ * segment isn't a hex id, so a malformed param falls back gracefully instead of
+ * firing a junk request.
+ * @param {string} raw
+ * @returns {string | null}
+ */
+function gistIdFrom(raw) {
+  const path = raw.trim().split(/[?#]/)[0];
+  const parts = path.split('/');
+  const id = parts[parts.length - 1];
+  return /^[0-9a-f]+$/i.test(id) ? id : null;
+}
+
+/**
+ * Choose the scene text from a gist's files map: prefer a `.pov` file, else the
+ * first file carrying inline text. Returns null when none is usable.
+ * @param {any} files gist files map from the JSON API
+ * @returns {string | null}
+ */
+function pickGistSource(files) {
+  const text = Object.values(files).filter((f) => typeof f.content === 'string');
+  const pov = text.find((f) => /\.pov$/i.test(f.filename));
+  const chosen = pov ?? text[0];
+  return chosen ? chosen.content : null;
+}
+
+// Quiet, non-modal failure: reuse the live-draft error affordance (a dim,
+// role=status box, not the loud red role=alert a user-triggered Render uses)
+// since this fires on load. The restored saved/default scene is already in the
+// editor as the fallback; we don't auto-preview it here so the message persists.
+/** @param {string} message */
+function gistFailed(message) {
+  errorBox.classList.add('draft');
+  errorBox.setAttribute('role', 'status');
+  errorBox.textContent = message;
+  errorBox.hidden = false;
+}
+
+// Drop ?gist from the visible URL after handling so a manual reload doesn't
+// re-fetch and the address bar stays clean.
+function stripGistParam() {
+  const url = new URL(location.href);
+  url.searchParams.delete('gist');
+  history.replaceState(null, '', url);
+}
+
+/** @param {string} raw the raw ?gist= value */
+async function loadGistScene(raw) {
+  stripGistParam();
+  const id = gistIdFrom(raw);
+  if (!id) {
+    gistFailed("couldn't read a gist id from the link");
+    return;
+  }
+  /** @type {string | null} */
+  let source;
+  try {
+    const res = await fetch(`https://api.github.com/gists/${id}`);
+    if (!res.ok) {
+      gistFailed(`couldn't load gist (HTTP ${res.status})`);
+      return;
+    }
+    const data = await res.json();
+    source = pickGistSource(data.files);
+  } catch {
+    gistFailed("couldn't reach the gist API (offline or rate-limited)");
+    return;
+  }
+  if (source === null) {
+    gistFailed('that gist has no scene file to load');
+    return;
+  }
+  // Success: the gist text replaces the restored scene, then renders like any
+  // freshly loaded scene (the live-draft preview, mirroring the example path).
+  editor.value = source;
+  renderGutter();
+  paintHighlight();
+  scheduleSave();
+  scheduleDraft();
+}
+
+// On load: a ?gist=<id> link loads that gist (overriding the restored scene);
+// otherwise kick the restored scene's preview. Without the latter a cold page
+// load sits on the empty-state hint until the first keystroke, which reads as
+// "live is broken" (it isn't). scheduleDraft() self-guards to still-mode +
+// liveDraft, so animate mode or a saved live-off preference render nothing.
+const gistParam = new URLSearchParams(location.search).get('gist');
+if (gistParam) {
+  loadGistScene(gistParam);
+} else {
+  scheduleDraft();
+}
 
 renderBtn.addEventListener('click', startRender);
 cancelBtn.addEventListener('click', () => abortCtl?.abort());

@@ -2346,6 +2346,144 @@ try {
   await page.fill('#threads', '');
 
   // ===========================================================================
+  // Gist deep-link (?gist=<id>): load a scene from a GitHub gist on page init,
+  // OVERRIDING the restored scene. The gist JSON API is page.route-mocked so the
+  // test is fully deterministic and never touches the real network. Covers a
+  // successful .pov load + render, the user/id + full-URL leniency, a no-.pov
+  // first-file fallback, and the graceful failure modes (no usable text file,
+  // HTTP error, network failure, malformed id) that each fall back to the saved
+  // scene with a quiet inline message and strip the param from the URL.
+  // ===========================================================================
+  const GIST_POV = [
+    '#version 3.8;',
+    'global_settings { assumed_gamma 1.0 }',
+    'camera { location <0,0,-4> look_at 0 }',
+    'light_source { <2,4,-3> rgb 1 }',
+    'sphere { 0, 1 pigment { rgb <0,1,0> } } // from a gist .pov file',
+    '',
+  ].join('\n');
+  const GIST_TXT = GIST_POV.replace('.pov file', '.txt file (no .pov present)');
+  const FALLBACK_SCENE = '// saved fallback scene\nsphere { 0, 1 }\n';
+
+  // Mock the gist JSON API, keyed on the hex id in the request URL. Every
+  // fulfilled response carries Access-Control-Allow-Origin so the cross-origin
+  // CORS fetch is readable under COEP (faithful to the real api.github.com,
+  // which sends `*`); an unknown id 404s the same readable way.
+  await page.route('https://api.github.com/gists/*', async (route) => {
+    const id = route.request().url().split('/').pop();
+    if (id === 'face') return route.abort(); // simulate a network failure
+    const json = (obj) =>
+      route.fulfill({
+        status: 200,
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+        body: JSON.stringify(obj),
+      });
+    if (id === 'abc1')
+      return json({ files: { 'scene.pov': { filename: 'scene.pov', content: GIST_POV } } });
+    if (id === 'beef')
+      return json({ files: { 'scene.txt': { filename: 'scene.txt', content: GIST_TXT } } });
+    if (id === 'cafe')
+      // a single file with no inline content (truncated) -> nothing usable
+      return json({ files: { 'big.pov': { filename: 'big.pov', truncated: true } } });
+    return route.fulfill({
+      status: 404,
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+      body: JSON.stringify({ message: 'Not Found' }),
+    });
+  });
+
+  // Seed a clean, known state for every gist navigation: live-draft ON (so a
+  // successful load actually previews) and a distinct saved source that doubles
+  // as the failure fallback. addInitScript stacks and runs last, so it wins over
+  // any blob a prior section seeded, on each goto below.
+  await page.addInitScript((fallback) => {
+    localStorage.clear();
+    localStorage.setItem('povrayer.ui.v1', JSON.stringify({ source: fallback, liveDraft: true }));
+  }, FALLBACK_SCENE);
+
+  const gistGoto = async (query) => {
+    await page.goto(server.url + query, { waitUntil: 'load' });
+    await page.waitForFunction(
+      () => document.querySelectorAll('#example-listbox .ex-option').length >= 4,
+      null,
+      { timeout: 30_000 }
+    );
+  };
+  const editorIs = (text, t = 10_000) =>
+    page.waitForFunction((v) => document.getElementById('editor').value === v, text, {
+      timeout: t,
+    });
+  const searchHasGist = () => page.evaluate(() => /gist/.test(location.search));
+
+  // Success (bare id): the gist .pov overrides the restored scene, the param is
+  // stripped from the URL, no error shows, and a live-draft preview renders it.
+  await gistGoto('?gist=abc1');
+  await editorIs(GIST_POV);
+  await page.waitForFunction(
+    () => {
+      const o = document.getElementById('output');
+      return o.src.startsWith('blob:') && o.naturalWidth > 0;
+    },
+    null,
+    { timeout: 120_000 }
+  );
+  assert.equal(await searchHasGist(), false, 'a successful gist load strips ?gist from the URL');
+  assert.equal(
+    await page.evaluate(() => document.getElementById('error').hidden),
+    true,
+    'a successful gist load surfaces no error'
+  );
+
+  // Leniency: a `user/id` and a full gist URL both resolve to the same id, so
+  // they hit the same success path (the gist .pov lands in the editor).
+  await gistGoto('?gist=octocat%2Fabc1');
+  await editorIs(GIST_POV);
+  await gistGoto('?gist=' + encodeURIComponent('https://gist.github.com/octocat/abc1'));
+  await editorIs(GIST_POV);
+
+  // No-.pov fallback: a gist whose only file isn't a .pov still loads (the first
+  // text file), so the editor gets that file's content.
+  await gistGoto('?gist=beef');
+  await editorIs(GIST_TXT);
+
+  // Graceful failures: each shows a quiet inline message, keeps the saved
+  // fallback scene in the editor, and strips the param. Shared assertions, with
+  // a per-case message match.
+  const gistFailure = async (query, pattern) => {
+    await gistGoto(query);
+    await page.waitForFunction(() => !document.getElementById('error').hidden, null, {
+      timeout: 15_000,
+    });
+    assert.match(
+      await page.evaluate(() => document.getElementById('error').textContent),
+      pattern,
+      `gist failure message for ${query}`
+    );
+    assert.equal(
+      await page.evaluate(() => document.getElementById('editor').value),
+      FALLBACK_SCENE,
+      `${query} falls back to the saved scene`
+    );
+    // Quiet, non-modal: a polite role=status, draft-styled box (never the loud
+    // role=alert a user-triggered Render uses).
+    assert.deepEqual(
+      await page.evaluate(() => {
+        const e = document.getElementById('error');
+        return { role: e.getAttribute('role'), draft: e.classList.contains('draft') };
+      }),
+      { role: 'status', draft: true },
+      `${query} reads as a quiet role=status, draft-styled box`
+    );
+    assert.equal(await searchHasGist(), false, `${query} strips ?gist from the URL`);
+  };
+  await gistFailure('?gist=cafe', /no scene file/); // a gist with no usable text file
+  await gistFailure('?gist=dead404', /HTTP 404/); // a 404 from the API
+  await gistFailure('?gist=face', /reach the gist API/); // a network failure (route.abort)
+  await gistFailure('?gist=nothex', /read a gist id/); // a malformed id (parsed, never fetched)
+
+  await page.unroute('https://api.github.com/gists/*');
+
+  // ===========================================================================
   // Mobile UX (coarse pointer): the iPhone fixes. A separate context emulates a
   // touch, mobile-viewport, coarse-pointer device so the @media (pointer:coarse)
   // editor/example rules actually apply (the default desktop page is fine-
