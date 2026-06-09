@@ -665,6 +665,20 @@ body.ui main > * {
   caret-color: var(--text);
 }
 
+/* Selected glyphs must stay transparent too: without an explicit ::selection
+   color the UA repaints them in a visible color, doubling over the syntax
+   overlay. Show only a translucent band; the colored layer reads through it. */
+#editor::selection {
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  background: rgba(122, 132, 147, 0.4);
+}
+#editor::-moz-selection {
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  background: rgba(122, 132, 147, 0.4);
+}
+
 #editor {
   display: block;
   flex: 1;
@@ -681,10 +695,12 @@ body.ui main > * {
 /* Syntax overlay: web/highlight.js paints a colored layer that sits behind the
    transparent-text textarea inside #editor-stack. Absolutely positioned so it
    never affects layout (the textarea alone sizes the stack via min-height +
-   resize, and the overlay fills it via inset:0); JS scroll-syncs both axes and
-   repaints it on every input. Every metric below MUST match #editor exactly
-   (font, line-height, padding, tab-size, white-space, letter-spacing) or the
-   colored text drifts off the caret. */
+   resize, and the overlay fills it via inset:0). It never scrolls itself; JS
+   keeps it aligned by translating #editor-code (a GPU transform, so big scenes
+   scroll without repainting the whole layer) and repaints its text on every
+   input. Every metric on #editor-code MUST match #editor exactly (font,
+   line-height, padding, tab-size, white-space, letter-spacing) or the colored
+   text drifts off the caret. */
 #editor-stack {
   position: relative;
   flex: 1;
@@ -696,9 +712,9 @@ body.ui main > * {
   position: absolute;
   inset: 0;
   margin: 0;
-  padding: 8px;
+  padding: 0; /* padding moves to #editor-code so its translate() matches the textarea */
   border: 0;
-  overflow: hidden; /* JS drives scrollTop/scrollLeft; it never scrolls itself */
+  overflow: hidden; /* the clip; JS translates #editor-code, this never scrolls */
   white-space: pre; /* matches the textarea's wrap="off" */
   pointer-events: none;
   color: var(--text);
@@ -707,10 +723,15 @@ body.ui main > * {
   line-height: 1.45;
   letter-spacing: normal;
   tab-size: 2;
+  contain: content; /* isolate paint/layout so scroll-syncing stays cheap */
 }
 
 #editor-code {
+  display: block; /* a block box so the padding + scroll-sync transform apply */
+  padding: 8px; /* the textarea padding, moved here from #editor-highlight */
   font: inherit; /* override the <code> UA monospace */
+  white-space: pre;
+  will-change: transform; /* compositor layer: the scroll-sync translate is GPU-only */
 }
 
 /* Token colors: only the language vocabulary lights up. Punctuation, operators,

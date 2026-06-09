@@ -1894,7 +1894,8 @@ try {
     'overlay text must equal the editor value (escaped, no injection)'
   );
 
-  // Scroll sync: the overlay mirrors BOTH axes (the gutter mirrors only the top).
+  // Scroll sync: the overlay tracks BOTH axes by translating #editor-code with a
+  // GPU transform (the gutter still mirrors only the top via scrollTop).
   await page.evaluate(() => {
     const ed = document.getElementById('editor');
     ed.value = Array.from({ length: 80 }, (_, i) => `line ${i} ${'x'.repeat(140)}`).join('\n');
@@ -1905,18 +1906,20 @@ try {
   });
   const sync = await page.evaluate(() => {
     const ed = document.getElementById('editor');
-    const hl = document.getElementById('editor-highlight');
+    const code = document.getElementById('editor-code');
     const g = document.getElementById('gutter');
     return {
-      hlTop: hl.scrollTop,
-      hlLeft: hl.scrollLeft,
+      transform: code.style.transform,
       edTop: ed.scrollTop,
       edLeft: ed.scrollLeft,
       gTop: g.scrollTop,
     };
   });
-  assert.equal(sync.hlTop, sync.edTop, 'overlay scrollTop must mirror the editor');
-  assert.equal(sync.hlLeft, sync.edLeft, 'overlay scrollLeft must mirror the editor');
+  assert.equal(
+    sync.transform,
+    `translate(${-sync.edLeft}px, ${-sync.edTop}px)`,
+    'overlay must track both axes via the #editor-code transform'
+  );
   assert.equal(sync.gTop, sync.edTop, 'gutter mirrors the editor scrollTop');
 
   // Toggle live ON: the current scene auto-renders a downscaled (320-edge,

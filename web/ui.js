@@ -53,7 +53,6 @@ const exampleAttrSrc = /** @type {HTMLAnchorElement} */ (
   document.querySelector('#example-attribution .ex-attr-src')
 );
 const editor = /** @type {HTMLTextAreaElement} */ (document.getElementById('editor'));
-const editorHighlight = document.getElementById('editor-highlight');
 const editorCode = document.getElementById('editor-code');
 const gutter = document.getElementById('gutter');
 const liveToggle = document.getElementById('live-toggle');
@@ -622,13 +621,15 @@ function paintHighlight() {
   editorCode.innerHTML = highlight(editor.value);
 }
 
-// The overlay is overflow:hidden and never scrolls itself; mirror BOTH axes
-// from the textarea (the gutter only needs the vertical mirror).
-editor.addEventListener('scroll', () => {
+// Keep the gutter and syntax overlay aligned as the textarea scrolls. The
+// overlay never scrolls itself; we translate #editor-code with a GPU transform
+// rather than writing scrollTop (a scroll-linked scrollTop write repaints the
+// whole colored layer each tick and stutters on big scenes).
+function syncEditorScroll() {
   gutter.scrollTop = editor.scrollTop;
-  editorHighlight.scrollTop = editor.scrollTop;
-  editorHighlight.scrollLeft = editor.scrollLeft;
-});
+  editorCode.style.transform = `translate(${-editor.scrollLeft}px, ${-editor.scrollTop}px)`;
+}
+editor.addEventListener('scroll', syncEditorScroll);
 editor.addEventListener('input', () => {
   renderGutter();
   paintHighlight();
@@ -979,9 +980,7 @@ function selectEditorLine(n) {
   editor.setSelectionRange(start, start + lines[n - 1].length);
   const lineHeight = parseFloat(getComputedStyle(editor).lineHeight) || 19;
   editor.scrollTop = Math.max(0, (n - 3) * lineHeight);
-  gutter.scrollTop = editor.scrollTop;
-  editorHighlight.scrollTop = editor.scrollTop;
-  editorHighlight.scrollLeft = editor.scrollLeft;
+  syncEditorScroll();
 }
 
 // ---- render ----
