@@ -89,14 +89,24 @@
               autocapitalize="off"
               autocorrect="off"
               autocomplete="off"
+              aria-autocomplete="list"
+              aria-controls="complete"
+              aria-expanded="false"
               aria-label="POV-Ray scene source"
               aria-describedby="editor-tabhelp"
               title="Tab indents; Esc then Tab (or Shift+Tab) moves focus"
             ></textarea>
             <span id="editor-tabhelp" class="sr-only"
               >Tab indents the line. Press Escape, then Tab (or Shift+Tab) to move focus out of the
-              editor.</span
+              editor. Ctrl+Space lists completions.</span
             >
+            <!-- Autocomplete popup; ui.js positions it at the caret and fills it.
+                 The textarea keeps its textbox role (a combobox role is not well
+                 defined for a multiline control), so the active option is spoken
+                 through the sr-only live region below rather than relying on
+                 aria-activedescendant alone. -->
+            <ul id="complete" role="listbox" aria-label="completions" hidden></ul>
+            <span id="complete-status" class="sr-only" aria-live="polite"></span>
           </div>
         </div>
         <div id="controls">

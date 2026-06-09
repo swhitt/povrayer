@@ -14,3 +14,6 @@ package-lock.json
 wrapper/package-lock.json
 # Scene fixtures / SDL are not JS-formattable
 test/fixtures/
+# Generated autocomplete data (tools/includes-manifest/generate.mjs); one symbol
+# per line for diffability, which prettier would explode across five lines each
+web/includes-manifest.json

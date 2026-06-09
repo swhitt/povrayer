@@ -19,7 +19,10 @@
 // Preprocessor directives, matched as `#` + word -> tok-directive. A `#` not
 // followed by one of these emits a bare `#` and lets the word fall through as a
 // plain identifier.
-const DIRECTIVES = new Set([
+// Exported so the autocomplete (web/complete.js) draws its keyword candidates
+// from the SAME vocabulary that lights up here, instead of a second list that
+// could drift out of sync with the highlighter.
+export const DIRECTIVES = new Set([
   'version',
   'declare',
   'local',
@@ -52,7 +55,7 @@ const DIRECTIVES = new Set([
 
 // Structural SDL vocabulary -> tok-keyword. One class, grouped only for human
 // readability; membership affects beauty/correctness, never coverage.
-const KEYWORDS = new Set([
+export const KEYWORDS = new Set([
   // objects / CSG
   'blob',
   'box',
@@ -282,7 +285,7 @@ const KEYWORDS = new Set([
 
 // Math / vector functions plus reserved coordinate/value identifiers ->
 // tok-builtin (x/y/z/clock/pi and friends).
-const BUILTINS = new Set([
+export const BUILTINS = new Set([
   // functions
   'abs',
   'acos',

@@ -21,6 +21,7 @@
     "coverage:collect": "node tools/coverage/collect.mjs",
     "coverage:merge": "node tools/coverage/merge.mjs",
     "coverage:check": "node tools/coverage/check.mjs",
+    "gen:manifest": "node tools/includes-manifest/generate.mjs",
     "prepare": "node tools/install-hooks.mjs"
   },
   "devDependencies": {

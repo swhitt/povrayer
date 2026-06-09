@@ -18,6 +18,7 @@ import { parseFlags } from './flags.js';
 import { formatStats } from './stats.js';
 import { encodeGif } from './gif.js';
 import { encodeApng } from './apng.js';
+import { buildPool, complete, applyCompletion, signatureText } from './complete.js';
 
 const isoWarning = document.getElementById('iso-warning');
 if (crossOriginIsolated) {
@@ -59,6 +60,9 @@ const exampleAttrSrc = /** @type {HTMLAnchorElement} */ (
 );
 const editor = /** @type {HTMLTextAreaElement} */ (document.getElementById('editor'));
 const editorCode = document.getElementById('editor-code');
+const editorStack = document.getElementById('editor-stack');
+const completeBox = document.getElementById('complete');
+const completeStatus = document.getElementById('complete-status');
 const gutter = document.getElementById('gutter');
 const liveToggle = document.getElementById('live-toggle');
 const widthInput = /** @type {HTMLInputElement} */ (document.getElementById('width'));
@@ -709,11 +713,14 @@ function paintHighlight() {
 function syncEditorScroll() {
   gutter.scrollTop = editor.scrollTop;
   editorCode.style.transform = `translate(${-editor.scrollLeft}px, ${-editor.scrollTop}px)`;
+  // Keep an open completion popup glued to the caret as the textarea scrolls.
+  if (isCompleteOpen()) positionComplete();
 }
 editor.addEventListener('scroll', syncEditorScroll);
 editor.addEventListener('input', () => {
   renderGutter();
   paintHighlight();
+  refreshComplete(false);
   scheduleSave();
   scheduleDraft();
 });
@@ -746,6 +753,9 @@ function outdentSelection() {
 
 let escapePrimed = false;
 editor.addEventListener('keydown', (e) => {
+  // Autocomplete takes navigation keys while open (and Ctrl+Space opens it);
+  // anything it doesn't consume falls through to the Tab/Escape editor logic.
+  if (handleCompleteKeydown(e)) return;
   if (e.key === 'Escape') {
     // Primes the keyboard-trap escape hatch; also bubbles to the
     // document-level handler that aborts an in-flight render.
@@ -770,7 +780,287 @@ editor.addEventListener('keydown', (e) => {
 });
 editor.addEventListener('blur', () => {
   escapePrimed = false;
+  closeComplete(); // focus left the editor (clicking a popup item keeps focus, so it doesn't fire here)
 });
+
+// ---- editor autocomplete (SDL keywords + the shipped include library) ----
+// The popup is anchored at the caret inside #editor-stack (above the
+// transparent textarea). All the ranking/insertion logic is the pure
+// complete.js; this section is the DOM: caret measurement, keyboard nav, and
+// rendering. Candidate data is the language vocabulary (from highlight.js, via
+// complete.js) plus the include-library symbols fetched from the generated
+// includes-manifest.json. Until that fetch lands, keyword/builtin completion
+// already works, so a slow or failed fetch never blocks the editor.
+
+let completePool = buildPool();
+fetch('./includes-manifest.json')
+  .then((r) => r.json())
+  .then((data) => {
+    completePool = buildPool(data.symbols);
+    // Readiness signal for tests (and any future "symbols loaded" affordance).
+    editor.setAttribute('data-complete-ready', '');
+  })
+  /* c8 ignore next -- manifest fetch failure leaves keyword-only completion; the offline test harness always serves the file */
+  .catch(() => {});
+
+/** @type {{ from: number, to: number, query: string, items: import('./complete.js').Candidate[] } | null} */
+let completeState = null;
+let completeActive = 0;
+// The token start the user dismissed with Escape, so typing more of the SAME
+// token stays quiet; moving to a new token reopens. -1 means nothing suppressed.
+let suppressedFrom = -1;
+
+const COMPLETE_ACCEPT = new Set(['Enter', 'Tab']);
+const COMPLETE_CARET_MOVE = new Set(['ArrowLeft', 'ArrowRight', 'Home', 'End']);
+
+function isCompleteOpen() {
+  return completeState !== null;
+}
+
+// Off-screen mirror of the textarea used to measure the caret's pixel position
+// (textareas expose no caret coordinates). Created once, reused; every metric
+// that affects glyph advance is copied so the measured x/y match the real text.
+let caretMirror;
+function measureCaret(index) {
+  if (!caretMirror) {
+    caretMirror = document.createElement('div');
+    caretMirror.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(caretMirror);
+  }
+  const cs = getComputedStyle(editor);
+  const s = caretMirror.style;
+  s.position = 'absolute';
+  s.visibility = 'hidden';
+  s.top = '0';
+  s.left = '-9999px';
+  s.whiteSpace = 'pre';
+  s.overflow = 'hidden';
+  s.margin = '0';
+  s.border = '0';
+  for (const prop of [
+    'fontFamily',
+    'fontSize',
+    'fontWeight',
+    'fontStyle',
+    'letterSpacing',
+    'lineHeight',
+    'tabSize',
+    'paddingTop',
+    'paddingRight',
+    'paddingBottom',
+    'paddingLeft',
+  ]) {
+    s[prop] = cs[prop];
+  }
+  caretMirror.textContent = editor.value.slice(0, index);
+  const marker = document.createElement('span');
+  marker.textContent = editor.value.slice(index) || '.';
+  caretMirror.appendChild(marker);
+  const coords = {
+    left: marker.offsetLeft,
+    top: marker.offsetTop,
+    // #editor sets a unitless line-height (styles.css), which always computes to
+    // a px value, so parseFloat is safe here (never 'normal'/NaN).
+    lineHeight: parseFloat(cs.lineHeight),
+  };
+  caretMirror.textContent = '';
+  return coords;
+}
+
+// Place the popup at the caret: below the line by default, flipped above when
+// there isn't room below, and clamped horizontally so it's always fully visible.
+function positionComplete() {
+  const caret = measureCaret(completeState.to);
+  const stackW = editorStack.clientWidth;
+  const stackH = editorStack.clientHeight;
+  const boxW = completeBox.offsetWidth;
+  const boxH = completeBox.offsetHeight;
+  const left = Math.max(0, Math.min(caret.left - editor.scrollLeft, stackW - boxW));
+  const lineTop = caret.top - editor.scrollTop;
+  const below = lineTop + caret.lineHeight;
+  // Flip above the caret line when the popup wouldn't fit below it, so it never
+  // covers the line being typed near the editor's bottom edge.
+  const top = below + boxH <= stackH ? below : Math.max(0, lineTop - boxH);
+  completeBox.style.left = `${left}px`;
+  completeBox.style.top = `${top}px`;
+}
+
+function setActiveDescendant() {
+  editor.setAttribute('aria-activedescendant', `complete-opt-${completeActive}`);
+}
+
+// Build the option rows. Each row: the name (with a dim macro signature when it
+// takes args) on the left, the kind tag, and the include file (provenance) on
+// the right. The name truncates with an ellipsis so long macro signatures never
+// push the kind/file out of view.
+function renderComplete() {
+  const frag = document.createDocumentFragment();
+  completeState.items.forEach((c, i) => {
+    const li = document.createElement('li');
+    li.id = `complete-opt-${i}`;
+    li.className = i === completeActive ? 'cmp-item is-active' : 'cmp-item';
+    li.setAttribute('role', 'option');
+    li.setAttribute('aria-selected', i === completeActive ? 'true' : 'false');
+    li.dataset.index = String(i);
+
+    const name = document.createElement('span');
+    name.className = 'cmp-name';
+    name.textContent = c.name;
+    const sig = signatureText(c);
+    if (sig) {
+      const sigEl = document.createElement('span');
+      sigEl.className = 'cmp-sig';
+      sigEl.textContent = sig;
+      name.appendChild(sigEl);
+    }
+    li.appendChild(name);
+
+    const meta = document.createElement('span');
+    meta.className = 'cmp-meta';
+    meta.textContent = c.kind;
+    li.appendChild(meta);
+
+    // Include-library provenance, shown inline (not just on hover) so a texture's
+    // origin reads the way scenes refer to it ("stones.inc"). Vocabulary and
+    // scene-local symbols carry no file, so they get just the kind tag.
+    if (c.file) {
+      const file = document.createElement('span');
+      file.className = 'cmp-file';
+      file.textContent = c.file;
+      li.appendChild(file);
+    }
+
+    // mousedown keeps editor focus (so the textarea doesn't blur); click accepts.
+    li.addEventListener('mousedown', (e) => e.preventDefault());
+    li.addEventListener('click', () => {
+      completeActive = i;
+      acceptActive();
+    });
+    frag.appendChild(li);
+  });
+  completeBox.replaceChildren(frag);
+  setActiveDescendant();
+}
+
+// Announce the active row to the visually-hidden live region. The editor stays a
+// plain textbox (a multiline combobox role is ill-defined for screen readers),
+// so this speaks the selection rather than leaning on aria-activedescendant alone.
+function announceComplete() {
+  const item = completeState.items[completeActive];
+  const where = item.file ? `, ${item.file}` : '';
+  completeStatus.textContent =
+    `${item.name}${signatureText(item)} ${item.kind}${where}, ` +
+    `${completeActive + 1} of ${completeState.items.length}`;
+}
+
+function showComplete(res) {
+  completeState = res;
+  completeActive = 0;
+  renderComplete();
+  completeBox.hidden = false;
+  positionComplete();
+  editor.setAttribute('aria-expanded', 'true');
+  announceComplete();
+}
+
+function closeComplete() {
+  if (completeState === null) return;
+  completeState = null;
+  completeBox.hidden = true;
+  completeBox.replaceChildren();
+  editor.setAttribute('aria-expanded', 'false');
+  editor.removeAttribute('aria-activedescendant');
+}
+
+// Recompute completions for the caret. `force` (Ctrl+Space) opens even on an
+// empty token and ignores a prior Escape dismissal. Auto-open waits for 3 chars
+// so it stays quiet while typing rather than popping on every 2-letter prefix.
+function refreshComplete(force) {
+  const res = complete(editor.value, editor.selectionStart, completePool, {
+    minLength: force ? 0 : 3,
+  });
+  if (!res) {
+    closeComplete();
+    suppressedFrom = -1;
+    return;
+  }
+  if (!force && suppressedFrom === res.from) {
+    closeComplete();
+    return;
+  }
+  suppressedFrom = -1;
+  showComplete(res);
+}
+
+function moveActive(delta) {
+  const n = completeState.items.length;
+  completeActive = (completeActive + delta + n) % n;
+  for (const el of completeBox.children) {
+    const li = /** @type {HTMLElement} */ (el);
+    const on = Number(li.dataset.index) === completeActive;
+    li.classList.toggle('is-active', on);
+    li.setAttribute('aria-selected', on ? 'true' : 'false');
+  }
+  setActiveDescendant();
+  completeBox.children[completeActive].scrollIntoView({ block: 'nearest' });
+  announceComplete();
+}
+
+// Insert the active candidate via setRangeText so the native undo stack stays
+// intact, then place the caret where complete.js wants it (inside a macro's
+// parens, or after the inserted name).
+function acceptActive() {
+  const item = completeState.items[completeActive];
+  const { from, to } = completeState;
+  const out = applyCompletion(editor.value, { from, to }, item);
+  const afterLen = editor.value.length - to;
+  const insert = out.text.slice(from, out.text.length - afterLen);
+  editor.setRangeText(insert, from, to, 'preserve');
+  editor.selectionStart = editor.selectionEnd = out.caret;
+  closeComplete();
+  suppressedFrom = -1;
+  renderGutter();
+  paintHighlight();
+  scheduleSave();
+  scheduleDraft();
+}
+
+// Returns true when the key was consumed by completion (so the caller stops).
+function handleCompleteKeydown(e) {
+  if (e.ctrlKey && e.code === 'Space') {
+    refreshComplete(true);
+    e.preventDefault();
+    return true;
+  }
+  if (!isCompleteOpen()) return false;
+  if (e.key === 'ArrowDown') {
+    moveActive(1);
+    e.preventDefault();
+    return true;
+  }
+  if (e.key === 'ArrowUp') {
+    moveActive(-1);
+    e.preventDefault();
+    return true;
+  }
+  if (COMPLETE_ACCEPT.has(e.key)) {
+    acceptActive();
+    e.preventDefault();
+    return true;
+  }
+  if (e.key === 'Escape') {
+    suppressedFrom = completeState.from;
+    closeComplete();
+    e.preventDefault();
+    e.stopPropagation(); // don't also abort an in-flight render
+    return true;
+  }
+  if (COMPLETE_CARET_MOVE.has(e.key)) {
+    closeComplete();
+    return false; // let the caret actually move
+  }
+  return false;
+}
 
 // ---- controls ----
 

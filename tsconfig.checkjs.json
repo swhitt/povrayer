@@ -51,6 +51,7 @@
     "web/repl.js",
     "web/render-client.js",
     "web/highlight.js",
+    "web/complete.js",
     "web/sdl-validate.js",
     "web/examples.js",
     "src/cli.mjs",

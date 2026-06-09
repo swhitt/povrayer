@@ -766,6 +766,68 @@ body.ui main > * {
   color: var(--syn-directive);
 }
 
+/* Autocomplete popup. Anchored at the caret inside #editor-stack, above the
+   transparent textarea (z-index:1). Opaque --panel + a --border-strong edge
+   separate it from the editor WITHOUT a shadow (the rendered image owns the
+   only shadow). The active row borrows the example browser's exact language:
+   grey --border fill plus a square --border-strong inset marker, never the
+   accent. */
+#complete {
+  position: absolute;
+  z-index: 5;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 20ch;
+  max-width: 44ch;
+  max-height: 15.5em;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  font-size: var(--fs-out);
+  line-height: 1.5;
+}
+
+#complete[hidden] {
+  display: none;
+}
+
+.cmp-item {
+  display: flex;
+  align-items: baseline;
+  gap: 1.5ch;
+  padding: 2px 8px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cmp-item:hover {
+  background: var(--border);
+}
+
+.cmp-item.is-active {
+  background: var(--border);
+  box-shadow: inset 3px 0 0 var(--border-strong);
+}
+
+/* The name takes the slack and truncates; the kind + file stay pinned to the
+   right at their natural width, so a long macro signature never shoves the
+   provenance out of view. */
+.cmp-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.cmp-sig,
+.cmp-meta,
+.cmp-file {
+  flex: none;
+  color: var(--dim);
+}
+
 /* Three-level spacing rhythm: 6px label-to-control (pair), 10px within a
    .ctl-group (below), 20px between groups here. Row-gap 12px so wrapped tiers
    read as deliberate rows, not an accidental overflow. */
@@ -1491,6 +1553,13 @@ body.source-open #repl-source {
   .ex-option {
     min-height: 44px;
     align-content: center;
+  }
+
+  /* Completion rows are tap targets on touch too: same 44px floor, vertically
+     centered (they're a single line, unlike the stacked example options). */
+  .cmp-item {
+    min-height: 44px;
+    align-items: center;
   }
 
   /* The category heads are disclosure buttons; give them the same tap floor

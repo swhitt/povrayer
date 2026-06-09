@@ -1128,7 +1128,7 @@ try {
     {
       describedBy: 'editor-tabhelp',
       helpText:
-        'Tab indents the line. Press Escape, then Tab (or Shift+Tab) to move focus out of the editor.',
+        'Tab indents the line. Press Escape, then Tab (or Shift+Tab) to move focus out of the editor. Ctrl+Space lists completions.',
       clipped: true,
       visible: true,
     },
@@ -2884,6 +2884,199 @@ try {
   assert.equal(await bodyMode(), 'still', 'url param sets still mode');
 
   await page.unroute('https://api.github.com/gists/*');
+
+  // ===========================================================================
+  // Editor autocomplete: the SDL keyword + include-library popup. Drives the
+  // ui.js completion glue (caret-anchored popup, keyboard nav, insertion); the
+  // ranking/insertion logic itself is covered by the node suite (complete.js is
+  // measured in both maps and merged).
+  // ===========================================================================
+  // Wait until the include manifest has loaded (the readiness attribute), so the
+  // shipped symbols (T_Stone1, macros) are in the pool.
+  await page.waitForFunction(
+    () => document.getElementById('editor').hasAttribute('data-complete-ready'),
+    null,
+    { timeout: 15_000 }
+  );
+
+  // Set the editor text + caret and fire input (the same path real typing takes).
+  const openCompleteAt = (value, caretFromEnd = 0) =>
+    page.evaluate(
+      ({ value, caretFromEnd }) => {
+        const e = document.getElementById('editor');
+        e.focus();
+        e.value = value;
+        e.selectionStart = e.selectionEnd = value.length - caretFromEnd;
+        e.dispatchEvent(new Event('input', { bubbles: true }));
+      },
+      { value, caretFromEnd }
+    );
+
+  const cmp = () =>
+    page.evaluate(() => {
+      const b = document.getElementById('complete');
+      const active = b.querySelector('.is-active');
+      const name = (li) => (li ? li.querySelector('.cmp-name').textContent : null);
+      return {
+        hidden: b.hidden,
+        count: b.children.length,
+        first: name(b.children[0]),
+        activeIndex: active ? Number(active.dataset.index) : -1,
+        expanded: document.getElementById('editor').getAttribute('aria-expanded'),
+      };
+    });
+
+  // 1. Include-library completion with the caret MID-line (text after the caret
+  //    exercises the non-empty caret-marker branch). Arrow nav + Enter accept.
+  await openCompleteAt('sphere { 0,1 texture { T_Sto } }', 4);
+  let s = await cmp();
+  assert.equal(s.hidden, false, 'typing an include prefix opens the completion popup');
+  assert.equal(s.first, 'T_Stone1', 'the shipped T_Stone1 texture is the top match for T_Sto');
+  assert.equal(s.expanded, 'true', 'aria-expanded reflects the open popup');
+  assert.ok(s.count > 10, 'the full T_Stone family is offered');
+  assert.ok(
+    (
+      await page.evaluate(() => document.querySelector('#complete-opt-0 .cmp-file').textContent)
+    ).endsWith('.inc'),
+    'an include row shows its source .inc file as visible provenance'
+  );
+  await page.keyboard.press('ArrowDown');
+  assert.equal((await cmp()).activeIndex, 1, 'ArrowDown moves the active row down');
+  await page.keyboard.press('ArrowUp');
+  assert.equal((await cmp()).activeIndex, 0, 'ArrowUp moves it back');
+  await page.keyboard.press('Enter');
+  s = await cmp();
+  assert.equal(s.hidden, true, 'Enter accepts and closes the popup');
+  assert.equal(s.expanded, 'false', 'aria-expanded clears on accept');
+  assert.ok(
+    (await page.evaluate(() => document.getElementById('editor').value)).includes('T_Stone1 }'),
+    'Enter inserts the chosen identifier'
+  );
+
+  // 2. Tab accepts too, and does NOT fall through to the indent handler.
+  await openCompleteAt('union { T_Sto');
+  assert.equal((await cmp()).hidden, false, 'popup reopens for a new token');
+  await page.keyboard.press('Tab');
+  assert.equal(
+    await page.evaluate(() => document.getElementById('editor').value),
+    'union { T_Stone1',
+    'Tab accepts the completion instead of indenting'
+  );
+
+  // 3. Incremental typing keeps the popup live; a non-identifier char closes it.
+  //    Typing 'sphe' opens at 'sph' (3-char threshold), then the 'e' keydown
+  //    arrives while the popup is open (the typed-through-an-open-popup path).
+  await page.evaluate(() => {
+    const e = document.getElementById('editor');
+    e.focus();
+    e.value = '';
+    e.selectionStart = e.selectionEnd = 0;
+    e.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.type('#editor', 'sphe');
+  s = await cmp();
+  assert.equal(s.hidden, false, 'typing into a fresh token opens completion');
+  assert.equal(s.first, 'sphere', 'sphere is the top keyword match for sphe');
+  await page.keyboard.press('Space');
+  assert.equal((await cmp()).hidden, true, 'a space ends the token and closes the popup');
+  await page.keyboard.press('Space'); // second space: refresh while already closed (no-op path)
+  assert.equal((await cmp()).hidden, true, 'staying on no-token keeps it closed');
+
+  // 4. Escape dismisses the current token; typing more of the SAME token stays
+  //    quiet, but moving to a NEW token reopens.
+  await openCompleteAt('finish { Dul');
+  assert.equal((await cmp()).hidden, false, 'a finish-library prefix opens the popup');
+  await page.keyboard.press('Escape');
+  assert.equal((await cmp()).hidden, true, 'Escape dismisses the popup');
+  await openCompleteAt('finish { Dull');
+  assert.equal((await cmp()).hidden, true, 'more of the dismissed token stays suppressed');
+  await openCompleteAt('finish { Dull specular Shi');
+  assert.equal((await cmp()).hidden, false, 'a new token clears the dismissal and reopens');
+
+  // 5. Ctrl+Space browses on an empty token (the "what can go here" affordance).
+  await page.evaluate(() => {
+    const e = document.getElementById('editor');
+    e.focus();
+    e.value = 'object { ';
+    e.selectionStart = e.selectionEnd = e.value.length;
+  });
+  await page.keyboard.press('Control+Space');
+  assert.ok((await cmp()).count > 0, 'Ctrl+Space opens a browse list on an empty token');
+  await page.keyboard.press('Escape');
+
+  // 6. Macro completion: the signature shows, and accepting drops `name()` with
+  //    the caret inside the parens. (Token starts past column 9 so it can't
+  //    collide with the Escape-suppression left by the browse step above.)
+  await openCompleteAt('object { scale Axis_Rot');
+  assert.ok(
+    await page.evaluate(() => {
+      const li = [...document.getElementById('complete').children].find((x) =>
+        x.querySelector('.cmp-sig')
+      );
+      return li && li.querySelector('.cmp-sig').textContent.startsWith('(');
+    }),
+    'a macro candidate shows its parameter signature'
+  );
+  await page.keyboard.press('Enter');
+  const macroAccept = await page.evaluate(() => {
+    const e = document.getElementById('editor');
+    return { value: e.value, caret: e.selectionStart };
+  });
+  assert.ok(macroAccept.value.includes('Axis_Rotate_Trans()'), 'accepting a macro inserts name() ');
+  assert.equal(
+    macroAccept.caret,
+    macroAccept.value.indexOf('(') + 1,
+    'the caret lands inside the parens of an accepted macro'
+  );
+
+  // 7. Directive completion after a # (no file provenance on these rows).
+  await openCompleteAt('#decl');
+  s = await cmp();
+  assert.equal(s.hidden, false, 'typing #decl opens directive completion');
+  assert.equal(s.first, 'declare', '#declare is the directive match');
+  await page.keyboard.press('Escape');
+
+  // 8. Click-to-accept inserts the clicked row.
+  await openCompleteAt('union { T_Sto');
+  const clicked = await page.evaluate(
+    () => document.querySelector('#complete-opt-1 .cmp-name').textContent
+  );
+  await page.click('#complete-opt-1');
+  assert.ok(
+    (await page.evaluate(() => document.getElementById('editor').value)).includes(clicked),
+    'clicking a row inserts that identifier'
+  );
+
+  // 9. A caret-move key closes the popup (the suggestions no longer apply).
+  await openCompleteAt('union { T_Sto');
+  assert.equal((await cmp()).hidden, false, 'popup is open before the caret move');
+  await page.keyboard.press('ArrowLeft');
+  assert.equal((await cmp()).hidden, true, 'ArrowLeft closes the popup');
+
+  // 10. The popup stays glued to the caret as the textarea scrolls (open arm),
+  //     and a scroll while closed is a no-op (closed arm).
+  await page.evaluate(() => {
+    const e = document.getElementById('editor');
+    e.focus();
+    e.value = Array.from({ length: 60 }, (_, i) => '// filler ' + i).join('\n') + '\nunion { T_Sto';
+    e.selectionStart = e.selectionEnd = e.value.length;
+    e.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  assert.equal((await cmp()).hidden, false, 'popup opens in a scrollable editor');
+  await page.evaluate(() => {
+    const e = document.getElementById('editor');
+    e.scrollTop = 20;
+    e.dispatchEvent(new Event('scroll'));
+  });
+  assert.equal((await cmp()).hidden, false, 'the popup survives a scroll (it repositions)');
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => document.getElementById('editor').dispatchEvent(new Event('scroll')));
+
+  // 11. Blurring the editor closes the popup.
+  await openCompleteAt('union { T_Sto');
+  assert.equal((await cmp()).hidden, false, 'popup is open before blur');
+  await page.evaluate(() => document.getElementById('editor').blur());
+  assert.equal((await cmp()).hidden, true, 'leaving the editor closes the popup');
 
   // ===========================================================================
   // Mobile UX (coarse pointer): the iPhone fixes. A separate context emulates a
