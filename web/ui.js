@@ -1088,27 +1088,13 @@ function sceneName() {
   return editor.value === lastLoadedSource ? selectedExample : 'edited scene';
 }
 
-// done in 0.92s · 512×384 · trace 0.04s · 554,341 rays · 15 threads
-// Falls back to the short form when the stats regexes miss.
-function doneLine(elapsedMs, opts, rawLog) {
-  const base = `done in ${(elapsedMs / 1000).toFixed(2)}s · ${opts.width}×${opts.height}`;
-  let stats;
-  try {
-    stats = rawLog ? parseStats(rawLog) : null;
-    /* c8 ignore next 3 -- parseStats never throws on a string log; the catch is defensive */
-  } catch {
-    return base;
-  }
-  /* c8 ignore next 3 -- the shipped dist always prints Trace Time/Rays/threads, so parseStats never returns partial; this fallback is defensive */
-  if (!stats || stats.traceSeconds == null || stats.rays == null || stats.threads == null) {
-    return base;
-  }
-  return (
-    base +
-    ` · trace ${Number(stats.traceSeconds).toFixed(2)}s` +
-    ` · ${Number(stats.rays).toLocaleString('en-US')} rays` +
-    ` · ${stats.threads} thread${stats.threads === 1 ? '' : 's'}`
-  );
+// done in 0.92s · 512×384
+// The brief celebratory headline: wall-clock time + resolution only. The full
+// numeric breakdown (timings, rays, rays/s, threads, warnings) lives in the stat
+// chips under the image (showStats), so nothing is repeated between the two.
+/** @param {number} elapsedMs @param {{ width: number, height: number }} opts @returns {string} */
+function doneLine(elapsedMs, opts) {
+  return `done in ${(elapsedMs / 1000).toFixed(2)}s · ${opts.width}×${opts.height}`;
 }
 
 // One stat chip: <div class="stat"><dt>label</dt><dd>value</dd></div>.
@@ -1125,16 +1111,15 @@ function statChip(label, value) {
 }
 
 // Promote the render log's headline numbers into the stat-chip readout under the
-// image. Driven off the same parseStats the done-line uses, plus the dimensions
-// and wall-clock time. Called only from the explicit still-render success path
-// (drafts are previews, animate has its own footer); the chips then persist as
-// the last full render's stats until the next one.
-/** @param {string} rawLog @param {{ width: number, height: number }} opts @param {number} elapsedMs */
-function showStats(rawLog, opts, elapsedMs) {
+// image. Parses the raw log for the per-phase timings/rays/threads and pairs them
+// with the render dimensions. Called only from the explicit still-render success
+// path (drafts are previews, animate has its own footer); the chips then persist
+// as the last full render's stats until the next one.
+/** @param {string} rawLog @param {{ width: number, height: number }} opts */
+function showStats(rawLog, opts) {
   const rows = formatStats(parseStats(rawLog), {
     width: opts.width,
     height: opts.height,
-    elapsedMs,
   });
   statsList.replaceChildren(...rows.map((r) => statChip(r.label, r.value)));
   statsList.hidden = false;
@@ -1380,9 +1365,9 @@ async function startRender() {
     downloadBtn.hidden = false;
     downloadBtn.classList.remove('stale');
     statsList.classList.remove('stale');
-    showStats(rawLog, opts, elapsedMs);
+    showStats(rawLog, opts);
 
-    setStatus(doneLine(elapsedMs, opts, rawLog), 'done');
+    setStatus(doneLine(elapsedMs, opts), 'done');
     logSummary.textContent = summaryWithCount('render log');
     if (!matchMedia('(min-width: 900px)').matches) {
       // Wait for the intrinsic size: block:'nearest' measures the box, and an

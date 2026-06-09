@@ -983,9 +983,10 @@ body.ui main > * {
 }
 
 /* Stats readout: a row of dim label/value chips promoted from the render log's
-   numbers (resolution, timings, rays, threads). Square + monospace like the
-   rest; tabular-nums so the figures hold a steady column as they update. Wraps
-   to as many rows as the pane needs. JS unhides it after a still render. */
+   numbers (pixels, timings, rays, threads). Resolution and total time live in
+   the status done-line, so the chips don't repeat them. Square + monospace like
+   the rest; tabular-nums so the figures hold a steady column as they update.
+   Wraps to as many rows as the pane needs. JS unhides it after a still render. */
 .stats {
   display: flex;
   flex-wrap: wrap;

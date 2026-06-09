@@ -120,7 +120,17 @@ try {
     { timeout: 120_000 }
   );
   const doneStatus = await page.evaluate(() => document.getElementById('status').textContent);
-  assert.match(doneStatus, /^done in \d+\.\d\ds/, `unexpected status after render: ${doneStatus}`);
+  // The done-line is the brief headline: time + resolution only. The per-phase
+  // timings/rays/threads belong to the stat chips, never repeated up here.
+  assert.match(
+    doneStatus,
+    /^done in \d+\.\d\ds · 160×120$/,
+    `unexpected status after render: ${doneStatus}`
+  );
+  assert.ok(
+    !/trace|rays|thread/.test(doneStatus),
+    `done-line should not repeat the chip stats, got: ${doneStatus}`
+  );
   const download = await page.evaluate(() => {
     const a = document.getElementById('download-btn');
     return { hidden: a.hidden, href: a.href };
@@ -147,7 +157,8 @@ try {
   );
 
   // Stats readout: the still render populates the chip row (showStats). The
-  // always-on rows are present plus the timing/ray rows the log carries.
+  // always-on pixels row is present plus the timing/ray rows the log carries.
+  // resolution and total time live in the done-line, so they must NOT appear here.
   assert.equal(
     await page.evaluate(() => document.getElementById('stats').hidden),
     false,
@@ -157,8 +168,12 @@ try {
     [...document.querySelectorAll('#stats .stat')].map((c) => c.querySelector('dt').textContent)
   );
   assert.ok(
-    ['resolution', 'pixels', 'total'].every((k) => statChips.includes(k)),
-    `stats chips should include the always-on rows, got: ${statChips.join(',')}`
+    statChips.includes('pixels'),
+    `stats chips should include the always-on pixels row, got: ${statChips.join(',')}`
+  );
+  assert.ok(
+    !statChips.includes('resolution') && !statChips.includes('total'),
+    `stats chips should not repeat the done-line's resolution/total, got: ${statChips.join(',')}`
   );
 
   // Raw flags ride along as args on an explicit render (collectOptions's truthy

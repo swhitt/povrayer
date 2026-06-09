@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 
 import { formatStats } from '../../web/stats.js';
 
-const meta = { width: 512, height: 384, elapsedMs: 920 };
+const meta = { width: 512, height: 384 };
 
 /** @param {{label: string, value: string}[]} rows */
 const byLabel = (rows) => Object.fromEntries(rows.map((r) => [r.label, r.value]));
@@ -16,25 +16,24 @@ test('a full stats object emits every row in order', () => {
     { parseSeconds: 0.011, traceSeconds: 0.04, rays: 554341, threads: 15, warnings: 0 },
     meta
   );
+  // resolution and total time deliberately live in the status done-line, not here.
   assert.deepEqual(
     rows.map((r) => r.label),
-    ['resolution', 'pixels', 'total', 'parse', 'trace', 'rays', 'rays/s', 'threads']
+    ['pixels', 'parse', 'trace', 'rays', 'rays/s', 'threads']
   );
   const m = byLabel(rows);
-  assert.equal(m.resolution, '512 × 384');
   assert.equal(m.pixels, '196,608');
-  assert.equal(m.total, '0.92s');
   assert.equal(m.parse, '0.01s');
   assert.equal(m.trace, '0.04s');
   assert.equal(m.rays, '554,341');
   assert.equal(m.threads, '15');
 });
 
-test('the always-on rows survive an empty stats object', () => {
+test('the always-on pixels row survives an empty stats object', () => {
   const rows = formatStats({}, meta);
   assert.deepEqual(
     rows.map((r) => r.label),
-    ['resolution', 'pixels', 'total']
+    ['pixels']
   );
 });
 

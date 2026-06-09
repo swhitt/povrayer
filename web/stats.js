@@ -1,7 +1,11 @@
 // Turn a parsed render-stats object (render-client's parseStats output) plus the
-// render dimensions and wall-clock time into a flat list of label/value rows for
-// the stats readout under the image. Pure and DOM-free so it node-unit-tests
-// without a browser; ui.js owns the chip markup.
+// render dimensions into a flat list of label/value rows for the stats readout
+// under the image. Pure and DOM-free so it node-unit-tests without a browser;
+// ui.js owns the chip markup.
+//
+// Resolution and total wall-clock time deliberately live in the status done-line
+// (the brief headline), so the chips own the full breakdown WITHOUT repeating
+// them: pixels, the per-phase timings, rays, rays/s, threads, and warnings.
 //
 // The render log always carries Trace Time / Rays / threads on the shipped dist,
 // but each numeric is treated as optional here: a row whose source datum is
@@ -20,17 +24,15 @@ function compact(n) {
 
 /**
  * @param {{ traceSeconds?: number, parseSeconds?: number, rays?: number, threads?: number, warnings?: number }} stats
- * @param {{ width: number, height: number, elapsedMs: number }} meta
+ * @param {{ width: number, height: number }} meta
  * @returns {{ label: string, value: string }[]}
  */
 export function formatStats(stats, meta) {
   /** @type {{ label: string, value: string }[]} */
   const rows = [];
-  const { width, height, elapsedMs } = meta;
+  const { width, height } = meta;
 
-  rows.push({ label: 'resolution', value: `${width} × ${height}` });
   rows.push({ label: 'pixels', value: (width * height).toLocaleString('en-US') });
-  rows.push({ label: 'total', value: `${(elapsedMs / 1000).toFixed(2)}s` });
 
   if (stats.parseSeconds != null) {
     rows.push({ label: 'parse', value: `${stats.parseSeconds.toFixed(2)}s` });
