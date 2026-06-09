@@ -9,6 +9,7 @@ import {
   parseStats,
 } from './render-client.js';
 import { EXAMPLES, getExample } from './examples.js';
+import { highlight } from './highlight.js';
 
 const isoWarning = document.getElementById('iso-warning');
 if (crossOriginIsolated) {
@@ -39,6 +40,10 @@ const input = document.getElementById('input');
 const statusEl = document.getElementById('repl-status');
 const progressEl = document.getElementById('repl-progress');
 const cancelBtn = document.getElementById('cancel-render');
+const sourceToggle = document.getElementById('source-toggle');
+const sourcePanel = document.getElementById('repl-source');
+const sourceCode = document.getElementById('source-code');
+const sourceClose = document.getElementById('source-close');
 
 // --- state -----------------------------------------------------------------
 
@@ -81,6 +86,7 @@ let renderPct = -1; // last confirmed percent of the in-flight render (-1 = none
 let renderPrimed = false; // a first percent event has arrived this render
 let statusStamp = 0; // last live-region text update, for the 1/s throttle
 let hintTimer = null; // transient busy-hint restore timer
+let sourceOpen = false; // scene-source slide-out open state (persisted)
 
 // --- persistence -------------------------------------------------------------
 
@@ -93,6 +99,7 @@ function saveState() {
         entries: entries.map((e) => ({ source: e.source })),
         settings,
         history,
+        sourceOpen,
       })
     );
   } catch {
@@ -138,6 +145,7 @@ function loadState() {
     history = data.history.filter((h) => typeof h === 'string').slice(-HISTORY_MAX);
     historyIndex = history.length;
   }
+  if (typeof data.sourceOpen === 'boolean') sourceOpen = data.sourceOpen;
   return entries.length;
 }
 
@@ -198,6 +206,18 @@ function mapAssembledLine(n) {
   }
   /* c8 ignore next -- POV-Ray reports error lines inside the offending entry; the scaffold is always valid and never the error site, so an assembled line never maps outside the entry spans */
   return null; // scaffold or out of range
+}
+
+// Mirror the assembled scene into the slide-out panel, but only while it's open
+// (closed, this is a no-op so we never pay for highlight() on every entry
+// mutation with the panel parked off-screen). assembleScene() recomputes
+// lastSpans as a side effect, but lastSpans is read only by mapAssembledLine
+// during describeError, which always runs over the same entries BEFORE the
+// finally-refresh in the same render turn, so the re-derivation is idempotent.
+function refreshSource() {
+  if (!sourceOpen) return;
+  if (entries.length) sourceCode.innerHTML = highlight(assembleScene());
+  else sourceCode.textContent = 'scene empty · type scene code to begin';
 }
 
 // --- scrollback DOM ----------------------------------------------------------
@@ -482,6 +502,11 @@ async function runRender({ rollback, echoNode, entrySource } = {}) {
     hintTimer = null;
     updateStatus();
     saveState();
+    // Single refresh covering submit-success append, rollback pop, :render,
+    // :example, and :edit-resubmit. Reflects the SETTLED scene, so the panel
+    // never shows a rolled-back entry. (:anim mutates no entries, so it isn't a
+    // refresh site.)
+    refreshSource();
     input.focus();
   }
 }
@@ -906,6 +931,7 @@ function listEntries() {
 function removeEntry(index1, verb = 'removed') {
   entries.splice(index1 - 1, 1);
   saveState();
+  refreshSource(); // covers :undo/:del/:edit (both the re-render and empty-scene arms)
   if (entries.length) {
     appendBlock('info', `${verb} entry ${index1}`);
     runRender();
@@ -983,6 +1009,7 @@ function dispatchCommand(text) {
       }
       appendBlock('info', 'scene, settings, and saved state cleared');
       updateStatus();
+      refreshSource(); // empty scene -> the panel shows the placeholder
       break;
 
     case 'list':
@@ -1270,6 +1297,22 @@ form.addEventListener('submit', (e) => {
 
 cancelBtn.addEventListener('click', () => abortCtl?.abort());
 
+// Scene-source slide-out: a disclosure panel mirroring the assembled scene.
+// aria-expanded on the toggle is the single source of truth; the panel mirrors
+// it via aria-hidden + the body.source-open class that drives the CSS slide.
+// Escape is deliberately NOT bound here: the document-level Escape handler
+// aborts an in-flight render and must not be stolen.
+function toggleSource(open) {
+  sourceOpen = open;
+  sourceToggle.setAttribute('aria-expanded', String(open));
+  sourcePanel.setAttribute('aria-hidden', String(!open));
+  document.body.classList.toggle('source-open', open);
+  if (open) refreshSource();
+  saveState();
+}
+sourceToggle.addEventListener('click', () => toggleSource(!sourceOpen));
+sourceClose.addEventListener('click', () => toggleSource(false));
+
 // Tap/click an echoed entry to copy it back into the input (the touch path to
 // history). Skipped while the user is selecting text to copy.
 scrollback.addEventListener('click', (e) => {
@@ -1364,3 +1407,9 @@ if (restoredCount) {
   );
 }
 updateStatus();
+// Apply the restored slide-out state to the DOM (a reload with the panel open
+// returns open + populated), then refresh it (a no-op when restored closed).
+sourceToggle.setAttribute('aria-expanded', String(sourceOpen));
+sourcePanel.setAttribute('aria-hidden', String(!sourceOpen));
+document.body.classList.toggle('source-open', sourceOpen);
+refreshSource();

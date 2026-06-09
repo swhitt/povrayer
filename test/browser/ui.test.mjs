@@ -852,15 +852,17 @@ try {
       const cs = getComputedStyle(help);
       return {
         describedBy: ed.getAttribute('aria-describedby'),
-        helpText: help.textContent.trim(),
+        // Collapse the source-wrap whitespace the way a screen reader announces it.
+        helpText: help.textContent.replace(/\s+/g, ' ').trim(),
         // sr-only: off-screen but NOT display:none (still in the a11y tree).
         clipped: cs.position === 'absolute' && cs.width === '1px',
         visible: cs.display !== 'none',
       };
     }),
     {
-      describedBy: 'editor-tabhelp status',
-      helpText: 'Tab indents the line. Press Escape then Tab to move focus out of the editor.',
+      describedBy: 'editor-tabhelp',
+      helpText:
+        'Tab indents the line. Press Escape, then Tab (or Shift+Tab) to move focus out of the editor.',
       clipped: true,
       visible: true,
     },

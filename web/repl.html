@@ -21,20 +21,21 @@
         <span class="orb" aria-hidden="true"></span><span class="brand-accent">pov</span>rayer
         <span class="brand-page">repl</span>
       </h1>
-      <nav><a href="./index.html">editor</a></nav>
+      <nav>
+        <button id="source-toggle" type="button" aria-expanded="false" aria-controls="repl-source">
+          source
+        </button>
+        <a href="./index.html">editor</a>
+      </nav>
     </header>
     <div id="iso-warning" role="alert" hidden>
       Not cross-origin isolated: SharedArrayBuffer is unavailable and rendering can't start. If this
       is the first visit, the service worker is installing and the page will reload itself; if it
       doesn't, refresh manually.
     </div>
-    <main
-      id="scrollback"
-      role="log"
-      aria-live="polite"
-      tabindex="0"
-      aria-label="REPL transcript"
-    ></main>
+    <main aria-label="REPL transcript">
+      <div id="scrollback" role="log" aria-live="polite" tabindex="0"></div>
+    </main>
     <div id="repl-progress" hidden></div>
     <form id="input-form">
       <span class="prompt" aria-hidden="true">pov&gt;</span>
@@ -53,6 +54,18 @@
       <button id="cancel-render" type="button" hidden>cancel</button>
     </form>
     <footer id="repl-status" role="status">idle · 320×240</footer>
+    <aside
+      id="repl-source"
+      role="complementary"
+      aria-label="assembled scene source"
+      aria-hidden="true"
+    >
+      <div class="source-head">
+        <span class="source-title">scene source</span>
+        <button id="source-close" type="button" aria-label="close source panel">×</button>
+      </div>
+      <pre class="source-pre"><code id="source-code"></code></pre>
+    </aside>
     <script type="module" src="./repl.js"></script>
   </body>
 </html>

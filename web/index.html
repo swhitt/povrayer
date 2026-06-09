@@ -27,7 +27,7 @@
       doesn't, refresh manually.
     </div>
     <main>
-      <section id="editor-pane">
+      <section id="editor-pane" aria-label="scene editor">
         <div id="example-field">
           <span id="example-label">example</span>
           <button
@@ -90,11 +90,12 @@
               autocorrect="off"
               autocomplete="off"
               aria-label="POV-Ray scene source"
-              aria-describedby="editor-tabhelp status"
-              title="Tab indents; Esc then Tab moves focus"
+              aria-describedby="editor-tabhelp"
+              title="Tab indents; Esc then Tab (or Shift+Tab) moves focus"
             ></textarea>
             <span id="editor-tabhelp" class="sr-only"
-              >Tab indents the line. Press Escape then Tab to move focus out of the editor.</span
+              >Tab indents the line. Press Escape, then Tab (or Shift+Tab) to move focus out of the
+              editor.</span
             >
           </div>
         </div>
@@ -170,7 +171,7 @@
           </span>
         </div>
       </section>
-      <section id="output-pane">
+      <section id="output-pane" aria-label="render output">
         <div id="status-row">
           <div id="status" role="status" data-state="idle">no render yet</div>
           <span id="status-spinner" class="spinner" aria-hidden="true" hidden></span>

@@ -881,6 +881,149 @@ try {
     { timeout: 30_000 }
   );
 
+  // --- PART 5.5: scene-source slide-out --------------------------------------
+  // The disclosure panel mirrors the assembled scene (highlight()'d). Every wait
+  // gates on a real signal: aria-expanded, #source-code content, panel aria-hidden.
+  const sourceText = () => page.evaluate(() => document.getElementById('source-code').textContent);
+  const sourceState = () =>
+    page.evaluate(() => ({
+      expanded: document.getElementById('source-toggle').getAttribute('aria-expanded'),
+      hidden: document.getElementById('repl-source').getAttribute('aria-hidden'),
+      open: document.body.classList.contains('source-open'),
+    }));
+
+  // PART 5's eviction sweep capped #scrollback at 300 children, where runCmd's
+  // child-count growth would never resolve. Reload to a pristine, uncapped
+  // transcript (localStorage cleared so loadState starts empty and the panel
+  // defaults closed), giving a clean empty-scene baseline.
+  await page.evaluate(() => localStorage.clear());
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForFunction(
+    () => document.querySelectorAll('#scrollback .info').length >= 1,
+    null,
+    { timeout: 30_000 }
+  );
+  await runCmd(':size 48x32'); // small + fast for the renders below
+
+  // Open while the scene is empty: toggleSource(true) wires aria-expanded /
+  // aria-hidden / body.source-open and refreshSource takes the empty arm.
+  await page.click('#source-toggle');
+  await page.waitForFunction(
+    () =>
+      document.getElementById('source-toggle').getAttribute('aria-expanded') === 'true' &&
+      document.getElementById('repl-source').getAttribute('aria-hidden') === 'false' &&
+      document.body.classList.contains('source-open'),
+    null,
+    { timeout: 5_000 }
+  );
+  assert.match(
+    await sourceText(),
+    /scene empty/,
+    'an open panel over an empty scene shows a placeholder'
+  );
+
+  // Add an entry while OPEN: runRender's finally refreshSource highlights the
+  // assembled scene, proving highlight() + the #source-code token scoping.
+  await submitRender('sphere { 0, 1 pigment { rgb <1,0,0> } }');
+  await page.waitForFunction(
+    () =>
+      !!document.querySelector('#source-code .tok-keyword') &&
+      !!document.querySelector('#source-code .tok-directive'),
+    null,
+    { timeout: 60_000 }
+  );
+
+  // Live refresh: a second entry grows the mirrored source.
+  await submitRender('box { <-1,-1,-1>, <1,1,1> pigment { rgb <0,1,0> } }');
+  await page.waitForFunction(
+    () => document.getElementById('source-code').textContent.includes('box'),
+    null,
+    {
+      timeout: 60_000,
+    }
+  );
+
+  // :undo while open shrinks it back (removeEntry's refreshSource; entry remains).
+  await submitRender(':undo');
+  await page.waitForFunction(
+    () => !document.getElementById('source-code').textContent.includes('box'),
+    null,
+    {
+      timeout: 60_000,
+    }
+  );
+
+  // Rollback-pop: a failed fresh entry rolls back, so the panel must reflect the
+  // settled (pre-entry) scene, never the rolled-back text (refresh runs in the
+  // finally, AFTER the rollback pop).
+  {
+    const before = await sbCount();
+    await submit(page, 'totally invalid garbage');
+    await page.waitForFunction(
+      (n) =>
+        [...document.getElementById('scrollback').children]
+          .slice(n)
+          .some((el) => el.classList.contains('error') && el.textContent.includes('rolled back')),
+      before,
+      { timeout: 60_000 }
+    );
+  }
+  assert.ok(
+    !(await sourceText()).includes('garbage'),
+    'a rolled-back entry must not appear in the source panel'
+  );
+
+  // Closed no-op: close, mutate, confirm the panel is stale, then reopen and
+  // confirm it catches up (exercises the `if (!sourceOpen) return` early arm).
+  // The open panel overlays the header nav (a full-height side-sheet), so the
+  // toggle is obscured by it; dispatch the close click directly on the button
+  // (its handler still runs toggleSource(false)) instead of an obscured
+  // page.click that would flake. The × is the visible close for mouse users.
+  await page.evaluate(() => document.getElementById('source-toggle').click()); // toggleSource(false)
+  await page.waitForFunction(
+    () =>
+      document.getElementById('source-toggle').getAttribute('aria-expanded') === 'false' &&
+      document.getElementById('repl-source').getAttribute('aria-hidden') === 'true' &&
+      !document.body.classList.contains('source-open'),
+    null,
+    { timeout: 5_000 }
+  );
+  const closedSnapshot = await sourceText();
+  await submitRender('cylinder { <0,-1,0>, <0,1,0>, 0.5 pigment { rgb <0,0,1> } }');
+  assert.equal(
+    await sourceText(),
+    closedSnapshot,
+    'a closed panel must not refresh while entries mutate (refreshSource early-returns)'
+  );
+  // Reopen with a real click: the panel is parked (visibility:hidden), so the
+  // toggle is unobscured and genuinely clickable again.
+  await page.click('#source-toggle'); // reopen -> catches up to the cylinder scene
+  await page.waitForFunction(
+    () => document.getElementById('source-code').textContent.includes('cylinder'),
+    null,
+    { timeout: 5_000 }
+  );
+
+  // :reset while open -> the placeholder again (refreshSource empty arm via the
+  // :reset hook).
+  await runCmd(':reset');
+  await page.waitForFunction(
+    () => /scene empty/.test(document.getElementById('source-code').textContent),
+    null,
+    { timeout: 5_000 }
+  );
+
+  // Close via the dedicated × button (the #source-close click handler).
+  await page.evaluate(() => document.getElementById('source-close').click());
+  await page.waitForFunction(
+    () =>
+      document.getElementById('source-toggle').getAttribute('aria-expanded') === 'false' &&
+      !document.body.classList.contains('source-open'),
+    null,
+    { timeout: 5_000 }
+  );
+  assert.equal((await sourceState()).hidden, 'true', '#source-close closes the panel + hides it');
+
   // --- PART 6: persistence restore -------------------------------------------
   const seedReload = async (blob) => {
     await page.addInitScript((b) => {
@@ -895,15 +1038,30 @@ try {
   };
   const lastInfo = () => lastInfoText(page);
 
-  // Two valid entries + full settings + history -> 'restored 2 entries'.
+  // Two valid entries + full settings + history -> 'restored 2 entries'. The
+  // sourceOpen:true rides the boot apply: the panel restores open AND populated
+  // (loadState's typeof==='boolean' true side + the boot refreshSource highlight
+  // arm over the restored scene).
   await seedReload(
     JSON.stringify({
       entries: [{ source: 'sphere { 0, 1 pigment { rgb 1 } }' }, { source: 'box { 0, 1 }' }],
       settings: { width: 100, height: 100, quality: 5, antialias: true, threads: 4, args: '+UA' },
       history: ['sphere { 0, 1 }', ':size 100x100'],
+      sourceOpen: true,
     })
   );
   assert.match(await lastInfo(), /restored 2 entries/, 'a saved blob should restore its entries');
+  assert.equal(
+    await page.evaluate(() =>
+      document.getElementById('source-toggle').getAttribute('aria-expanded')
+    ),
+    'true',
+    'a saved sourceOpen:true restores the panel open on reload'
+  );
+  assert.ok(
+    await page.evaluate(() => !!document.querySelector('#source-code .tok-keyword')),
+    'a restored-open panel is populated from the restored scene'
+  );
   // On a fresh load nothing has rendered yet.
   await runCmd(':log'); // no render yet
 
@@ -917,13 +1075,23 @@ try {
   );
   assert.match(await lastInfo(), /restored 1 entry\b/, 'a single restored entry reads singular');
 
-  // Every field invalid / wrong-typed -> nothing restored, no greeting.
+  // Every field invalid / wrong-typed -> nothing restored, no greeting. The
+  // wrong-typed sourceOpen (a string) hits the typeof==='boolean' FALSE side, so
+  // the panel stays closed (the default).
   await seedReload(
     JSON.stringify({
       entries: [{ source: '' }, { source: 123 }, { nope: 1 }, 'not-an-object'],
       settings: { width: 1, height: 5000, quality: 99, antialias: 5, threads: 0, args: '   ' },
       history: [1, 2],
+      sourceOpen: 'nope',
     })
+  );
+  assert.equal(
+    await page.evaluate(() =>
+      document.getElementById('source-toggle').getAttribute('aria-expanded')
+    ),
+    'false',
+    'a wrong-typed sourceOpen leaves the panel closed (typeof guard false side)'
   );
   // Non-object JSON -> loadState bails on the typeof guard.
   await seedReload('5');

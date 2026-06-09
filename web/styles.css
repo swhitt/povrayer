@@ -57,6 +57,13 @@
 
   --t-fast: 120ms; /* color/border on chrome */
   --t-med: 200ms; /* progress width, image opacity */
+  --t-slow: 260ms; /* hero settle + completion payoff */
+  --ease-out: cubic-bezier(
+    0.2,
+    0,
+    0,
+    1
+  ); /* decelerate, no overshoot (y stays in [0,1], no bounce) */
 
   /* The renderer's own alpha-mat convention; shows through transparent
      pixels. Use as: background: var(--mat) 0 0 / 16px 16px */
@@ -424,7 +431,10 @@ body.ui main > * {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
+  /* min-height, not a hard height: the @media (pointer: coarse) block grows
+     #example-trigger to a 44px tap target, and a locked 28px row would clip it
+     and eat the margin-bottom. align-items:center keeps the taller row centered. */
+  min-height: 28px;
   margin-bottom: 8px;
 }
 
@@ -514,10 +524,18 @@ body.ui main > * {
 }
 
 /* Active (roving aria-activedescendant) + hover share the quiet grey fill, NOT
-   the accent. The loaded scene is bolded by a data attribute, never coloured. */
-.ex-option:hover,
+   the accent. The loaded scene is bolded by a data attribute, never coloured.
+   The active option additionally carries a square grey inset edge as a
+   non-color affordance: the bare --border fill alone is only 1.36:1 vs the
+   panel (fails WCAG 1.4.11), so the marker (3.28:1, square, no accent) is what
+   actually distinguishes the roving option. Kept below the pressed-toggle fill
+   so it never reads as "selected/loaded". */
+.ex-option:hover {
+  background: var(--border);
+}
 .ex-option.is-active {
   background: var(--border);
+  box-shadow: inset 3px 0 0 var(--border-strong);
 }
 
 .ex-option[data-loaded='true'] .ex-title {
@@ -636,23 +654,32 @@ body.ui main > * {
 /* Token colors: only the language vocabulary lights up. Punctuation, operators,
    vectors (< >), and the user's own #declare/#macro names stay --text so dense
    scenes don't turn garish. */
-#editor-highlight .tok-comment {
+/* Shared by the editor overlay and the REPL source slide-out (#source-code):
+   both render highlight()'s tok-* spans, so the palette must reach both. The
+   palette is scoped to these two roots so plain UI chrome never reads as syntax. */
+#editor-highlight .tok-comment,
+#source-code .tok-comment {
   color: var(--syn-comment);
   font-style: italic;
 }
-#editor-highlight .tok-keyword {
+#editor-highlight .tok-keyword,
+#source-code .tok-keyword {
   color: var(--syn-keyword);
 }
-#editor-highlight .tok-builtin {
+#editor-highlight .tok-builtin,
+#source-code .tok-builtin {
   color: var(--syn-builtin);
 }
-#editor-highlight .tok-string {
+#editor-highlight .tok-string,
+#source-code .tok-string {
   color: var(--syn-string);
 }
-#editor-highlight .tok-number {
+#editor-highlight .tok-number,
+#source-code .tok-number {
   color: var(--syn-number);
 }
-#editor-highlight .tok-directive {
+#editor-highlight .tok-directive,
+#source-code .tok-directive {
   color: var(--syn-directive);
 }
 
@@ -958,11 +985,22 @@ body:has(#scrollback) {
   overflow: hidden;
 }
 
+/* The transcript landmark wrapper: a real <main> carries the landmark while the
+   inner #scrollback stays role="log" (the two responsibilities split so neither
+   overrides the other). The flex fill lives here; #scrollback fills it. */
+body.repl > main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 #scrollback {
   /* prompt (4ch of the 13px body type) + entry gap (8px); see @property
      registration at the top of the file */
   --repl-indent: calc(4ch + 8px);
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 12px;
 }
@@ -1005,7 +1043,9 @@ figure.result img.preview {
   padding: 6px;
   border: 1px solid var(--border);
   background: var(--mat) 0 0 / 16px 16px;
-  cursor: zoom-in;
+  /* No zoom-in cursor: the REPL never wires a click/keyboard zoom for the
+     inline preview (the source slide-out is its "see the scene" path), so the
+     affordance would lie. The shared .zoom-1x block still serves the editor. */
 }
 
 figure.result:has(img.zoom-1x) {
@@ -1082,6 +1122,80 @@ figure.result.pending > div {
   text-overflow: ellipsis;
 }
 
+/* ---- REPL scene-source slide-out ----
+   A disclosure panel mirroring the assembled scene (highlight()'d) over the
+   fixed REPL column. Square, no shadow (reserved for the rendered image), no
+   radius, no gradient; the border-left is the only floating-surface edge.
+   #source-toggle (in the header nav) owns aria-expanded as the single source of
+   truth; body.source-open drives the slide. The transform/visibility resting
+   states are here (outside the motion block) so reduced-motion swaps instantly. */
+#repl-source {
+  position: fixed;
+  inset-block: 0;
+  right: 0;
+  z-index: 30; /* above #input-form/#repl-progress; the editor's popover sits at 20 */
+  width: min(560px, 92vw); /* desktop cap; the vw peek on phones signals "overlay" */
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-left: 1px solid var(--border-strong);
+  transform: translateX(100%); /* parked off-screen */
+  visibility: hidden; /* drop closed content from the tab order + a11y tree */
+}
+
+body.source-open #repl-source {
+  transform: none;
+  visibility: visible;
+}
+
+/* div, not a nested <header>: the element-typed header {}/header h1 {} rules
+   would leak wordmark sizing + the chrome border in. */
+.source-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.source-title {
+  color: var(--dim);
+}
+
+#source-close {
+  height: 28px;
+  padding: 0 10px;
+}
+
+.source-pre {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  font-size: var(--fs-body);
+}
+
+#source-code {
+  font: inherit; /* beat the UA monospace on <pre>/<code>, same as #editor-code */
+}
+
+/* Disclosure open-state: mirror the segmented toggles' light fill WITHOUT
+   borrowing --accent (identity rule 1). */
+#source-toggle[aria-expanded='true'] {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
+}
+
+/* The gold ring vanishes on the light fill (~1:1); the dark ink ring restores
+   contrast, mirroring the pressed-toggle treatment. */
+#source-toggle[aria-expanded='true']:focus-visible {
+  outline-color: var(--accent-ink);
+}
+
 /* ---- responsive ---- */
 
 @media (min-width: 900px) {
@@ -1128,6 +1242,13 @@ figure.result.pending > div {
 
   #render-btn {
     flex: 1;
+  }
+
+  /* On a phone the 92vw cap leaves only a ~29px peek, which reads as cramped
+     rather than "overlay". Go full-width: the × is an unambiguous close and the
+     drawer still clearly covers the transcript. (Wider screens keep the peek.) */
+  #repl-source {
+    width: 100vw;
   }
 }
 
@@ -1178,6 +1299,12 @@ figure.result.pending > div {
     min-height: 44px;
   }
 
+  /* The coarse block bumps #input to 16px; match the prompt so "pov>" stays on
+     the input's baseline instead of riding a hair high. */
+  #input-form .prompt {
+    font-size: 16px;
+  }
+
   /* Popover options are tap targets too: give them the 44px floor and center
      the stacked title/desc/by within it. */
   .ex-option {
@@ -1206,13 +1333,15 @@ figure.result.pending > div {
 
 @media (prefers-reduced-motion: no-preference) {
   a {
-    transition: color var(--t-fast) ease-out;
+    transition: color var(--t-fast) var(--ease-out);
   }
 
+  /* ease-in-out (symmetric) reads as "alive" rather than blinky; the 0.35
+     trough in the keyframe is a softer dip than the old 0.2. */
   #status[data-state='busy']::after,
   #repl-status[data-state='busy']::after,
   figure.result.pending figcaption::after {
-    animation: pulse 1.2s ease-out infinite;
+    animation: pulse 1.2s ease-in-out infinite;
   }
 
   #progress:not(.determinate):not([data-mode='determinate'])::before,
@@ -1224,6 +1353,7 @@ figure.result.pending > div {
     animation: spin 0.8s linear infinite;
   }
 
+  /* Progress width stays linear: easing a progress bar lies about render rate. */
   #progress.determinate::before,
   #progress[data-mode='determinate']::before,
   #repl-progress.determinate::before,
@@ -1231,23 +1361,72 @@ figure.result.pending > div {
     transition: width var(--t-med) linear;
   }
 
-  /* Settle-in: replays on unhide/insertion (display: none restarts it). */
+  /* Settle-in: the hero content (still image / animate canvas / REPL preview)
+     develops into focus with a sub-1% rise. Composited transform + opacity, no
+     reflow, square corners untouched. Replays on unhide/insertion (display:none
+     restarts it). No panel or control scales. */
   #output,
+  #player-canvas,
   figure.result img.preview {
-    animation: settle 150ms ease-out;
+    animation: settle var(--t-slow) var(--ease-out);
   }
 
-  /* .stale settles both ways. */
+  /* .stale settles both ways (the dim treatment, separate from the settle-in). */
   #output,
   #download-btn {
     transition:
-      opacity 150ms ease-out,
-      filter 150ms ease-out;
+      opacity var(--t-med) ease-out,
+      filter var(--t-med) ease-out;
   }
 
   #error,
   #scrollback pre.error {
-    animation: rise 160ms ease-out;
+    animation: rise var(--t-med) var(--ease-out);
+  }
+
+  /* Completion beat: the status color crossfades, and a one-shot confirm
+     replays on every completion (the element newly matches when data-state
+     flips to done). Runs on --t-slow so it reads as one beat with the image
+     settle. Resting opacity is 1, so reduced-motion shows full strength. */
+  #status,
+  #repl-status {
+    transition: color var(--t-med) var(--ease-out);
+  }
+  #status[data-state='done'],
+  #repl-status[data-state='done'] {
+    animation: confirm var(--t-slow) var(--ease-out);
+  }
+
+  /* Example popover entrance; close stays instant (display:none). */
+  #example-browser:not([hidden]) {
+    animation: pop-in var(--t-med) var(--ease-out);
+    transform-origin: top;
+  }
+
+  /* Option hover/roving glide: 120ms keeps keyboard roving responsive. */
+  .ex-option {
+    transition: background-color var(--t-fast) var(--ease-out);
+  }
+
+  /* REPL transcript entries enter instead of popping; the figure's rise doubles
+     as the "render starting" beat, then its img settles on load. */
+  #scrollback > .entry,
+  #scrollback > figure.result {
+    animation: rise var(--t-med) var(--ease-out);
+  }
+
+  /* Source slide-out: hold visibility until the close slide finishes, reveal it
+     immediately on open. The transform/visibility target states live OUTSIDE
+     this block, so reduced-motion swaps them instantly. */
+  #repl-source {
+    transition:
+      transform var(--t-med) var(--ease-out),
+      visibility 0s linear var(--t-med);
+  }
+  body.source-open #repl-source {
+    transition:
+      transform var(--t-med) var(--ease-out),
+      visibility 0s;
   }
 }
 
@@ -1262,7 +1441,7 @@ figure.result.pending > div {
 
 @keyframes pulse {
   50% {
-    opacity: 0.2;
+    opacity: 0.35;
   }
 }
 
@@ -1285,6 +1464,20 @@ figure.result.pending > div {
 @keyframes settle {
   from {
     opacity: 0;
+    transform: scale(0.992); /* 0.8% rise, composited; no reflow, square corners untouched */
+  }
+}
+
+@keyframes confirm {
+  from {
+    opacity: 0.55;
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
   }
 }
 

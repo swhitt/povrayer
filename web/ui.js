@@ -1406,6 +1406,12 @@ function createPlayer() {
     setFps(playbackFps);
     playerCanvas.width = bitmaps[0].width;
     playerCanvas.height = bitmaps[0].height;
+    // Replace the static "animation playback" placeholder with the real shape
+    // once frames load, mirroring the REPL inline player's labelling.
+    playerCanvas.setAttribute(
+      'aria-label',
+      `animation, ${bitmaps[0].width}×${bitmaps[0].height}, ${bitmaps.length} frames`
+    );
     scrubber.max = String(bitmaps.length - 1);
     scrubber.value = '0';
     draw(0);
