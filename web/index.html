@@ -28,10 +28,51 @@
     </div>
     <main>
       <section id="editor-pane">
-        <label
-          >example
-          <select id="examples"></select
-        ></label>
+        <div id="example-field">
+          <span id="example-label">example</span>
+          <button
+            id="example-trigger"
+            type="button"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-controls="example-browser"
+            aria-labelledby="example-label example-trigger-text"
+            data-name=""
+          >
+            <span id="example-trigger-text" class="ex-trigger-text"></span>
+            <span class="ex-caret" aria-hidden="true">▾</span>
+          </button>
+
+          <div id="example-browser" hidden>
+            <input
+              id="example-search"
+              type="search"
+              role="combobox"
+              aria-expanded="true"
+              aria-controls="example-listbox"
+              aria-activedescendant=""
+              aria-autocomplete="list"
+              aria-label="filter examples"
+              placeholder="filter examples…"
+              autocomplete="off"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+            />
+
+            <div id="example-listbox" role="listbox" aria-label="example scenes">
+              <!-- ui.js generates one .ex-group per CATEGORIES entry, in order. -->
+              <p id="example-empty" class="ex-empty" hidden>no examples match</p>
+            </div>
+
+            <div id="example-attribution" class="ex-attr">
+              <span class="ex-attr-text"></span>
+              <a class="ex-attr-src" href="" target="_blank" rel="noopener noreferrer" hidden
+                >source ↗</a
+              >
+            </div>
+          </div>
+        </div>
         <div id="editor-wrap">
           <pre id="gutter" aria-hidden="true"></pre>
           <div id="editor-stack">

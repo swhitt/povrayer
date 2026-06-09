@@ -5,11 +5,23 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { EXAMPLES, getExample } from '../../web/examples.js';
+import {
+  EXAMPLES,
+  CATEGORIES,
+  getExample,
+  getExampleRecord,
+  groupByCategory,
+} from '../../web/examples.js';
 
-test('EXAMPLES is a non-empty array of well-formed scenes', () => {
+// SPDX ids the library is allowed to ship under. Every shipped scene is CC0-1.0,
+// but the gate enforces the whole allow-list so an adapted scene can land later.
+const LICENSE_ALLOW = new Set(['CC0-1.0', 'CC-BY-4.0', 'MIT', 'Apache-2.0', 'BSD-3-Clause']);
+
+test('EXAMPLES is a non-empty array of fully-specified records', () => {
   assert.ok(Array.isArray(EXAMPLES), 'EXAMPLES must be an array');
   assert.ok(EXAMPLES.length > 0, 'EXAMPLES must not be empty');
+
+  const keys = new Set(CATEGORIES.map((c) => c.key));
 
   for (const ex of EXAMPLES) {
     assert.equal(typeof ex.name, 'string', 'name must be a string');
@@ -20,6 +32,63 @@ test('EXAMPLES is a non-empty array of well-formed scenes', () => {
     assert.ok(ex.source.length > 0, `source must be non-empty (${ex.name})`);
     // Every scene declares the SDL version it was authored against.
     assert.match(ex.source, /#version 3\.8;/, `source missing #version (${ex.name})`);
+
+    // category is exactly one canonical CATEGORIES key.
+    assert.ok(
+      keys.has(ex.category),
+      `category '${ex.category}' is not a CATEGORIES key (${ex.name})`
+    );
+
+    // tags: non-empty array of non-empty strings (filter fuel, never empty).
+    assert.ok(
+      Array.isArray(ex.tags) && ex.tags.length > 0,
+      `tags must be a non-empty array (${ex.name})`
+    );
+    for (const t of ex.tags) {
+      assert.ok(
+        typeof t === 'string' && t.length > 0,
+        `every tag must be a non-empty string (${ex.name})`
+      );
+    }
+
+    // description: non-empty, sentence-cased (leads uppercase), no trailing
+    // period, <= 100 chars.
+    assert.equal(typeof ex.description, 'string', `description must be a string (${ex.name})`);
+    assert.ok(ex.description.length > 0, `description must be non-empty (${ex.name})`);
+    assert.ok(ex.description.length <= 100, `description must be <= 100 chars (${ex.name})`);
+    assert.ok(!ex.description.endsWith('.'), `description must not end with a period (${ex.name})`);
+    assert.match(ex.description, /^[A-Z]/, `description must be sentence case (${ex.name})`);
+
+    // author non-empty; sourceUrl is '' or an https URL; license is on the list.
+    assert.ok(
+      typeof ex.author === 'string' && ex.author.length > 0,
+      `author must be non-empty (${ex.name})`
+    );
+    assert.equal(typeof ex.sourceUrl, 'string', `sourceUrl must be a string (${ex.name})`);
+    assert.ok(
+      ex.sourceUrl === '' || ex.sourceUrl.startsWith('https://'),
+      `sourceUrl must be '' or an https:// URL (${ex.name})`
+    );
+    assert.ok(
+      LICENSE_ALLOW.has(ex.license),
+      `license '${ex.license}' not in the SPDX allow-list (${ex.name})`
+    );
+
+    // animated is a boolean; the frames/fps shape is gated on it.
+    assert.equal(typeof ex.animated, 'boolean', `animated must be a boolean (${ex.name})`);
+    if (ex.animated) {
+      assert.ok(
+        Number.isInteger(ex.frames) && ex.frames >= 1 && ex.frames <= 240,
+        `animated scene frames must be an integer 1..240 (${ex.name})`
+      );
+      assert.ok(
+        Number.isInteger(ex.fps) && ex.fps >= 1 && ex.fps <= 60,
+        `animated scene fps must be an integer 1..60 (${ex.name})`
+      );
+    } else {
+      assert.equal(ex.frames, null, `still scene frames must be null (${ex.name})`);
+      assert.equal(ex.fps, null, `still scene fps must be null (${ex.name})`);
+    }
   }
 });
 
@@ -30,6 +99,37 @@ test('scene names are unique', () => {
 
 test('csg-die leads (the UI default first impression)', () => {
   assert.equal(EXAMPLES[0].name, 'csg-die');
+});
+
+test('CATEGORIES keys are unique and each homes at least one scene', () => {
+  const keys = CATEGORIES.map((c) => c.key);
+  assert.equal(new Set(keys).size, keys.length, 'duplicate category key(s)');
+  for (const c of CATEGORIES) {
+    assert.equal(typeof c.label, 'string', `category label must be a string (${c.key})`);
+    assert.ok(c.label.length > 0, `category label must be non-empty (${c.key})`);
+    const members = EXAMPLES.filter((e) => e.category === c.key);
+    assert.ok(
+      members.length >= 1,
+      `category '${c.key}' has no scenes (the UI builds an empty group head)`
+    );
+  }
+});
+
+test('groupByCategory mirrors CATEGORIES order and partitions every scene', () => {
+  const groups = groupByCategory();
+  assert.deepEqual(
+    groups.map((g) => g.key),
+    CATEGORIES.map((c) => c.key),
+    'groups must be in CATEGORIES order'
+  );
+  assert.deepEqual(
+    groups.map((g) => g.label),
+    CATEGORIES.map((c) => c.label),
+    'group labels must mirror CATEGORIES'
+  );
+  // Sum of group sizes equals the library size: nothing misfiled or dropped.
+  const sum = groups.reduce((acc, g) => acc + g.items.length, 0);
+  assert.equal(sum, EXAMPLES.length, 'group items must partition EXAMPLES exactly');
 });
 
 test('getExample returns the matching source for every known name', () => {
@@ -43,4 +143,12 @@ test('getExample returns undefined for an unknown name (?.source short-circuit)'
   // Non-string inputs miss the strict === match too, exercising the same branch.
   assert.equal(getExample(undefined), undefined);
   assert.equal(getExample(''), undefined);
+});
+
+test('getExampleRecord returns the full record for known names, undefined otherwise', () => {
+  for (const ex of EXAMPLES) {
+    assert.equal(getExampleRecord(ex.name), ex, `getExampleRecord('${ex.name}') mismatch`);
+  }
+  assert.equal(getExampleRecord('does-not-exist'), undefined);
+  assert.equal(getExampleRecord(undefined), undefined);
 });

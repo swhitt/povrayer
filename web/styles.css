@@ -412,8 +412,15 @@ body.ui main > * {
   min-width: 0;
 }
 
-/* Example row: the shared column datum (28px + 8px, same as #status). */
-#editor-pane > label {
+/* ---- example browser (editable-combobox popover replacing the select) ----
+   Tokens only: --panel/--bg/--border/--border-strong/--text/--dim, --accent on
+   the focus ring + the one footer link. Square corners, no shadow, no gradient;
+   the rendered image stays the only shadow on the page. */
+
+/* Example field: the shared column datum (28px + 8px, same as #status). The
+   relative box anchors the absolutely-positioned popover. */
+#example-field {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -421,9 +428,122 @@ body.ui main > * {
   margin-bottom: 8px;
 }
 
-#examples {
-  max-width: 100%;
+#example-label {
+  color: var(--dim);
+}
+
+/* Secondary-button treatment; truncates a long scene title like the old select. */
+#example-trigger {
+  flex: 1;
   min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+}
+
+.ex-trigger-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ex-caret {
+  flex: none;
+  color: var(--dim);
+}
+
+/* Opaque popover panel: strong hairline, square, no shadow. z-index clears the
+   textarea's z-index:1. */
+#example-browser {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  max-height: min(60vh, 460px);
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+}
+
+#example-search {
+  flex: none;
+  margin: 6px;
+}
+
+#example-listbox {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.ex-group-head {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  color: var(--dim);
+  font-size: var(--fs-out);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 6px 8px 2px;
+}
+
+.ex-option {
+  display: grid;
+  gap: 1px;
+  padding: 6px 8px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+
+.ex-title {
+  color: var(--text);
+}
+
+.ex-desc {
+  color: var(--dim);
+  font-size: var(--fs-out);
+}
+
+.ex-by {
+  color: var(--dim);
+  font-size: var(--fs-chrome);
+}
+
+/* Active (roving aria-activedescendant) + hover share the quiet grey fill, NOT
+   the accent. The loaded scene is bolded by a data attribute, never coloured. */
+.ex-option:hover,
+.ex-option.is-active {
+  background: var(--border);
+}
+
+.ex-option[data-loaded='true'] .ex-title {
+  font-weight: 700;
+}
+
+.ex-empty {
+  color: var(--dim);
+  font-size: var(--fs-out);
+  padding: 8px;
+}
+
+/* Footer: attribution text + the lone accent link (links are already accent). */
+.ex-attr {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--dim);
+  font-size: var(--fs-out);
+}
+
+.ex-attr-src {
+  color: var(--accent);
 }
 
 /* Gutter correctness contract: the textarea has wrap="off" (one source line
@@ -1056,6 +1176,13 @@ figure.result.pending > div {
      needs the same specificity. */
   #input {
     min-height: 44px;
+  }
+
+  /* Popover options are tap targets too: give them the 44px floor and center
+     the stacked title/desc/by within it. */
+  .ex-option {
+    min-height: 44px;
+    align-content: center;
   }
 
   /* Inline links (nav, footer, save png): vertical padding on inline boxes

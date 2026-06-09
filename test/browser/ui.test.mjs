@@ -59,12 +59,15 @@ try {
     'iso warning banner should stay hidden on an isolated page'
   );
 
-  // Bounded wait for ui.js: the module populates #examples on load, so if the
+  // Bounded wait for ui.js: the module builds the example browser's options on
+  // load (the panel is hidden but the options exist in the DOM), so if the
   // import chain fails we die here in 30s with the page console attached
   // instead of riding out the watchdog.
-  await page.waitForFunction(() => document.getElementById('examples')?.options.length >= 4, null, {
-    timeout: 30_000,
-  });
+  await page.waitForFunction(
+    () => document.querySelectorAll('#example-listbox .ex-option').length >= 4,
+    null,
+    { timeout: 30_000 }
+  );
 
   // Idle-state contract: Cancel is hidden until a render is in flight, and
   // the status line is a live region.
@@ -473,57 +476,288 @@ try {
   );
   await page.evaluate(() => window.dispatchEvent(new Event('resize'))); // updateZoomLabel fit path
 
-  // --- example switch + dirty guard ------------------------------------------
-  const switchExample = (name) =>
-    page.evaluate((n) => {
-      const sel = document.getElementById('examples');
-      sel.value = n;
-      sel.dispatchEvent(new Event('change'));
-    }, name);
+  // --- example browser: open / filter / navigate / select + dirty guard ------
+  // The flat <select> is gone; the example picker is now an editable-combobox
+  // popover (trigger + filter + grouped listbox + attribution footer). These
+  // drive every controller branch the popover added.
+  const browserExpanded = () =>
+    page.evaluate(() => document.getElementById('example-trigger').getAttribute('aria-expanded'));
+  const triggerName = () =>
+    page.evaluate(() => document.getElementById('example-trigger').dataset.name);
+  const activeName = () =>
+    page.evaluate(() => document.querySelector('.ex-option.is-active')?.dataset.name ?? null);
+  const visibleNames = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('.ex-option')]
+        .filter((o) => !o.hidden)
+        .map((o) => o.dataset.name)
+    );
+  const groupHidden = (key) =>
+    page.evaluate((k) => document.getElementById(`exgrp-${k}`).parentElement.hidden, key);
+  const openBrowser = async () => {
+    await page.click('#example-trigger');
+    await page.waitForFunction(
+      () => document.getElementById('example-trigger').getAttribute('aria-expanded') === 'true',
+      null,
+      { timeout: 5_000 }
+    );
+  };
+  const switchExample = async (name) => {
+    await openBrowser();
+    await page.click(`.ex-option[data-name="${name}"]`);
+    await page.waitForFunction(
+      (n) => document.getElementById('example-trigger').dataset.name === n,
+      name,
+      { timeout: 5_000 }
+    );
+  };
 
-  // Pristine editor (=== the loaded example) switches with no confirm.
-  await switchExample('blobs');
-  await page.waitForFunction(() => document.getElementById('examples').value === 'blobs', null, {
-    timeout: 5_000,
-  });
-  assert.ok((await editorValue()).length > 0, 'switching example should load its source');
-
-  // A change event whose value resolves to no example (getExample undefined)
-  // hits the defensive guard that restores the previous selection.
-  await page.evaluate(() => {
-    const sel = document.getElementById('examples');
-    sel.value = '__no-such-option__'; // no matching <option> -> value becomes ''
-    sel.dispatchEvent(new Event('change'));
-  });
-  assert.equal(
-    await page.evaluate(() => document.getElementById('examples').value),
-    'blobs',
-    'an unresolvable example change must restore the previous selection'
+  // Open via click: the panel shows, focus moves to the search, the loaded scene
+  // (csg-die) is the active roving option, and the footer reads its '' -source
+  // attribution with the link hidden. (openBrowser, filterOptions empty-query,
+  // setActive first+second, updateAttribution.)
+  await openBrowser();
+  assert.equal(await activeName(), 'csg-die', 'opening focuses the loaded scene');
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      focused: document.activeElement?.id,
+      aria: document.querySelector('.ex-option.is-active')?.getAttribute('aria-selected'),
+      loaded: document.querySelector('.ex-option[data-loaded="true"]')?.dataset.name,
+      attr: document.querySelector('#example-attribution .ex-attr-text').textContent,
+      srcHidden: document.querySelector('#example-attribution .ex-attr-src').hidden,
+    })),
+    {
+      focused: 'example-search',
+      aria: 'true',
+      loaded: 'csg-die',
+      attr: 'by povrayer · CC0-1.0',
+      srcHidden: true,
+    },
+    'open focuses search, marks the loaded option active, shows the CC0 attribution with hidden link'
   );
 
-  // Edited editor + confirm() rejected -> revert the select, keep the edit.
+  // Filter via real typing (each keystroke fires the search keydown handler, so
+  // its non-navigation default arms are exercised) down to one whole group:
+  // every Solid Modeling scene matches the category label, every other group
+  // head hides. (filterOptions match/no-match, per-group hide both arms, the
+  // firstVisible first-then-rest arms.)
+  await page.type('#example-search', 'modeling');
+  await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll('.ex-option')].filter((o) => !o.hidden).length === 5 &&
+      document.getElementById('exgrp-implicit').parentElement.hidden,
+    null,
+    { timeout: 5_000 }
+  );
+  assert.deepEqual(
+    await visibleNames(),
+    ['csg-die', 'steinmetz', 'lathe-vase', 'prism-lantern', 'sweep-knot'],
+    'filtering "modeling" shows exactly the Solid Modeling group'
+  );
+  assert.equal(await groupHidden('modeling'), false, 'the matched group stays visible');
+  assert.equal(await groupHidden('implicit'), true, 'an unmatched group head hides');
+  assert.equal(
+    await page.evaluate(() => document.getElementById('example-empty').hidden),
+    true,
+    'the empty-state stays hidden while options match'
+  );
+
+  // No-match query: every group hides, #example-empty shows, the active option
+  // clears. (filterOptions empty-state, setActive(null) clearing + !opt arms.)
+  await page.fill('#example-search', 'zzz-no-match');
+  await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll('.ex-option')].filter((o) => !o.hidden).length === 0 &&
+      !document.getElementById('example-empty').hidden,
+    null,
+    { timeout: 5_000 }
+  );
+  assert.equal(await activeName(), null, 'a no-match filter clears the active option');
+
+  // Navigation while nothing matches is a clamp no-op, and Enter with no active
+  // option does nothing (moveActiveTo empty-guard, Enter's no-active arm).
+  await page.evaluate(() => document.getElementById('example-search').focus());
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  assert.equal(await browserExpanded(), 'true', 'an empty-filter Enter must not select or close');
+  assert.equal(await triggerName(), 'csg-die', 'an empty-filter Enter must not load anything');
+
+  // Clear the filter, then arrow-navigate the flattened visible order with clamp
+  // (no wrap) and Home/End. (moveActiveTo non-empty, ArrowDown/ArrowUp/Home/End.)
+  await page.fill('#example-search', '');
+  await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll('.ex-option')].filter((o) => !o.hidden).length === 29 &&
+      document.querySelector('.ex-option.is-active')?.dataset.name === 'csg-die',
+    null,
+    { timeout: 5_000 }
+  );
+  await page.evaluate(() => document.getElementById('example-search').focus());
+  await page.keyboard.press('ArrowDown'); // csg-die -> steinmetz
+  assert.equal(await activeName(), 'steinmetz', 'ArrowDown moves the active option down');
+  await page.keyboard.press('ArrowUp'); // steinmetz -> csg-die
+  await page.keyboard.press('ArrowUp'); // clamp at the top, no wrap
+  assert.equal(await activeName(), 'csg-die', 'ArrowUp clamps at the first option');
+  await page.keyboard.press('End'); // jump to the last visible option
+  assert.equal(await activeName(), 'spin-gears', 'End jumps to the last option');
+  await page.keyboard.press('ArrowDown'); // clamp at the bottom, no wrap
+  assert.equal(await activeName(), 'spin-gears', 'ArrowDown clamps at the last option');
+  await page.keyboard.press('Home'); // back to the first
+  assert.equal(await activeName(), 'csg-die', 'Home jumps to the first option');
+
+  // Select an animated scene via Enter on its active option: the panel closes,
+  // focus returns to the trigger, and the clock autoset prefills frames/fps.
+  // (commitOption, selectExample pristine path, applyExampleClock animated arm,
+  // closeBrowser(returnFocus=true), setTriggerLabel re-mark.)
+  await page.fill('#example-search', 'orbit');
+  await page.waitForFunction(
+    () => {
+      const v = [...document.querySelectorAll('.ex-option')].filter((o) => !o.hidden);
+      return v.length === 1 && v[0].dataset.name === 'orbit-moons';
+    },
+    null,
+    { timeout: 5_000 }
+  );
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(
+    () => document.getElementById('example-trigger').dataset.name === 'orbit-moons',
+    null,
+    { timeout: 5_000 }
+  );
+  assert.equal(await browserExpanded(), 'false', 'selecting an option closes the panel');
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      frames: document.getElementById('frames').value,
+      fps: document.getElementById('fps').value,
+      focused: document.activeElement?.id,
+      label: document.getElementById('example-trigger-text').textContent,
+    })),
+    {
+      frames: '24',
+      fps: '24',
+      focused: 'example-trigger',
+      label: 'Orbit (two moons, clock-driven)',
+    },
+    'an animated example autofills frames/fps, returns focus, and relabels the trigger'
+  );
+
+  // Loading a STILL example must leave dialed-in frames/fps untouched (the
+  // applyExampleClock early-return), and this exercises the click-select path.
+  // The animate-only inputs are hidden in still mode, so seed them directly.
+  await page.evaluate(() => {
+    document.getElementById('frames').value = '7';
+    document.getElementById('fps').value = '9';
+  });
+  await switchExample('csg-die');
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      frames: document.getElementById('frames').value,
+      fps: document.getElementById('fps').value,
+    })),
+    { frames: '7', fps: '9' },
+    'loading a still example must not touch frames/fps'
+  );
+
+  // A second trigger click closes an open panel (the toggle's close arm).
+  await openBrowser();
+  await page.click('#example-trigger');
+  await page.waitForFunction(
+    () => document.getElementById('example-trigger').getAttribute('aria-expanded') === 'false',
+    null,
+    { timeout: 5_000 }
+  );
+
+  // Open via ArrowDown on the focused trigger (the trigger keydown handler),
+  // then Escape closes and returns focus to the trigger (closeBrowser focus arm
+  // + the focusout already-closed guard fires on the focus handoff).
+  await page.evaluate(() => document.getElementById('example-trigger').focus());
+  await page.keyboard.press('ArrowDown');
+  assert.equal(await browserExpanded(), 'true', 'ArrowDown on the trigger opens the panel');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(
+    () => document.getElementById('example-trigger').getAttribute('aria-expanded') === 'false',
+    null,
+    { timeout: 5_000 }
+  );
+  assert.equal(
+    await page.evaluate(() => document.activeElement?.id),
+    'example-trigger',
+    'Escape returns focus to the trigger'
+  );
+
+  // Open via Enter on the focused trigger: its keydown handler sees a
+  // non-ArrowDown key (the default arm) and the native button click opens.
+  await page.evaluate(() => document.getElementById('example-trigger').focus());
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(
+    () => document.getElementById('example-trigger').getAttribute('aria-expanded') === 'true',
+    null,
+    { timeout: 5_000 }
+  );
+
+  // Click delegation ignores a group-head click (closest('.ex-option') is null):
+  // the panel stays open and nothing loads.
+  const beforeHeadClick = await triggerName();
+  await page.click('#exgrp-modeling');
+  assert.equal(await browserExpanded(), 'true', 'a group-head click keeps the panel open');
+  assert.equal(await triggerName(), beforeHeadClick, 'a group-head click loads nothing');
+
+  // A focusout that stays inside the panel keeps it open; one that leaves the
+  // subtree closes it. (focusout contains(relatedTarget) both arms.)
+  await page.evaluate(() => {
+    const b = document.getElementById('example-browser');
+    const s = document.getElementById('example-search');
+    b.dispatchEvent(new FocusEvent('focusout', { relatedTarget: s, bubbles: true }));
+  });
+  assert.equal(await browserExpanded(), 'true', 'a focus move within the panel keeps it open');
+  await page.evaluate(() => {
+    const b = document.getElementById('example-browser');
+    const ed = document.getElementById('editor');
+    b.dispatchEvent(new FocusEvent('focusout', { relatedTarget: ed, bubbles: true }));
+  });
+  assert.equal(await browserExpanded(), 'false', 'a focus move out of the panel closes it');
+
+  // Outside pointerdown closes WITHOUT stealing focus back to the trigger.
+  await openBrowser();
+  await page.evaluate(() =>
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+  );
+  assert.equal(await browserExpanded(), 'false', 'an outside pointerdown closes the panel');
+  assert.notEqual(
+    await page.evaluate(() => document.activeElement?.id),
+    'example-trigger',
+    'an outside pointerdown must not force focus back to the trigger'
+  );
+
+  // Pristine editor (=== the loaded scene) switches with no confirm.
+  await switchExample('blobs');
+  assert.ok((await editorValue()).length > 0, 'switching example should load its source');
+
+  // Edited editor + confirm() rejected -> keep the edit, the panel still closes,
+  // and the loaded scene is unchanged. (selectExample dirty-guard reject arm.)
   await page.fill('#editor', 'EDITED scene one');
   await page.evaluate(() => {
     window.confirm = () => false;
   });
-  await switchExample('glass');
-  await page.waitForFunction(() => document.getElementById('examples').value === 'blobs', null, {
-    timeout: 5_000,
-  });
+  await openBrowser();
+  await page.click('.ex-option[data-name="glass"]');
+  await page.waitForFunction(
+    () => document.getElementById('example-trigger').getAttribute('aria-expanded') === 'false',
+    null,
+    { timeout: 5_000 }
+  );
   assert.equal(
     await editorValue(),
     'EDITED scene one',
     'a rejected example switch must keep the edited editor'
   );
+  assert.equal(await triggerName(), 'blobs', 'a rejected switch must not change the loaded scene');
 
   // Edited editor + confirm() accepted -> stash the edit, load the new example.
   await page.evaluate(() => {
     window.confirm = () => true;
   });
   await switchExample('glass');
-  await page.waitForFunction(() => document.getElementById('examples').value === 'glass', null, {
-    timeout: 5_000,
-  });
   assert.equal(
     await page.evaluate(() => localStorage.getItem('povrayer.ui.stash')),
     'EDITED scene one',
@@ -545,9 +779,6 @@ try {
     };
   });
   await switchExample('blobs');
-  await page.waitForFunction(() => document.getElementById('examples').value === 'blobs', null, {
-    timeout: 5_000,
-  });
   assert.notEqual(
     await editorValue(),
     'EDITED scene two',
@@ -805,7 +1036,7 @@ try {
     }, blob);
     await page.reload({ waitUntil: 'load' });
     await page.waitForFunction(
-      () => document.getElementById('examples')?.options.length >= 4,
+      () => document.querySelectorAll('#example-listbox .ex-option').length >= 4,
       null,
       {
         timeout: 30_000,
@@ -832,7 +1063,7 @@ try {
       quality: document.getElementById('quality').value,
       antialias: document.getElementById('antialias').value,
       threads: document.getElementById('threads').value,
-      example: document.getElementById('examples').value,
+      example: document.getElementById('example-trigger').dataset.name,
     })),
     {
       source: 'SAVED restore source',
@@ -860,7 +1091,7 @@ try {
   );
   assert.deepEqual(
     await page.evaluate(() => ({
-      example: document.getElementById('examples').value,
+      example: document.getElementById('example-trigger').dataset.name,
       width: document.getElementById('width').value,
       quality: document.getElementById('quality').value,
       antialias: document.getElementById('antialias').value,

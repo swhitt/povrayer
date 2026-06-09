@@ -9,7 +9,7 @@ import {
   parseStats,
   PovrayError,
 } from './render-client.js';
-import { EXAMPLES, getExample } from './examples.js';
+import { EXAMPLES, getExample, getExampleRecord, groupByCategory } from './examples.js';
 import { highlight } from './highlight.js';
 import { validateScene } from './sdl-validate.js';
 
@@ -36,7 +36,15 @@ if (crossOriginIsolated) {
 }
 /* c8 ignore stop -- closes the ignore block opened above */
 
-const examplesSelect = document.getElementById('examples');
+const exampleField = document.getElementById('example-field');
+const exampleTrigger = document.getElementById('example-trigger');
+const exampleTriggerText = document.getElementById('example-trigger-text');
+const exampleBrowser = document.getElementById('example-browser');
+const exampleSearch = document.getElementById('example-search');
+const exampleListbox = document.getElementById('example-listbox');
+const exampleEmpty = document.getElementById('example-empty');
+const exampleAttrText = document.querySelector('#example-attribution .ex-attr-text');
+const exampleAttrSrc = document.querySelector('#example-attribution .ex-attr-src');
 const editor = document.getElementById('editor');
 const editorHighlight = document.getElementById('editor-highlight');
 const editorCode = document.getElementById('editor-code');
@@ -88,20 +96,111 @@ let hasStillImage = false;
 // mode; the full machinery lives in the "live draft" section near the bottom.
 let liveDraft = true;
 
-// ---- examples + persisted state ----
+// ---- example browser (editable-combobox popover) + persisted state ----
 
-for (const ex of EXAMPLES) {
-  const opt = document.createElement('option');
-  opt.value = ex.name;
-  opt.textContent = `${ex.name} - ${ex.title}`;
-  examplesSelect.appendChild(opt);
+// The flattened option elements in render order (navigation walks these), plus
+// the per-group bookkeeping the filter toggles. Both populated by
+// buildExampleBrowser(); the option's lowercased haystack is its filter target.
+const optionEls = [];
+const exampleGroups = []; // [{ groupEl, opts: [{ el, haystack }] }]
+let activeOption = null; // the roving aria-activedescendant option, or null
+
+// Render one .ex-group per CATEGORIES entry (in order) and one .ex-option per
+// scene. No `if (items.length)` guard: the node test guarantees every category
+// is non-empty, so an empty group head can't happen.
+function buildExampleBrowser() {
+  for (const group of groupByCategory()) {
+    const groupEl = document.createElement('div');
+    groupEl.className = 'ex-group';
+    groupEl.setAttribute('role', 'group');
+    groupEl.setAttribute('aria-labelledby', `exgrp-${group.key}`);
+
+    const head = document.createElement('div');
+    head.id = `exgrp-${group.key}`;
+    head.className = 'ex-group-head';
+    head.textContent = group.label; // textContent escapes '&' in the label
+    groupEl.appendChild(head);
+
+    const opts = [];
+    for (const ex of group.items) {
+      const opt = document.createElement('div');
+      opt.className = 'ex-option';
+      opt.id = `ex-opt-${ex.name}`;
+      opt.dataset.name = ex.name;
+      opt.dataset.category = ex.category;
+      opt.setAttribute('role', 'option');
+      opt.setAttribute('aria-selected', 'false');
+
+      const title = document.createElement('span');
+      title.className = 'ex-title';
+      title.textContent = ex.title;
+      const desc = document.createElement('span');
+      desc.className = 'ex-desc';
+      desc.textContent = ex.description;
+      const by = document.createElement('span');
+      by.className = 'ex-by';
+      by.textContent = `${ex.author} · ${ex.license}`;
+      opt.append(title, desc, by);
+
+      groupEl.appendChild(opt);
+      // Filter target: everything a user might type, joined + lowercased. Tags
+      // and the category label fuel the search without ever showing per-row.
+      const haystack = [ex.name, ex.title, ex.description, ex.author, ...ex.tags, group.label]
+        .join(' ')
+        .toLowerCase();
+      opts.push({ el: opt, haystack });
+      optionEls.push(opt);
+    }
+    exampleListbox.insertBefore(groupEl, exampleEmpty);
+    exampleGroups.push({ groupEl, opts });
+  }
 }
+buildExampleBrowser();
 
 // EXAMPLES is a static, non-empty module literal, so EXAMPLES[0] is defined.
 const DEFAULT_EXAMPLE = EXAMPLES[0].name;
+// The loaded scene's name; replaces every old examplesSelect.value read/write.
+let selectedExample = DEFAULT_EXAMPLE;
 
-function hasOption(select, value) {
-  return Array.from(select.options).some((o) => o.value === value);
+function hasExample(name) {
+  return EXAMPLES.some((e) => e.name === name);
+}
+
+// Footer attribution. Branch-free: the link's visibility is an assignment off
+// sourceUrl (every shipped scene ships ''), so the "shown" outcome lights up
+// automatically if an adapted scene with a real URL ever lands.
+function updateAttribution(ex) {
+  exampleAttrText.textContent = `by ${ex.author} · ${ex.license}`;
+  exampleAttrSrc.href = ex.sourceUrl; // '' is fine; the link stays hidden
+  exampleAttrSrc.hidden = !ex.sourceUrl; // assignment, not `if` -> no dead branch
+  exampleAttrSrc.setAttribute('aria-label', `source for ${ex.title}`);
+}
+
+// Reflect the loaded scene in the trigger label + data-name, and re-mark the
+// loaded option (bold + a quiet ` · loaded` suffix on .ex-by, never aria-selected).
+function setTriggerLabel(name) {
+  const record = getExampleRecord(name);
+  exampleTriggerText.textContent = record.title;
+  exampleTrigger.dataset.name = name;
+  for (const opt of optionEls) {
+    const r = getExampleRecord(opt.dataset.name);
+    const byBase = `${r.author} · ${r.license}`;
+    const loaded = opt.dataset.name === name;
+    opt.querySelector('.ex-by').textContent = loaded ? `${byBase} · loaded` : byBase;
+    if (loaded) opt.dataset.loaded = 'true';
+    else delete opt.dataset.loaded;
+  }
+}
+
+// Animated examples ship a suggested frame count + fps; prefill the animate
+// inputs so the intended loop runs without guessing. Still examples leave the
+// inputs untouched, so a frames/fps the user dialed in survives loading other
+// still scenes. setFps keeps the inline player's cadence in sync.
+function applyExampleClock(record) {
+  if (!record.animated) return; // still scenes: leave the inputs alone
+  framesInput.value = String(record.frames);
+  fpsInput.value = String(record.fps);
+  player.setFps(record.fps);
 }
 
 function readSavedState() {
@@ -126,7 +225,7 @@ function saveState() {
         quality: qualitySelect.value,
         antialias: antialiasSelect.value,
         threads: threadsInput.value,
-        example: examplesSelect.value,
+        example: selectedExample,
         mode,
         liveDraft,
         frames: framesInput.value,
@@ -155,20 +254,27 @@ let lastLoadedSource = '';
 {
   const saved = readSavedState();
   const example =
-    saved && typeof saved.example === 'string' && hasOption(examplesSelect, saved.example)
+    saved && typeof saved.example === 'string' && hasExample(saved.example)
       ? saved.example
       : DEFAULT_EXAMPLE;
-  examplesSelect.value = example;
-  /* c8 ignore next -- example is always a real EXAMPLES entry (hasOption-validated or DEFAULT_EXAMPLE), so getExample never returns undefined here */
+  selectedExample = example;
+  setTriggerLabel(example);
+  /* c8 ignore next -- example is always a real EXAMPLES entry (hasExample-validated or DEFAULT_EXAMPLE), so getExample never returns undefined here */
   lastLoadedSource = getExample(example) ?? '';
   editor.value = saved && typeof saved.source === 'string' ? saved.source : lastLoadedSource;
   if (saved) {
     if (typeof saved.width === 'string' && saved.width) widthInput.value = saved.width;
     if (typeof saved.height === 'string' && saved.height) heightInput.value = saved.height;
-    if (typeof saved.quality === 'string' && hasOption(qualitySelect, saved.quality)) {
+    if (
+      typeof saved.quality === 'string' &&
+      Array.from(qualitySelect.options).some((o) => o.value === saved.quality)
+    ) {
       qualitySelect.value = saved.quality;
     }
-    if (typeof saved.antialias === 'string' && hasOption(antialiasSelect, saved.antialias)) {
+    if (
+      typeof saved.antialias === 'string' &&
+      Array.from(antialiasSelect.options).some((o) => o.value === saved.antialias)
+    ) {
       antialiasSelect.value = saved.antialias;
     }
     if (typeof saved.threads === 'string') threadsInput.value = saved.threads;
@@ -186,32 +292,176 @@ let lastLoadedSource = '';
 }
 
 // Selecting an example replaces the editor content. Edits are guarded by a
-// confirm(); the replaced text is stashed (one recovery copy).
-let currentExample = examplesSelect.value;
-examplesSelect.addEventListener('change', () => {
-  const source = getExample(examplesSelect.value);
-  if (source === undefined) {
-    examplesSelect.value = currentExample;
-    return;
-  }
+// confirm(); the replaced text is stashed (one recovery copy). The popover only
+// ever emits real scene names, so there is no not-found guard here.
+function selectExample(name) {
+  const record = getExampleRecord(name);
+  const source = record.source;
   if (editor.value !== lastLoadedSource) {
-    if (!confirm('Replace your edited scene?')) {
-      examplesSelect.value = currentExample;
-      return;
-    }
+    if (!confirm('Replace your edited scene?')) return; // selectedExample unchanged, no load
     try {
       localStorage.setItem(STASH_KEY, editor.value);
     } catch {
       // best-effort stash
     }
   }
-  currentExample = examplesSelect.value;
+  selectedExample = name;
   editor.value = source;
   lastLoadedSource = source;
+  applyExampleClock(record); // BEFORE scheduleDraft
+  setTriggerLabel(name); // trigger text + data-name + re-mark loaded option
   renderGutter();
   paintHighlight();
   scheduleSave();
   scheduleDraft();
+}
+
+// ---- example-browser interaction (open/filter/navigate/select/close) ----
+
+function visibleOptions() {
+  return optionEls.filter((el) => !el.hidden);
+}
+
+// Mark one option active (roving aria-activedescendant); null clears it. Active
+// is the ONLY option with aria-selected/.is-active; the loaded option is marked
+// separately (data-loaded), never via aria-selected.
+function setActive(opt) {
+  if (activeOption) {
+    activeOption.classList.remove('is-active');
+    activeOption.setAttribute('aria-selected', 'false');
+  }
+  activeOption = opt;
+  if (!opt) {
+    exampleSearch.setAttribute('aria-activedescendant', '');
+    return;
+  }
+  opt.classList.add('is-active');
+  opt.setAttribute('aria-selected', 'true');
+  exampleSearch.setAttribute('aria-activedescendant', opt.id);
+  opt.scrollIntoView({ block: 'nearest' });
+  updateAttribution(getExampleRecord(opt.dataset.name));
+}
+
+// Recompute visibility from the search box: each option matches its haystack,
+// each group hides when none of its options show, #example-empty shows iff
+// nothing matches, and the active option resets to the first visible one.
+function filterOptions() {
+  const q = exampleSearch.value.trim().toLowerCase();
+  let firstVisible = null;
+  for (const { groupEl, opts } of exampleGroups) {
+    let groupVisible = false;
+    for (const { el, haystack } of opts) {
+      const match = q === '' || haystack.includes(q);
+      el.hidden = !match;
+      if (match) {
+        groupVisible = true;
+        if (!firstVisible) firstVisible = el;
+      }
+    }
+    groupEl.hidden = !groupVisible;
+  }
+  exampleEmpty.hidden = firstVisible !== null;
+  setActive(firstVisible);
+}
+
+// Clamp-move the active option over the flattened visible order (no wrap).
+function moveActiveTo(index) {
+  const vis = visibleOptions();
+  if (!vis.length) return;
+  setActive(vis[clamp(index, 0, vis.length - 1)]);
+}
+
+function openBrowser() {
+  exampleBrowser.hidden = false;
+  exampleTrigger.setAttribute('aria-expanded', 'true');
+  exampleSearch.value = '';
+  filterOptions(); // all visible; active resets to the first
+  const loaded = document.getElementById(`ex-opt-${selectedExample}`);
+  setActive(loaded); // open focused on the loaded scene
+  loaded.scrollIntoView({ block: 'nearest' });
+  exampleSearch.focus();
+}
+
+function closeBrowser(returnFocus) {
+  exampleBrowser.hidden = true;
+  exampleTrigger.setAttribute('aria-expanded', 'false');
+  exampleSearch.value = '';
+  setActive(null);
+  if (returnFocus) exampleTrigger.focus();
+}
+
+// Click an option (or Enter on the active one) -> load it + close.
+function commitOption(opt) {
+  selectExample(opt.dataset.name);
+  closeBrowser(true);
+}
+
+// Same focus discipline as the listbox: don't let a trigger mousedown blur the
+// open panel's search (which would focusout-close it, so the click then re-opens
+// a "closed" panel and the toggle never closes). Focus is managed explicitly by
+// open/closeBrowser. Keyboard activation (Enter/Space, ArrowDown) is unaffected.
+exampleTrigger.addEventListener('mousedown', (e) => e.preventDefault());
+exampleTrigger.addEventListener('click', () => {
+  if (exampleBrowser.hidden) openBrowser();
+  else closeBrowser(true);
+});
+exampleTrigger.addEventListener('keydown', (e) => {
+  // Enter/Space natively click the button (-> open); ArrowDown needs a hand.
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    openBrowser();
+  }
+});
+
+exampleSearch.addEventListener('input', filterOptions);
+exampleSearch.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    moveActiveTo(visibleOptions().indexOf(activeOption) + 1);
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    moveActiveTo(visibleOptions().indexOf(activeOption) - 1);
+  } else if (e.key === 'Home') {
+    e.preventDefault();
+    moveActiveTo(0);
+  } else if (e.key === 'End') {
+    e.preventDefault();
+    moveActiveTo(visibleOptions().length - 1);
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (activeOption) commitOption(activeOption);
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    closeBrowser(true);
+  }
+});
+
+// Keep DOM focus on the search when an option (a non-focusable div) is clicked:
+// without this the mousedown blurs the input, firing focusout -> close BEFORE
+// the click can select. preventDefault leaves the click intact, focus on search.
+exampleListbox.addEventListener('mousedown', (e) => e.preventDefault());
+
+// Click delegation: ignore clicks that miss an option (group head / padding).
+exampleListbox.addEventListener('click', (e) => {
+  const opt = e.target.closest('.ex-option');
+  if (!opt) return;
+  commitOption(opt);
+});
+
+// Outside pointerdown closes WITHOUT stealing focus back to the trigger.
+document.addEventListener('pointerdown', (e) => {
+  if (exampleBrowser.hidden) return;
+  if (exampleField.contains(e.target)) return;
+  closeBrowser(false);
+});
+
+// Tab past the panel (focus leaves the subtree) closes it. A focusout fired
+// after we already closed (the programmatic focus handoff to the trigger), or a
+// focus move that stays inside the panel, is ignored.
+exampleBrowser.addEventListener('focusout', (e) => {
+  if (exampleBrowser.hidden) return;
+  if (exampleBrowser.contains(e.relatedTarget)) return;
+  closeBrowser(false);
 });
 
 // ---- editor gutter (line numbers) ----
@@ -608,7 +858,7 @@ function downloadName(opts) {
 }
 
 function sceneName() {
-  return editor.value === lastLoadedSource ? examplesSelect.value : 'edited scene';
+  return editor.value === lastLoadedSource ? selectedExample : 'edited scene';
 }
 
 // done in 0.92s · 512×384 · trace 0.04s · 554,341 rays · 15 threads
