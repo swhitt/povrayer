@@ -200,3 +200,25 @@ test('scanBufferSymbols recovers whitespace-separated macro params', () => {
   const found = scanBufferSymbols('#macro Foo(A_\n   B_)\n', '');
   assert.deepEqual(found[0].params, ['A_', 'B_']);
 });
+
+test('rank lifts context-relevant candidates within a match tier', () => {
+  const cands = [
+    { name: 'red', kind: 'keyword' },
+    { name: 'reflection', kind: 'keyword' },
+  ];
+  // No predicate: alphabetical/length order (red before reflection).
+  assert.equal(rank('re', cands)[0].name, 'red');
+  // With a predicate marking reflection relevant, it rises to the top.
+  assert.equal(rank('re', cands, 50, (c) => c.name === 'reflection')[0].name, 'reflection');
+});
+
+test('complete orders by the enclosing block context', () => {
+  const pool = buildPool();
+  // Inside finish {}, the finish property outranks the equally-matching color word.
+  const text = 'sphere { 0,1 finish { re';
+  const res = complete(text, text.length, pool);
+  assert.equal(res.items[0].name, 'reflection', 'finish keyword leads inside finish {}');
+  // At top level the same query does not promote reflection over red.
+  const top = complete('re', 2, pool);
+  assert.equal(top.items[0].name, 'red', 'no context boost at top level');
+});

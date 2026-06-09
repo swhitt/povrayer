@@ -42,6 +42,7 @@
     "web/examples.js",
     "web/highlight.js",
     "web/complete.js",
+    "web/context.js",
     "web/sdl-validate.js",
     "web/url-params.js",
     "web/flags.js",

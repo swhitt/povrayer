@@ -52,6 +52,7 @@
     "web/render-client.js",
     "web/highlight.js",
     "web/complete.js",
+    "web/context.js",
     "web/sdl-validate.js",
     "web/examples.js",
     "src/cli.mjs",

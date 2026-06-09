@@ -13,6 +13,7 @@
 //      buffer so a user's definitions complete the moment they exist.
 
 import { DIRECTIVES, KEYWORDS, BUILTINS } from './highlight.js';
+import { blockContextAt, relevanceFor } from './context.js';
 
 /**
  * @typedef {object} Candidate
@@ -69,18 +70,22 @@ const isInternal = (name) => (name.startsWith('__') ? 1 : 0);
 
 /**
  * Rank candidates for a query. Prefix beats substring, exact-case beats
- * case-folded, internal `__` names sink within a tier, then shorter names, then
- * alphabetical, so the list is stable and the best match sits first (ready to
- * accept with Enter). An empty query matches everything (the Ctrl+Space "browse"
- * case), capped by `limit`.
+ * case-folded, then context-relevant names (those that belong in the enclosing
+ * block) rise, internal `__` names sink, then shorter names, then alphabetical,
+ * so the list is stable and the best match sits first (ready to accept with
+ * Enter). An empty query matches everything (the Ctrl+Space "browse" case),
+ * capped by `limit`. `isRelevant` is the optional block-context predicate; null
+ * means no context boost.
  *
  * @param {string} query
  * @param {Candidate[]} candidates
  * @param {number} [limit]
+ * @param {((c: Candidate) => boolean) | null} [isRelevant]
  * @returns {Candidate[]}
  */
-export function rank(query, candidates, limit = 50) {
+export function rank(query, candidates, limit = 50, isRelevant = null) {
   const qLower = query.toLowerCase();
+  const rel = (c) => (isRelevant && isRelevant(c) ? 0 : 1);
   const scored = [];
   for (const c of candidates) {
     const t = query === '' ? 1 : tier(c.name, query, qLower);
@@ -90,6 +95,7 @@ export function rank(query, candidates, limit = 50) {
   scored.sort(
     (a, b) =>
       a.t - b.t ||
+      rel(a.c) - rel(b.c) ||
       isInternal(a.c.name) - isInternal(b.c.name) ||
       a.c.name.length - b.c.name.length ||
       (a.c.name < b.c.name ? -1 : a.c.name > b.c.name ? 1 : 0)
@@ -190,7 +196,11 @@ export function complete(text, caret, pool, opts = {}) {
   const candidates = tok.hashed
     ? directivePool()
     : buffer.concat(pool.filter((c) => !shadowed.has(c.name)));
-  const items = rank(tok.word, candidates, limit);
+  // Context-aware ordering: candidates that belong in the enclosing block (a
+  // finish's properties inside `finish {}`, the F_* finishes, ...) rise to the
+  // top. Directive lists carry no block context.
+  const isRelevant = tok.hashed ? null : relevanceFor(blockContextAt(text, tok.start));
+  const items = rank(tok.word, candidates, limit, isRelevant);
   if (items.length === 0) return null;
   return { from: tok.start, to: tok.end, query: tok.word, items };
 }

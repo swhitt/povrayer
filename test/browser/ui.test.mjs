@@ -3078,6 +3078,17 @@ try {
   await page.evaluate(() => document.getElementById('editor').blur());
   assert.equal((await cmp()).hidden, true, 'leaving the editor closes the popup');
 
+  // 12. Context-aware ordering (v2): inside finish {}, the finish property
+  //     'brilliance' leads 'brightness' (a radiosity keyword that otherwise sorts
+  //     first alphabetically), proving the block context reorders the list.
+  await openCompleteAt('sphere { 0,1 finish { bri');
+  assert.equal(
+    (await cmp()).first,
+    'brilliance',
+    'finish properties lead completions inside a finish block'
+  );
+  await page.keyboard.press('Escape');
+
   // ===========================================================================
   // Mobile UX (coarse pointer): the iPhone fixes. A separate context emulates a
   // touch, mobile-viewport, coarse-pointer device so the @media (pointer:coarse)

@@ -33,6 +33,7 @@ export const WEB_FILES = {
   'examples.js': resolve(repoRoot, 'web/examples.js'),
   'highlight.js': resolve(repoRoot, 'web/highlight.js'),
   'complete.js': resolve(repoRoot, 'web/complete.js'),
+  'context.js': resolve(repoRoot, 'web/context.js'),
   'sdl-validate.js': resolve(repoRoot, 'web/sdl-validate.js'),
   'permalink.js': resolve(repoRoot, 'web/permalink.js'),
 };
@@ -46,6 +47,7 @@ export const FIRST_PARTY = [
   resolve(repoRoot, 'web/examples.js'),
   resolve(repoRoot, 'web/highlight.js'),
   resolve(repoRoot, 'web/complete.js'),
+  resolve(repoRoot, 'web/context.js'),
   resolve(repoRoot, 'web/render-client.js'),
   resolve(repoRoot, 'web/sdl-validate.js'),
   resolve(repoRoot, 'web/permalink.js'),
@@ -68,6 +70,7 @@ export const IGNORE_SCAN_FILES = [
   resolve(repoRoot, 'web/examples.js'),
   resolve(repoRoot, 'web/highlight.js'),
   resolve(repoRoot, 'web/complete.js'),
+  resolve(repoRoot, 'web/context.js'),
   resolve(repoRoot, 'web/render-client.js'),
   resolve(repoRoot, 'web/sdl-validate.js'),
   resolve(repoRoot, 'web/permalink.js'),
