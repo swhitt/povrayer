@@ -296,14 +296,42 @@ function captureState() {
   };
 }
 
-// Keep the address-bar #permalink live so a shared or bookmarked URL always
+// When a ?gist=<id> scene is loaded, that short gist URL stays the shareable
+// permalink (in the address bar and what Copy Link copies) until the scene text
+// is edited. gistId is the loaded id; gistSource is its pristine text. The pin
+// breaks the moment editor.value diverges from gistSource (see syncPermalinkHash).
+/** @type {string | null} */
+let gistId = null;
+/** @type {string | null} */
+let gistSource = null;
+
+// Keep the address-bar permalink live so a shared or bookmarked URL always
 // matches the current scene + settings. Driven off the same debounce as
 // scheduleSave (re-encode once the user pauses, not per keystroke), and uses
 // replaceState rather than assigning location.hash so an edit never pushes a
 // back-stack entry. encodeState never throws for a well-formed state.
 async function syncPermalinkHash() {
+  // While an unmodified ?gist scene is showing, the short gist URL IS the
+  // shareable permalink, so keep it in the bar instead of burying it under a
+  // compressed hash. The first edit that diverges from the gist text unpins and
+  // falls through to the live hash below (which also drops ?gist).
+  if (gistId !== null) {
+    if (editor.value === gistSource) {
+      const pinned = new URL(location.href);
+      pinned.search = '';
+      pinned.searchParams.set('gist', gistId);
+      pinned.hash = '';
+      history.replaceState(null, '', pinned);
+      return;
+    }
+    gistId = null;
+    gistSource = null;
+  }
   const payload = await encodeState(captureState());
-  history.replaceState(null, '', '#' + payload);
+  const url = new URL(location.href);
+  url.search = ''; // the hash is self-contained; drop ?gist / any stray query
+  url.hash = payload;
+  history.replaceState(null, '', url);
 }
 
 let saveTimer = null;
@@ -2022,8 +2050,9 @@ function gistFailed(message) {
   errorBox.hidden = false;
 }
 
-// Drop ?gist from the visible URL after handling so a manual reload doesn't
-// re-fetch and the address bar stays clean.
+// Drop ?gist from the visible URL. Used on a failed load so a dead/garbage
+// ?gist doesn't linger as the "permalink"; a SUCCESSFUL load deliberately keeps
+// it (the gist URL is the shareable permalink until the scene is edited).
 function stripGistParam() {
   const url = new URL(location.href);
   url.searchParams.delete('gist');
@@ -2032,9 +2061,9 @@ function stripGistParam() {
 
 /** @param {string} raw the raw ?gist= value */
 async function loadGistScene(raw) {
-  stripGistParam();
   const id = gistIdFrom(raw);
   if (!id) {
+    stripGistParam();
     gistFailed("couldn't read a gist id from the link");
     return;
   }
@@ -2043,24 +2072,31 @@ async function loadGistScene(raw) {
   try {
     const res = await fetch(`https://api.github.com/gists/${id}`);
     if (!res.ok) {
+      stripGistParam();
       gistFailed(`couldn't load gist (HTTP ${res.status})`);
       return;
     }
     const data = await res.json();
     source = pickGistSource(data.files);
   } catch {
+    stripGistParam();
     gistFailed("couldn't reach the gist API (offline or rate-limited)");
     return;
   }
   if (source === null) {
+    stripGistParam();
     gistFailed('that gist has no scene file to load');
     return;
   }
   // Success: the gist text replaces the restored scene, then renders it in FULL
   // (not just a live-draft preview). A ?gist link is a "show me this scene" deep
-  // link, so the recipient should land on the finished image. startRender()
-  // supersedes any in-flight draft of the restored scene and self-guards on
-  // busy / non-isolated, so it is safe to fire right after loading the text.
+  // link, so the recipient should land on the finished image. We PIN the gist as
+  // the permalink (gistId/gistSource): ?gist stays in the bar as the shareable
+  // URL until the scene is edited, at which point syncPermalinkHash unpins to a
+  // self-contained #hash. startRender() supersedes any in-flight draft and
+  // self-guards on busy / non-isolated, so it is safe to fire right after.
+  gistId = id;
+  gistSource = source;
   editor.value = source;
   renderGutter();
   paintHighlight();
@@ -2075,9 +2111,9 @@ async function loadGistScene(raw) {
 // final scheduleDraft a cold page load sits on the empty-state hint until the
 // first keystroke, which reads as "live is broken" (it isn't); scheduleDraft()
 // self-guards to still-mode + liveDraft, so animate or a live-off preference
-// render nothing. We deliberately do NOT strip the hash after hydrating (unlike
-// ?gist, which is stripped to avoid a network re-fetch on reload): a hash is
-// self-contained, and leaving it lets the user re-copy or reload the permalink.
+// render nothing. Both a hash and a successful ?gist are LEFT in the bar (the
+// hash is self-contained; ?gist is the short shareable permalink until the scene
+// is edited), so a reload of either reproduces the shared scene.
 const permalinkPayload = location.hash.slice(1);
 const gistParam = new URLSearchParams(location.search).get('gist');
 if (permalinkPayload) {
@@ -2099,13 +2135,12 @@ if (permalinkPayload) {
 renderBtn.addEventListener('click', startRender);
 cancelBtn.addEventListener('click', () => abortCtl?.abort());
 
-// Copy the current scene + settings as a permalink to the clipboard and flash
-// the button label. The address-bar #hash is already kept live by
-// syncPermalinkHash (debounced on every change); Copy Link is the explicit
-// "give me the shareable URL on the clipboard" action and re-encodes fresh so
-// the copied link is exact even between debounce ticks. On a clipboard rejection
-// we still set the hash (the URL stays selectable from the bar) and show a brief
-// failure label.
+// Copy the current scene's shareable URL to the clipboard and flash the button
+// label. The address bar is already kept live by syncPermalinkHash (debounced on
+// every change); Copy Link is the explicit "give it to me now" action and routes
+// through the same sync, so it copies the canonical URL (the short ?gist link
+// while an unmodified gist is pinned, otherwise a fresh self-contained #hash).
+// On a clipboard rejection the bar still updated, so the URL stays selectable.
 let copyLabelTimer = null;
 /** @param {string} label */
 function flashCopyLabel(label) {
@@ -2116,12 +2151,14 @@ function flashCopyLabel(label) {
   }, 1200);
 }
 async function copyPermalink() {
-  const payload = await encodeState(captureState());
-  const url = `${location.origin}${location.pathname}#${payload}`;
-  // Reflect it in the address bar regardless of the clipboard outcome.
-  location.hash = payload;
+  // Make the address bar exact first: the pinned ?gist URL when an unmodified
+  // gist is showing, otherwise a freshly-encoded #hash. Then copy whatever it
+  // now reads (syncPermalinkHash re-encodes from live state, so the copied link
+  // is exact even between debounce ticks, and the bar matches regardless of the
+  // clipboard outcome).
+  await syncPermalinkHash();
   try {
-    await navigator.clipboard.writeText(url);
+    await navigator.clipboard.writeText(location.href);
     flashCopyLabel('Copied');
   } catch {
     /* c8 ignore next 2 -- clipboard.writeText rejects only on a denied permission / insecure context the COOP/COEP secure-context test page can't reach */

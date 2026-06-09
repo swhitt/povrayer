@@ -2520,9 +2520,10 @@ try {
     });
   const searchHasGist = () => page.evaluate(() => /gist/.test(location.search));
 
-  // Success (bare id): the gist .pov overrides the restored scene, the param is
-  // stripped from the URL, no error shows, and it renders in FULL (not a draft):
-  // the output settles at the full 512px width, not the draft's 320px downscale.
+  // Success (bare id): the gist .pov overrides the restored scene, the ?gist
+  // param STAYS as the shareable permalink (not stripped), no error shows, and it
+  // renders in FULL (not a draft): the output settles at the full 512px width,
+  // not the draft's 320px downscale.
   await gistGoto('?gist=abc1');
   await editorIs(GIST_POV);
   await page.waitForFunction(
@@ -2533,12 +2534,46 @@ try {
     null,
     { timeout: 120_000 }
   );
-  assert.equal(await searchHasGist(), false, 'a successful gist load strips ?gist from the URL');
+  assert.equal(
+    await searchHasGist(),
+    true,
+    'a successful gist load keeps ?gist as the shareable permalink'
+  );
   assert.equal(
     await page.evaluate(() => document.getElementById('error').hidden),
     true,
     'a successful gist load surfaces no error'
   );
+
+  // Pinned permalink: while the gist scene is unmodified, Copy Link copies the
+  // short ?gist URL (not a compressed #hash), and the bar keeps ?gist with no hash.
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.click('#copy-link-btn');
+  await page.waitForFunction(() => window.__permalinkProbe().label === 'Copied', null, {
+    timeout: 5_000,
+  });
+  const pinnedCopied = await page.evaluate(() => navigator.clipboard.readText());
+  assert.match(
+    pinnedCopied,
+    /[?&]gist=abc1\b/,
+    'Copy Link copies the short ?gist URL while pinned'
+  );
+  assert.equal(pinnedCopied.includes('#'), false, 'the pinned copy carries no #hash');
+  const pinnedBar = await page.evaluate(() => ({ search: location.search, hash: location.hash }));
+  assert.match(pinnedBar.search, /(^|[?&])gist=abc1\b/, 'an unmodified gist stays pinned to ?gist');
+  assert.equal(pinnedBar.hash, '', 'a pinned gist carries no #hash');
+
+  // Editing the gist scene unpins: the URL drops ?gist and switches to a
+  // self-contained #hash (the content no longer matches the gist).
+  await page.fill('#editor', GIST_POV + '\n// edited away from the gist\n');
+  await page.waitForFunction(
+    () => location.hash.length > 1 && !/gist=/.test(location.search),
+    null,
+    { timeout: 5_000 }
+  );
+  const unpinned = await page.evaluate(() => ({ search: location.search, hash: location.hash }));
+  assert.equal(/gist=/.test(unpinned.search), false, 'editing a pinned gist drops ?gist');
+  assert.ok(unpinned.hash.length > 1, 'editing a pinned gist switches to a #hash permalink');
 
   // Leniency: a `user/id` and a full gist URL both resolve to the same id, so
   // they hit the same success path (the gist .pov lands in the editor).
