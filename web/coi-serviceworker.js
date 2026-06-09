@@ -64,7 +64,14 @@ if (typeof window === 'undefined') {
         const coi = {
             shouldRegister: () => true,
             shouldDeregister: () => false,
-            coepCredentialless: () => !(window.chrome || window.netscape),
+            // Local patch (vs upstream v0.1.7): force COEP: require-corp on every
+            // engine. Upstream sends COEP: credentialless on non-Chromium browsers,
+            // but Safari (desktop + iOS) does not support credentialless, so the
+            // page never becomes cross-origin isolated, SharedArrayBuffer stays
+            // unavailable, and the render engine can't start (the iso-warning
+            // banner sticks). Every subresource here is same-origin and the SW
+            // also stamps CORP: cross-origin, so require-corp works everywhere.
+            coepCredentialless: () => false,
             doReload: () => window.location.reload(),
             quiet: false,
             ...window.coi
