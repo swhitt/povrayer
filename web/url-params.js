@@ -1,0 +1,76 @@
+// Parse render-setting query params (e.g. ?width=1200&q=11&mode=animate) into a
+// partial settings object that ui.js applies to the controls on load. Pure and
+// node-testable; the DOM-dependent bits (matching quality/antialias against the
+// actual <select> options) stay in ui.js.
+//
+// Both full names and short aliases are accepted (width|w, height|h, quality|q,
+// antialias|aa, threads|t; frames/fps/mode are full-name only). Numeric params
+// are clamped to the same ranges the controls enforce; anything non-numeric or a
+// mode that isn't still|animate is dropped (its key omitted) so a junk param
+// never clobbers a good control value.
+
+/**
+ * @param {string | null} v
+ * @param {number} lo
+ * @param {number} hi
+ * @returns {number | null} the clamped integer, or null when v is absent/non-numeric
+ */
+function clampInt(v, lo, hi) {
+  if (v === null) return null;
+  const n = parseInt(v, 10);
+  if (Number.isNaN(n)) return null;
+  return Math.min(hi, Math.max(lo, n));
+}
+
+/**
+ * @typedef {object} RenderParams
+ * @property {string} [width]
+ * @property {string} [height]
+ * @property {string} [quality]
+ * @property {string} [antialias]
+ * @property {string} [threads]
+ * @property {string} [mode]
+ * @property {string} [frames]
+ * @property {string} [fps]
+ */
+
+/**
+ * @param {string} search a `location.search` string (the leading `?` is optional)
+ * @returns {RenderParams}
+ */
+export function parseRenderParams(search) {
+  const p = new URLSearchParams(search);
+  /** @param {string[]} keys */
+  const pick = (...keys) => {
+    for (const k of keys) {
+      const v = p.get(k);
+      if (v !== null) return v;
+    }
+    return null;
+  };
+  /** @type {RenderParams} */
+  const out = {};
+
+  const w = clampInt(pick('width', 'w'), 8, 2048);
+  if (w !== null) out.width = String(w);
+  const h = clampInt(pick('height', 'h'), 8, 2048);
+  if (h !== null) out.height = String(h);
+  const t = clampInt(pick('threads', 't'), 1, 32);
+  if (t !== null) out.threads = String(t);
+  const f = clampInt(pick('frames'), 1, 240);
+  if (f !== null) out.frames = String(f);
+  const fps = clampInt(pick('fps'), 1, 60);
+  if (fps !== null) out.fps = String(fps);
+
+  // quality/antialias are validated against the live <select> options by the
+  // caller (that option set lives in the DOM), so pass the raw string through.
+  const q = pick('quality', 'q');
+  if (q !== null) out.quality = q;
+  const aa = pick('antialias', 'aa');
+  if (aa !== null) out.antialias = aa;
+
+  const m = pick('mode');
+  if (m === 'still' || m === 'animate') out.mode = m;
+
+  return out;
+}

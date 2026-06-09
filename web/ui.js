@@ -13,6 +13,7 @@ import { EXAMPLES, getExample, getExampleRecord, groupByCategory } from './examp
 import { highlight } from './highlight.js';
 import { validateScene } from './sdl-validate.js';
 import { encodeState, decodeState } from './permalink.js';
+import { parseRenderParams } from './url-params.js';
 
 const isoWarning = document.getElementById('iso-warning');
 if (crossOriginIsolated) {
@@ -286,10 +287,23 @@ function captureState() {
   };
 }
 
+// Keep the address-bar #permalink live so a shared or bookmarked URL always
+// matches the current scene + settings. Driven off the same debounce as
+// scheduleSave (re-encode once the user pauses, not per keystroke), and uses
+// replaceState rather than assigning location.hash so an edit never pushes a
+// back-stack entry. encodeState never throws for a well-formed state.
+async function syncPermalinkHash() {
+  const payload = await encodeState(captureState());
+  history.replaceState(null, '', '#' + payload);
+}
+
 let saveTimer = null;
 function scheduleSave() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveState, 300);
+  saveTimer = setTimeout(() => {
+    saveState();
+    syncPermalinkHash();
+  }, 300);
 }
 window.addEventListener('pagehide', () => {
   clearTimeout(saveTimer);
@@ -339,6 +353,35 @@ let lastLoadedSource = '';
     }
   }
 }
+
+// URL query params (e.g. ?width=1200&q=11&mode=animate) seed the controls on
+// load, OVERRIDING the saved/default values. Read-only: the live shareable link
+// is the #hash permalink, which hydrates AFTER this runs and so wins. Combines
+// with ?gist (the gist scene rendered at these settings). The numeric clamps
+// live in url-params.js; quality/antialias are matched here against the real
+// <select> options so an out-of-range value is ignored, not forced.
+function applyUrlParams() {
+  const p = parseRenderParams(location.search);
+  if (p.width !== undefined) widthInput.value = p.width;
+  if (p.height !== undefined) heightInput.value = p.height;
+  if (p.threads !== undefined) threadsInput.value = p.threads;
+  if (p.frames !== undefined) framesInput.value = p.frames;
+  if (p.fps !== undefined) fpsInput.value = p.fps;
+  if (
+    p.quality !== undefined &&
+    Array.from(qualitySelect.options).some((o) => o.value === p.quality)
+  ) {
+    qualitySelect.value = p.quality;
+  }
+  if (
+    p.antialias !== undefined &&
+    Array.from(antialiasSelect.options).some((o) => o.value === p.antialias)
+  ) {
+    antialiasSelect.value = p.antialias;
+  }
+  if (p.mode === 'still' || p.mode === 'animate') mode = p.mode;
+}
+applyUrlParams();
 
 // Selecting an example replaces the editor content. Edits are guarded by a
 // confirm(); the replaced text is stashed (one recovery copy). The popover only
@@ -1861,13 +1904,16 @@ async function loadGistScene(raw) {
     gistFailed('that gist has no scene file to load');
     return;
   }
-  // Success: the gist text replaces the restored scene, then renders like any
-  // freshly loaded scene (the live-draft preview, mirroring the example path).
+  // Success: the gist text replaces the restored scene, then renders it in FULL
+  // (not just a live-draft preview). A ?gist link is a "show me this scene" deep
+  // link, so the recipient should land on the finished image. startRender()
+  // supersedes any in-flight draft of the restored scene and self-guards on
+  // busy / non-isolated, so it is safe to fire right after loading the text.
   editor.value = source;
   renderGutter();
   paintHighlight();
   scheduleSave();
-  scheduleDraft();
+  startRender();
 }
 
 // Deep-link precedence on load: a #<permalink> hash wins over ?gist, which wins
@@ -1901,11 +1947,13 @@ if (permalinkPayload) {
 renderBtn.addEventListener('click', startRender);
 cancelBtn.addEventListener('click', () => abortCtl?.abort());
 
-// Build a compressed permalink for the current scene + settings, copy it to the
-// clipboard, set location.hash (so the address bar reflects the shareable URL),
-// and flash the button label. Generate-on-demand only: the hash is never synced
-// on keystrokes. On a clipboard rejection we still set the hash (the URL is
-// selectable from the bar) and surface a brief failure label.
+// Copy the current scene + settings as a permalink to the clipboard and flash
+// the button label. The address-bar #hash is already kept live by
+// syncPermalinkHash (debounced on every change); Copy Link is the explicit
+// "give me the shareable URL on the clipboard" action and re-encodes fresh so
+// the copied link is exact even between debounce ticks. On a clipboard rejection
+// we still set the hash (the URL stays selectable from the bar) and show a brief
+// failure label.
 let copyLabelTimer = null;
 /** @param {string} label */
 function flashCopyLabel(label) {

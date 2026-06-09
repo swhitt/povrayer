@@ -1241,13 +1241,18 @@ try {
   // --- persistence: restore a full saved blob, then reload variants ----------
   // Seed via an init script (runs on the NEXT document, after the unloading
   // page's pagehide->saveState fires) so the app's own save can't clobber the
-  // blob we're trying to restore. addInitScript stacks across reloads; the most
+  // blob we're trying to restore. addInitScript stacks across loads; the most
   // recently added runs last and wins.
+  let seedNav = 0;
   const seedReload = async (blob) => {
     await page.addInitScript((b) => {
       localStorage.setItem('povrayer.ui.v1', b);
     }, blob);
-    await page.reload({ waitUntil: 'load' });
+    // Load a fresh, HASHLESS URL rather than page.reload(): the live permalink
+    // sync may have left a #payload in the bar, and on reload that stale hash
+    // would hydrate OVER the seeded localStorage we're restoring (hash > saved).
+    // The unique ?seed forces a full document load with no fragment.
+    await page.goto(`${server.url}?seed=${seedNav++}`, { waitUntil: 'load' });
     await page.waitForFunction(
       () => document.querySelectorAll('#example-listbox .ex-option').length >= 4,
       null,
@@ -2420,13 +2425,14 @@ try {
   const searchHasGist = () => page.evaluate(() => /gist/.test(location.search));
 
   // Success (bare id): the gist .pov overrides the restored scene, the param is
-  // stripped from the URL, no error shows, and a live-draft preview renders it.
+  // stripped from the URL, no error shows, and it renders in FULL (not a draft):
+  // the output settles at the full 512px width, not the draft's 320px downscale.
   await gistGoto('?gist=abc1');
   await editorIs(GIST_POV);
   await page.waitForFunction(
     () => {
       const o = document.getElementById('output');
-      return o.src.startsWith('blob:') && o.naturalWidth > 0;
+      return o.src.startsWith('blob:') && o.naturalWidth === 512;
     },
     null,
     { timeout: 120_000 }
@@ -2674,6 +2680,60 @@ try {
       timeout: 10_000,
     }
   );
+
+  // --- Case 7: the address-bar #hash stays live without Copy Link. ------------
+  // A cold load leaves the hash clean; editing the scene auto-syncs a decodable
+  // permalink into the hash (debounced), so a shared/bookmarked URL always
+  // matches the screen.
+  await plBootGoto('');
+  assert.equal(
+    await page.evaluate(() => location.hash),
+    '',
+    'a cold load leaves the URL hash clean until the first change'
+  );
+  await page.evaluate(() => {
+    const ed = document.getElementById('editor');
+    ed.value = '#version 3.8;\n// LIVE SYNC scene\nsphere { 0, 2 }';
+    ed.dispatchEvent(new Event('input'));
+  });
+  await page.waitForFunction(() => location.hash.length > 1, null, { timeout: 10_000 });
+  const liveDecoded = await page.evaluate(async () => {
+    const { decodeState } = await import('./permalink.js');
+    return decodeState(location.hash.slice(1));
+  });
+  assert.match(
+    liveDecoded.source,
+    /LIVE SYNC scene/,
+    'the auto-synced hash round-trips the edited scene (no Copy Link needed)'
+  );
+
+  // ===========================================================================
+  // URL query params (?width=...&q=...&mode=...): seed the controls on load.
+  // Valid values land on the controls (the live #hash above still wins on top);
+  // unknown select values are ignored, keeping the default option.
+  // ===========================================================================
+  await plBootGoto(
+    '?width=1024&height=768&threads=4&frames=30&fps=20&quality=5&antialias=0.3&mode=animate'
+  );
+  assert.equal(await ctlValue('width'), '1024', 'url param sets width');
+  assert.equal(await ctlValue('height'), '768', 'url param sets height');
+  assert.equal(await ctlValue('threads'), '4', 'url param sets threads');
+  assert.equal(await ctlValue('frames'), '30', 'url param sets frames');
+  assert.equal(await ctlValue('fps'), '20', 'url param sets fps');
+  assert.equal(await ctlValue('quality'), '5', 'url param sets a valid quality option');
+  assert.equal(await ctlValue('antialias'), '0.3', 'url param sets a valid antialias option');
+  assert.equal(await bodyMode(), 'animate', 'url param sets animate mode');
+
+  // Unknown select values are ignored (kept at default); mode=still covers the
+  // other mode arm.
+  await plBootGoto('?quality=999&antialias=bogus&mode=still');
+  assert.equal(await ctlValue('quality'), '', 'an unknown quality param keeps the default option');
+  assert.equal(
+    await ctlValue('antialias'),
+    '0.1',
+    'an unknown antialias param keeps the default option'
+  );
+  assert.equal(await bodyMode(), 'still', 'url param sets still mode');
 
   await page.unroute('https://api.github.com/gists/*');
 
