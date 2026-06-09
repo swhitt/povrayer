@@ -18,6 +18,8 @@
     "typecheck": "tsc --noEmit -p wrapper/tsconfig.json",
     "typecheck:js": "tsc --noEmit -p tsconfig.checkjs.json",
     "coverage": "node tools/coverage/run.mjs",
+    "coverage:collect": "node tools/coverage/collect.mjs",
+    "coverage:merge": "node tools/coverage/merge.mjs",
     "coverage:check": "node tools/coverage/check.mjs",
     "prepare": "node tools/install-hooks.mjs"
   },

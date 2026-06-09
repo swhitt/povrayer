@@ -6,10 +6,20 @@ import { resolve } from 'node:path';
 export const repoRoot = resolve(fileURLToPath(import.meta.url), '../../..');
 
 export const COVERAGE_DIR = resolve(repoRoot, 'coverage');
-export const NODE_DIR = resolve(COVERAGE_DIR, 'node');
-export const NODE_FINAL = resolve(NODE_DIR, 'coverage-final.json');
-export const BROWSER_V8_DIR = resolve(COVERAGE_DIR, 'browser-v8');
 export const MERGED_FINAL = resolve(COVERAGE_DIR, 'coverage-final.json');
+
+// RAW (pre-merge) coverage lives under coverage/raw/<shard>. Each shard root
+// holds the c8 Node istanbul map at node/coverage-final.json and the Playwright
+// V8 dumps in browser-v8/. The local full run uses a single 'full' shard; CI
+// uses one root per parallel shard, downloaded back into coverage/raw/ before
+// the merge. buildMergedMap is root-agnostic: it just reads these two locations
+// from whatever roots it is handed, so the local one-root merge and the CI
+// many-root merge are the SAME code path (the 100% gate can't drift between them).
+export const RAW_DIR = resolve(COVERAGE_DIR, 'raw');
+export const rawRoot = (shard) => resolve(RAW_DIR, shard);
+export const rawNodeDir = (root) => resolve(root, 'node');
+export const rawNodeFinal = (root) => resolve(rawNodeDir(root), 'coverage-final.json');
+export const rawBrowserDir = (root) => resolve(root, 'browser-v8');
 
 // Browser modules measured via Playwright V8 coverage, keyed by the basename
 // the dev server serves them under, valued by their absolute repo path (so the

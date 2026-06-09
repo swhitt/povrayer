@@ -8,8 +8,7 @@ permissions:
   contents: read
 
 jobs:
-  # Fast, no-wasm gate: format, lint, and wrapper types. Runs in parallel with
-  # build-test (nothing here needs the docker-built dist).
+  # Fast, no-wasm gate: format, lint, wrapper types. Parallel with everything.
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -25,7 +24,10 @@ jobs:
       - name: Typecheck wrapper (tsc --noEmit)
         run: npm run typecheck
 
-  build-test:
+  # Build the wasm bundle ONCE (the GHA layer cache makes this a few seconds when
+  # warm) and hand it to the parallel shards + typecheck as an artifact, so a cold
+  # build happens at most once per run instead of once per shard.
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -37,30 +39,85 @@ jobs:
           target: artifact
           outputs: type=local,dest=dist
           cache-from: type=gha
-          # cache-to silently no-ops on fork PRs (read-only token) -> expect cold
-          # builds there; harmless.
+          # cache-to silently no-ops on fork PRs (read-only token) -> cold builds
+          # there; harmless.
           cache-to: type=gha,mode=max
-      - uses: actions/setup-node@v6
-        with: { node-version: 22 }
-      - name: Install test deps (pinned via root lockfile)
-        run: npm ci
-      - name: Install Chromium for browser tests
-        run: npx playwright install --with-deps chromium
-      # checkJs needs the built wrapper's types in dist/ (resolved by the .d.ts
-      # shims + test imports), so it runs in this dist-bearing job rather than
-      # the no-wasm lint job. Mirrors the pre-push hook.
-      - name: Typecheck first-party JS (checkJs)
-        run: npm run typecheck:js
-      # `npm run coverage` runs the ENTIRE suite (node + browser) under c8, so it
-      # is the authoritative test run AND produces the merged report. Test
-      # commands are single-sourced in package.json (see the Makefile for the
-      # quoted-glob form). A failing test exits this non-zero.
-      - name: Full suite + merged coverage (node + browser)
-        run: npm run coverage
-      - name: Coverage gate (100% first-party)
-        run: npm run coverage:check
       - uses: actions/upload-artifact@v7
         with: { name: povrayer-dist, path: dist/ }
+
+  # checkJs needs the built wrapper's types in dist/ (resolved by the .d.ts shims),
+  # so it runs in a dist-bearing job rather than the no-wasm lint job. Parallel
+  # with the test shards.
+  typecheck-js:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with: { name: povrayer-dist, path: dist }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - name: Install deps (pinned via root lockfile)
+        run: npm ci
+      - name: Typecheck first-party JS (checkJs)
+        run: npm run typecheck:js
+
+  # The render-heavy suite, split across parallel runners. Each shard collects its
+  # OWN raw coverage (tools/coverage/collect.mjs); the coverage-gate job merges
+  # them and enforces 100%. Wall-clock is the slowest single shard (ui), not the
+  # sum of all four. The node shard needs no browser, so it skips Chromium.
+  shard:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [node, browser, ui, repl]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with: { name: povrayer-dist, path: dist }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - name: Install deps (pinned via root lockfile)
+        run: npm ci
+      - name: Cache Playwright browser
+        if: matrix.shard != 'node'
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - name: Install Chromium for browser tests
+        if: matrix.shard != 'node'
+        run: npx playwright install --with-deps chromium
+      - name: Collect ${{ matrix.shard }} coverage
+        run: node tools/coverage/collect.mjs ${{ matrix.shard }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rawcov-${{ matrix.shard }}
+          path: coverage/raw/${{ matrix.shard }}
+          if-no-files-found: error
+
+  # Merge every shard's raw coverage into one report and enforce the 100%
+  # first-party gate. This is the authoritative pass/fail for the suite.
+  coverage-gate:
+    needs: shard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with: { name: povrayer-dist, path: dist }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - name: Install deps (pinned via root lockfile)
+        run: npm ci
+      - name: Download shard coverage
+        uses: actions/download-artifact@v8
+        with: { path: coverage/raw, pattern: rawcov-* }
+      - name: Merge shard coverage
+        run: node tools/coverage/merge.mjs
+      - name: Coverage gate (100% first-party)
+        run: node tools/coverage/check.mjs
       - name: Upload merged coverage (lcov)
         uses: actions/upload-artifact@v7
         with:
@@ -69,7 +126,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: build-test
+    needs: coverage-gate
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -96,7 +153,7 @@ jobs:
           target: runtime
           # The Node CLI image has no Safari constraint, so give it the larger
           # 4GB ceiling for big renders; the default 2GB build stays for the
-          # browser artifact (ci build-test + the Pages deploy).
+          # browser artifact (the build job + the Pages deploy).
           build-args: |
             WASM_MAX_MEMORY=4GB
           # The expensive stages build once on the runner's native platform
