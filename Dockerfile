@@ -6,15 +6,6 @@ ARG POVRAY_COMMIT=c3ce13e5bb51892d8f59c1148b5f905a01ef82f3
 # always runs natively on the build host; only the runtime stage is per-platform.
 FROM --platform=$BUILDPLATFORM emscripten/emsdk:${EMSDK_VERSION} AS builder
 ARG POVRAY_COMMIT
-# Debug/tuning knobs:
-#   LINK_EXTRA      extra flags appended to the final em++ link
-#                   (e.g. --build-arg LINK_EXTRA="-sASSERTIONS=2 -sSTACK_OVERFLOW_CHECK=2")
-#   WASM_MAX_MEMORY shared-memory maximum. Default 2GB instantiates on
-#                   Safari/iOS; Chrome/Firefox treat the max as an address-space
-#                   reservation, so the published Node CLI image is built with
-#                   4GB (--build-arg WASM_MAX_MEMORY=4GB) where Safari is moot.
-ARG LINK_EXTRA=""
-ARG WASM_MAX_MEMORY=2GB
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       autoconf automake m4 patch curl ca-certificates unzip && \
@@ -118,6 +109,20 @@ RUN curl -fsSL --retry 3 --retry-delay 2 -o /tmp/lightsys.zip "${LIGHTSYS_URL}" 
 # PTHREAD_POOL_SIZE budget: proxied main + vfe worker + backend main +
 # scene/view control + N render tasks = N+5; the navigator guard is required
 # because the expression also evaluates in Node (< 21 has no navigator global).
+#
+# The link-only tuning knobs are declared HERE, right before their only use, NOT
+# at the top of the stage: a changed build-arg invalidates the cache for EVERY
+# layer after the ARG's declaration, so declaring them up top made the published
+# Node image (WASM_MAX_MEMORY=4GB) recompile all of POV-Ray instead of just
+# relinking. Kept next to the em++ that consumes them so a value change rebuilds
+# only this layer.
+#   LINK_EXTRA      extra flags appended to the final em++ link
+#                   (e.g. --build-arg LINK_EXTRA="-sASSERTIONS=2 -sSTACK_OVERFLOW_CHECK=2")
+#   WASM_MAX_MEMORY shared-memory maximum. Default 2GB instantiates on Safari/iOS;
+#                   Chrome/Firefox treat the max as an address-space reservation, so
+#                   the published Node CLI image uses 4GB where Safari is moot.
+ARG LINK_EXTRA=""
+ARG WASM_MAX_MEMORY=2GB
 RUN mkdir -p /out && cd povray && em++ \
       vfe/libvfe.a source/libpovray.a vfe/libvfe.a platform/libplatform.a \
       -o /out/povray.mjs \
