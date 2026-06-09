@@ -98,16 +98,21 @@ let liveDraft = true;
 
 // ---- example browser (editable-combobox popover) + persisted state ----
 
-// The flattened option elements in render order (navigation walks these), plus
-// the per-group bookkeeping the filter toggles. Both populated by
-// buildExampleBrowser(); the option's lowercased haystack is its filter target.
+// The flattened option elements in render order, plus the per-group bookkeeping
+// the filter + accordion toggle. Both populated by buildExampleBrowser(); the
+// option's lowercased haystack is its filter target. Each group record is
+// { key, groupEl, headEl, opts: [{ el, haystack }], collapsed }; collapsed
+// drives the disclosure (openBrowser seeds it, the head toggle flips it).
 const optionEls = [];
-const exampleGroups = []; // [{ groupEl, opts: [{ el, haystack }] }]
-let activeOption = null; // the roving aria-activedescendant option, or null
+const exampleGroups = [];
+// The roving aria-activedescendant item: a category HEAD or an OPTION, or null.
+let activeItem = null;
 
 // Render one .ex-group per CATEGORIES entry (in order) and one .ex-option per
-// scene. No `if (items.length)` guard: the node test guarantees every category
-// is non-empty, so an empty group head can't happen.
+// scene. The head is a disclosure toggle (role=button + aria-expanded) carrying
+// a caret, the label, and a scene count. No `if (items.length)` guard: the node
+// test guarantees every category is non-empty, so an empty group head can't
+// happen.
 function buildExampleBrowser() {
   for (const group of groupByCategory()) {
     const groupEl = document.createElement('div');
@@ -118,7 +123,21 @@ function buildExampleBrowser() {
     const head = document.createElement('div');
     head.id = `exgrp-${group.key}`;
     head.className = 'ex-group-head';
-    head.textContent = group.label; // textContent escapes '&' in the label
+    head.setAttribute('role', 'button');
+    head.setAttribute('aria-expanded', 'false'); // renderList() reconciles on open
+
+    // Caret (decorative; the glyph/rotation by aria-expanded lives in CSS), the
+    // category label, and a grey scene-count chip. All accent-free chrome.
+    const caret = document.createElement('span');
+    caret.className = 'ex-group-caret';
+    caret.setAttribute('aria-hidden', 'true');
+    const label = document.createElement('span');
+    label.className = 'ex-group-label';
+    label.textContent = group.label; // textContent escapes '&' in the label
+    const count = document.createElement('span');
+    count.className = 'ex-group-count';
+    count.textContent = String(group.items.length);
+    head.append(caret, label, count);
     groupEl.appendChild(head);
 
     const opts = [];
@@ -152,7 +171,7 @@ function buildExampleBrowser() {
       optionEls.push(opt);
     }
     exampleListbox.insertBefore(groupEl, exampleEmpty);
-    exampleGroups.push({ groupEl, opts });
+    exampleGroups.push({ key: group.key, groupEl, headEl: head, opts, collapsed: true });
   }
 }
 buildExampleBrowser();
@@ -318,67 +337,112 @@ function selectExample(name) {
 
 // ---- example-browser interaction (open/filter/navigate/select/close) ----
 
+// Visible (non-collapsed, non-filtered-out) options in render order. A collapsed
+// category hides its rows, so they drop out here AND out of navItems().
 function visibleOptions() {
   return optionEls.filter((el) => !el.hidden);
 }
 
-// Mark one option active (roving aria-activedescendant); null clears it. Active
-// is the ONLY option with aria-selected/.is-active; the loaded option is marked
-// separately (data-loaded), never via aria-selected.
-function setActive(opt) {
-  if (activeOption) {
-    activeOption.classList.remove('is-active');
-    activeOption.setAttribute('aria-selected', 'false');
+// The roving nav order: each shown category head, immediately followed by that
+// category's visible rows. A collapsed head contributes only itself; a category
+// filtered out by the search contributes nothing.
+function navItems() {
+  const items = [];
+  for (const g of exampleGroups) {
+    if (g.groupEl.hidden) continue;
+    items.push(g.headEl);
+    for (const { el } of g.opts) if (!el.hidden) items.push(el);
   }
-  activeOption = opt;
-  if (!opt) {
+  return items;
+}
+
+function isHead(el) {
+  return el != null && el.classList.contains('ex-group-head');
+}
+
+// The { key, groupEl, headEl, opts, collapsed } record a head/option belongs to.
+function groupFor(el) {
+  const groupEl = el.closest('.ex-group');
+  return exampleGroups.find((g) => g.groupEl === groupEl);
+}
+
+// Mark one nav item active (roving aria-activedescendant); null clears it. The
+// active item is the ONLY one with .is-active, and the only OPTION with
+// aria-selected. A head carries neither aria-selected nor attribution (no
+// scene). The loaded option is marked separately (data-loaded), never here.
+function setActive(item) {
+  if (activeItem) {
+    activeItem.classList.remove('is-active');
+    if (activeItem.classList.contains('ex-option')) {
+      activeItem.setAttribute('aria-selected', 'false');
+    }
+  }
+  activeItem = item;
+  if (!item) {
     exampleSearch.setAttribute('aria-activedescendant', '');
     return;
   }
-  opt.classList.add('is-active');
-  opt.setAttribute('aria-selected', 'true');
-  exampleSearch.setAttribute('aria-activedescendant', opt.id);
-  opt.scrollIntoView({ block: 'nearest' });
-  updateAttribution(getExampleRecord(opt.dataset.name));
-}
-
-// Recompute visibility from the search box: each option matches its haystack,
-// each group hides when none of its options show, #example-empty shows iff
-// nothing matches, and the active option resets to the first visible one.
-function filterOptions() {
-  const q = exampleSearch.value.trim().toLowerCase();
-  let firstVisible = null;
-  for (const { groupEl, opts } of exampleGroups) {
-    let groupVisible = false;
-    for (const { el, haystack } of opts) {
-      const match = q === '' || haystack.includes(q);
-      el.hidden = !match;
-      if (match) {
-        groupVisible = true;
-        if (!firstVisible) firstVisible = el;
-      }
-    }
-    groupEl.hidden = !groupVisible;
+  item.classList.add('is-active');
+  if (item.classList.contains('ex-option')) {
+    item.setAttribute('aria-selected', 'true');
+    updateAttribution(getExampleRecord(item.dataset.name));
   }
-  exampleEmpty.hidden = firstVisible !== null;
-  setActive(firstVisible);
+  exampleSearch.setAttribute('aria-activedescendant', item.id);
+  item.scrollIntoView({ block: 'nearest' });
 }
 
-// Clamp-move the active option over the flattened visible order (no wrap).
+// Recompute visibility from the search box AND the per-category collapse state.
+// While searching (query non-empty) collapse is IGNORED: every category with a
+// match auto-expands and shows its matching rows. With an empty query a category
+// shows its rows only when expanded. A head hides only when a search excludes
+// it. #example-empty shows ONLY when a search matches nothing, never merely
+// because categories are collapsed.
+function renderList() {
+  const q = exampleSearch.value.trim().toLowerCase();
+  const searching = q !== '';
+  let anyMatch = false;
+  for (const g of exampleGroups) {
+    let groupHasMatch = false;
+    for (const { el, haystack } of g.opts) {
+      const match = q === '' || haystack.includes(q);
+      el.hidden = !(match && (searching || !g.collapsed));
+      if (match) groupHasMatch = true;
+    }
+    g.groupEl.hidden = searching && !groupHasMatch;
+    g.headEl.setAttribute('aria-expanded', String(searching ? groupHasMatch : !g.collapsed));
+    if (groupHasMatch) anyMatch = true;
+  }
+  exampleEmpty.hidden = !(searching && !anyMatch);
+}
+
+function setGroupCollapsed(g, collapsed) {
+  g.collapsed = collapsed;
+  renderList();
+}
+
+function toggleGroup(g) {
+  g.collapsed = !g.collapsed;
+  renderList();
+}
+
+// Clamp-move the active item over the flattened visible nav order (no wrap).
 function moveActiveTo(index) {
-  const vis = visibleOptions();
-  if (!vis.length) return;
-  setActive(vis[clamp(index, 0, vis.length - 1)]);
+  const items = navItems();
+  if (!items.length) return;
+  setActive(items[clamp(index, 0, items.length - 1)]);
 }
 
 function openBrowser() {
   exampleBrowser.hidden = false;
   exampleTrigger.setAttribute('aria-expanded', 'true');
   exampleSearch.value = '';
-  filterOptions(); // all visible; active resets to the first
+  // Open COMPACT: collapse every category except the loaded scene's, so its
+  // rows are the only ones showing and the panel isn't a 29-row wall.
   const loaded = document.getElementById(`ex-opt-${selectedExample}`);
-  setActive(loaded); // open focused on the loaded scene
-  loaded.scrollIntoView({ block: 'nearest' });
+  const loadedGroup = groupFor(loaded);
+  for (const g of exampleGroups) g.collapsed = g !== loadedGroup;
+  renderList();
+  setActive(loaded); // open focused on the loaded scene (scrolls it into view)
   exampleSearch.focus();
 }
 
@@ -413,36 +477,74 @@ exampleTrigger.addEventListener('keydown', (e) => {
   }
 });
 
-exampleSearch.addEventListener('input', filterOptions);
+exampleSearch.addEventListener('input', () => {
+  renderList();
+  // Roving resets to the first visible row so Enter selects the top result
+  // (a head would never commit, so default the active item to an option).
+  setActive(visibleOptions()[0] ?? null);
+});
 exampleSearch.addEventListener('keydown', (e) => {
+  const items = navItems();
+  const idx = items.indexOf(activeItem);
   if (e.key === 'ArrowDown') {
     e.preventDefault();
-    moveActiveTo(visibleOptions().indexOf(activeOption) + 1);
+    moveActiveTo(idx + 1);
   } else if (e.key === 'ArrowUp') {
     e.preventDefault();
-    moveActiveTo(visibleOptions().indexOf(activeOption) - 1);
+    moveActiveTo(idx - 1);
   } else if (e.key === 'Home') {
     e.preventDefault();
     moveActiveTo(0);
   } else if (e.key === 'End') {
     e.preventDefault();
-    moveActiveTo(visibleOptions().length - 1);
+    moveActiveTo(items.length - 1);
+  } else if (e.key === 'ArrowRight') {
+    // On a head: expand. On a row: undefined, so leave the search caret move be.
+    if (isHead(activeItem)) {
+      e.preventDefault();
+      setGroupCollapsed(groupFor(activeItem), false);
+    }
+  } else if (e.key === 'ArrowLeft') {
+    // On a head: collapse. On a row: jump to that row's category head.
+    if (isHead(activeItem)) {
+      e.preventDefault();
+      setGroupCollapsed(groupFor(activeItem), true);
+    } else if (activeItem) {
+      e.preventDefault();
+      setActive(groupFor(activeItem).headEl);
+    }
   } else if (e.key === 'Enter') {
     e.preventDefault();
-    if (activeOption) commitOption(activeOption);
+    if (isHead(activeItem)) setGroupCollapsed(groupFor(activeItem), false);
+    else if (activeItem) commitOption(activeItem);
+  } else if (e.key === ' ') {
+    // Space activates a head (expand); on a row it must still type into search.
+    if (isHead(activeItem)) {
+      e.preventDefault();
+      setGroupCollapsed(groupFor(activeItem), false);
+    }
   } else if (e.key === 'Escape') {
     e.preventDefault();
     closeBrowser(true);
   }
 });
 
-// Keep DOM focus on the search when an option (a non-focusable div) is clicked:
-// without this the mousedown blurs the input, firing focusout -> close BEFORE
-// the click can select. preventDefault leaves the click intact, focus on search.
+// Keep DOM focus on the search when a head/option (non-focusable divs) is
+// clicked: without this the mousedown blurs the input, firing focusout -> close
+// BEFORE the click resolves. preventDefault leaves the click intact, focus on
+// search; navigation stays driven by aria-activedescendant.
 exampleListbox.addEventListener('mousedown', (e) => e.preventDefault());
 
-// Click delegation: ignore clicks that miss an option (group head / padding).
+// Click delegation: a head click toggles its category's collapse (and ropes the
+// roving onto that head); an option click loads it. A click that lands on
+// neither (padding / the empty note) selects nothing.
 exampleListbox.addEventListener('click', (e) => {
+  const head = e.target.closest('.ex-group-head');
+  if (head) {
+    toggleGroup(groupFor(head));
+    setActive(head);
+    return;
+  }
   const opt = e.target.closest('.ex-option');
   if (!opt) return;
   commitOption(opt);

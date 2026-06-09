@@ -486,14 +486,27 @@ try {
     page.evaluate(() => document.getElementById('example-trigger').dataset.name);
   const activeName = () =>
     page.evaluate(() => document.querySelector('.ex-option.is-active')?.dataset.name ?? null);
+  // The roving item may be a HEAD or an OPTION; read its id off the search box's
+  // aria-activedescendant (heads have no dataset.name).
+  const activeDesc = () =>
+    page.evaluate(() =>
+      document.getElementById('example-search').getAttribute('aria-activedescendant')
+    );
+  const headExpanded = (key) =>
+    page.evaluate((k) => document.getElementById(`exgrp-${k}`).getAttribute('aria-expanded'), key);
   const visibleNames = () =>
     page.evaluate(() =>
       [...document.querySelectorAll('.ex-option')]
         .filter((o) => !o.hidden)
         .map((o) => o.dataset.name)
     );
+  const visibleCount = () =>
+    page.evaluate(
+      () => [...document.querySelectorAll('.ex-option')].filter((o) => !o.hidden).length
+    );
   const groupHidden = (key) =>
     page.evaluate((k) => document.getElementById(`exgrp-${k}`).parentElement.hidden, key);
+  const focusSearch = () => page.evaluate(() => document.getElementById('example-search').focus());
   const openBrowser = async () => {
     await page.click('#example-trigger');
     await page.waitForFunction(
@@ -502,9 +515,21 @@ try {
       { timeout: 5_000 }
     );
   };
+  // The panel opens compact (accordion): a target category may be collapsed, so
+  // expand its head before the option is clickable.
+  const clickOption = async (name) => {
+    await page.evaluate((n) => {
+      const head = document
+        .getElementById(`ex-opt-${n}`)
+        .closest('.ex-group')
+        .querySelector('.ex-group-head');
+      if (head.getAttribute('aria-expanded') !== 'true') head.click();
+    }, name);
+    await page.click(`.ex-option[data-name="${name}"]`);
+  };
   const switchExample = async (name) => {
     await openBrowser();
-    await page.click(`.ex-option[data-name="${name}"]`);
+    await clickOption(name);
     await page.waitForFunction(
       (n) => document.getElementById('example-trigger').dataset.name === n,
       name,
@@ -514,8 +539,8 @@ try {
 
   // Open via click: the panel shows, focus moves to the search, the loaded scene
   // (csg-die) is the active roving option, and the footer reads its '' -source
-  // attribution with the link hidden. (openBrowser, filterOptions empty-query,
-  // setActive first+second, updateAttribution.)
+  // attribution with the link hidden. (openBrowser, renderList, setActive
+  // first-call (no prior active) + updateAttribution.)
   await openBrowser();
   assert.equal(await activeName(), 'csg-die', 'opening focuses the loaded scene');
   assert.deepEqual(
@@ -536,11 +561,62 @@ try {
     'open focuses search, marks the loaded option active, shows the CC0 attribution with hidden link'
   );
 
-  // Filter via real typing (each keystroke fires the search keydown handler, so
-  // its non-navigation default arms are exercised) down to one whole group:
-  // every Solid Modeling scene matches the category label, every other group
-  // head hides. (filterOptions match/no-match, per-group hide both arms, the
-  // firstVisible first-then-rest arms.)
+  // open-collapses-others: the accordion opens COMPACT. Only the loaded scene's
+  // category (Solid Modeling) is expanded; every other category is collapsed, so
+  // the panel shows five rows, not a 29-row wall. Each head carries a scene-count
+  // chip matching its category size.
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      expanded: [...document.querySelectorAll('.ex-group-head')]
+        .filter((h) => h.getAttribute('aria-expanded') === 'true')
+        .map((h) => h.id),
+      visible: [...document.querySelectorAll('.ex-option')]
+        .filter((o) => !o.hidden)
+        .map((o) => o.dataset.name),
+    })),
+    {
+      expanded: ['exgrp-modeling'],
+      visible: ['csg-die', 'steinmetz', 'lathe-vase', 'prism-lantern', 'sweep-knot'],
+    },
+    'opening collapses every category except the loaded scene’s (compact panel)'
+  );
+  assert.ok(
+    await page.evaluate(async () => {
+      const { groupByCategory } = await import('/examples.js');
+      const expected = groupByCategory().map((g) => String(g.items.length));
+      const rendered = [...document.querySelectorAll('.ex-group-head .ex-group-count')].map(
+        (c) => c.textContent
+      );
+      return expected.length === 9 && JSON.stringify(expected) === JSON.stringify(rendered);
+    }),
+    'every category head shows a scene-count chip matching its size'
+  );
+
+  // click-head-toggle: clicking a collapsed head expands that category (its rows
+  // appear) and ropes the roving onto the head; a second click collapses it. The
+  // toggle leaves every OTHER category alone.
+  await page.click('#exgrp-implicit');
+  await page.waitForFunction(
+    () => document.getElementById('exgrp-implicit').getAttribute('aria-expanded') === 'true',
+    null,
+    { timeout: 5_000 }
+  );
+  assert.ok((await visibleNames()).includes('isosurface'), 'expanding a head reveals its rows');
+  assert.equal(await activeDesc(), 'exgrp-implicit', 'a head click ropes the roving onto the head');
+  assert.equal(await headExpanded('modeling'), 'true', 'toggling one head leaves the others alone');
+  await page.click('#exgrp-implicit');
+  await page.waitForFunction(
+    () => document.getElementById('exgrp-implicit').getAttribute('aria-expanded') === 'false',
+    null,
+    { timeout: 5_000 }
+  );
+  assert.ok(!(await visibleNames()).includes('isosurface'), 'a second click collapses the head');
+
+  // search auto-expand: while the filter is non-empty, collapse state is ignored.
+  // Typing "modeling" surfaces the whole Solid Modeling group (every row matches
+  // the category label) and hides every non-matching head; #example-empty stays
+  // hidden while anything matches. Real typing also runs the search keydown
+  // handler's non-navigation default arms.
   await page.type('#example-search', 'modeling');
   await page.waitForFunction(
     () =>
@@ -562,8 +638,10 @@ try {
     'the empty-state stays hidden while options match'
   );
 
-  // No-match query: every group hides, #example-empty shows, the active option
-  // clears. (filterOptions empty-state, setActive(null) clearing + !opt arms.)
+  // empty-state-only-while-searching: a no-match query is the ONLY time
+  // #example-empty shows (never merely because categories are collapsed). The
+  // active item clears, and ArrowDown / ArrowLeft / Space / Enter are all
+  // clamp/no-ops with nothing matching (no active item to act on).
   await page.fill('#example-search', 'zzz-no-match');
   await page.waitForFunction(
     () =>
@@ -573,37 +651,109 @@ try {
     { timeout: 5_000 }
   );
   assert.equal(await activeName(), null, 'a no-match filter clears the active option');
-
-  // Navigation while nothing matches is a clamp no-op, and Enter with no active
-  // option does nothing (moveActiveTo empty-guard, Enter's no-active arm).
-  await page.evaluate(() => document.getElementById('example-search').focus());
-  await page.keyboard.press('ArrowDown');
-  await page.keyboard.press('Enter');
+  assert.equal(await activeDesc(), '', 'a no-match filter clears aria-activedescendant');
+  await focusSearch();
+  await page.keyboard.press('ArrowDown'); // moveActiveTo empty-guard
+  await page.keyboard.press('ArrowLeft'); // isHead(null) + activeItem-null arms
+  await page.keyboard.press('Space'); // isHead(null) -> types, still no match
+  await page.keyboard.press('Enter'); // no active -> no select
   assert.equal(await browserExpanded(), 'true', 'an empty-filter Enter must not select or close');
   assert.equal(await triggerName(), 'csg-die', 'an empty-filter Enter must not load anything');
 
-  // Clear the filter, then arrow-navigate the flattened visible order with clamp
-  // (no wrap) and Home/End. (moveActiveTo non-empty, ArrowDown/ArrowUp/Home/End.)
+  // restore-on-clear: clearing the search restores the prior collapse state (the
+  // search auto-expand was temporary), so only Solid Modeling is expanded again,
+  // its five rows show, and csg-die is the active row.
   await page.fill('#example-search', '');
   await page.waitForFunction(
     () =>
-      [...document.querySelectorAll('.ex-option')].filter((o) => !o.hidden).length === 29 &&
+      [...document.querySelectorAll('.ex-option')].filter((o) => !o.hidden).length === 5 &&
+      document.getElementById('exgrp-modeling').getAttribute('aria-expanded') === 'true' &&
+      document.getElementById('exgrp-implicit').getAttribute('aria-expanded') === 'false' &&
       document.querySelector('.ex-option.is-active')?.dataset.name === 'csg-die',
     null,
     { timeout: 5_000 }
   );
-  await page.evaluate(() => document.getElementById('example-search').focus());
-  await page.keyboard.press('ArrowDown'); // csg-die -> steinmetz
-  assert.equal(await activeName(), 'steinmetz', 'ArrowDown moves the active option down');
-  await page.keyboard.press('ArrowUp'); // steinmetz -> csg-die
+
+  // restore-on-clear survives a SECOND manual expand: expand another category,
+  // run a search that matches neither, then clear. Both manually-expanded
+  // categories come back expanded (collapse state is preserved across a search).
+  await page.click('#exgrp-optics'); // modeling + optics now expanded
+  await page.waitForFunction(
+    () => document.getElementById('exgrp-optics').getAttribute('aria-expanded') === 'true',
+    null,
+    { timeout: 5_000 }
+  );
+  await page.fill('#example-search', 'lighting'); // matches only the Lighting group
+  await page.waitForFunction(
+    () =>
+      document.getElementById('exgrp-modeling').parentElement.hidden &&
+      [...document.querySelectorAll('.ex-option')].some(
+        (o) => !o.hidden && o.dataset.name === 'cornell-mood'
+      ),
+    null,
+    { timeout: 5_000 }
+  );
+  assert.equal(await groupHidden('modeling'), true, 'a non-matching category hides during search');
+  await page.fill('#example-search', '');
+  await page.waitForFunction(
+    () =>
+      document.getElementById('exgrp-modeling').getAttribute('aria-expanded') === 'true' &&
+      document.getElementById('exgrp-optics').getAttribute('aria-expanded') === 'true' &&
+      document.getElementById('exgrp-lighting').getAttribute('aria-expanded') === 'false',
+    null,
+    { timeout: 5_000 }
+  );
+
+  // keyboard accordion nav: collapse the extra category so only Solid Modeling is
+  // expanded, then walk the heads + rows by keyboard (focus stays on the search;
+  // navigation is driven by aria-activedescendant).
+  await page.click('#exgrp-optics'); // optics back to collapsed
+  await page.waitForFunction(
+    () => document.getElementById('exgrp-optics').getAttribute('aria-expanded') === 'false',
+    null,
+    { timeout: 5_000 }
+  );
+  await focusSearch();
+  await page.keyboard.press('Home'); // first nav item: the first category head
+  assert.equal(await activeDesc(), 'exgrp-modeling', 'Home lands on the first nav item (a head)');
   await page.keyboard.press('ArrowUp'); // clamp at the top, no wrap
-  assert.equal(await activeName(), 'csg-die', 'ArrowUp clamps at the first option');
-  await page.keyboard.press('End'); // jump to the last visible option
-  assert.equal(await activeName(), 'spin-gears', 'End jumps to the last option');
+  assert.equal(await activeDesc(), 'exgrp-modeling', 'ArrowUp clamps at the first nav item');
+  await page.keyboard.press('ArrowDown'); // head -> its first row
+  assert.equal(await activeName(), 'csg-die', 'ArrowDown from a head enters its first row');
+  await page.keyboard.press('ArrowDown'); // row -> next row
+  assert.equal(await activeName(), 'steinmetz', 'ArrowDown walks the rows');
+  await page.keyboard.press('ArrowLeft'); // row -> its category head
+  assert.equal(await activeDesc(), 'exgrp-modeling', 'ArrowLeft on a row jumps to its head');
+  await page.keyboard.press('ArrowLeft'); // expanded head -> collapse
+  assert.equal(await headExpanded('modeling'), 'false', 'ArrowLeft collapses an expanded head');
+  assert.equal(await visibleCount(), 0, 'collapsing the only expanded category hides every row');
+  await page.keyboard.press('ArrowRight'); // collapsed head -> expand
+  assert.equal(await headExpanded('modeling'), 'true', 'ArrowRight expands a collapsed head');
+  assert.equal(await visibleCount(), 5, 'expanding restores the category rows');
+  await page.keyboard.press('ArrowDown'); // head -> csg-die
+  await page.keyboard.press('ArrowRight'); // ArrowRight on a row is a no-op
+  assert.equal(await activeName(), 'csg-die', 'ArrowRight on a row does nothing');
+  assert.equal(await headExpanded('modeling'), 'true', 'ArrowRight on a row toggles nothing');
+
+  // Enter and Space on a head expand it (matching ArrowRight); collapse via
+  // ArrowLeft first so the expand is observable.
+  await page.keyboard.press('ArrowLeft'); // csg-die -> head
+  await page.keyboard.press('ArrowLeft'); // collapse
+  assert.equal(await headExpanded('modeling'), 'false', 'pre-Enter: modeling is collapsed');
+  await page.keyboard.press('Enter'); // head Enter -> expand
+  assert.equal(await headExpanded('modeling'), 'true', 'Enter on a collapsed head expands it');
+  await page.keyboard.press('ArrowLeft'); // collapse again
+  await page.keyboard.press('Space'); // head Space -> expand
+  assert.equal(await headExpanded('modeling'), 'true', 'Space on a collapsed head expands it');
+
+  // Home/End jump across the full visible nav list (heads + the expanded rows);
+  // ArrowDown clamps at the last item (the last category head).
+  await page.keyboard.press('End');
+  assert.equal(await activeDesc(), 'exgrp-motion', 'End jumps to the last nav item (last head)');
   await page.keyboard.press('ArrowDown'); // clamp at the bottom, no wrap
-  assert.equal(await activeName(), 'spin-gears', 'ArrowDown clamps at the last option');
-  await page.keyboard.press('Home'); // back to the first
-  assert.equal(await activeName(), 'csg-die', 'Home jumps to the first option');
+  assert.equal(await activeDesc(), 'exgrp-motion', 'ArrowDown clamps at the last nav item');
+  await page.keyboard.press('Home');
+  assert.equal(await activeDesc(), 'exgrp-modeling', 'Home jumps back to the first nav item');
 
   // Select an animated scene via Enter on its active option: the panel closes,
   // focus returns to the trigger, and the clock autoset prefills frames/fps.
@@ -695,12 +845,17 @@ try {
     { timeout: 5_000 }
   );
 
-  // Click delegation ignores a group-head click (closest('.ex-option') is null):
-  // the panel stays open and nothing loads.
-  const beforeHeadClick = await triggerName();
-  await page.click('#exgrp-modeling');
-  assert.equal(await browserExpanded(), 'true', 'a group-head click keeps the panel open');
-  assert.equal(await triggerName(), beforeHeadClick, 'a group-head click loads nothing');
+  // Click delegation: a head click toggles its category (covered above); a click
+  // that lands on NEITHER a head nor an option (listbox padding / the empty note)
+  // selects nothing and keeps the panel open (the opt-null return arm).
+  const beforeStrayClick = await triggerName();
+  await page.evaluate(() => {
+    document
+      .getElementById('example-listbox')
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+  assert.equal(await browserExpanded(), 'true', 'a stray listbox click keeps the panel open');
+  assert.equal(await triggerName(), beforeStrayClick, 'a stray listbox click loads nothing');
 
   // A focusout that stays inside the panel keeps it open; one that leaves the
   // subtree closes it. (focusout contains(relatedTarget) both arms.)
@@ -740,7 +895,7 @@ try {
     window.confirm = () => false;
   });
   await openBrowser();
-  await page.click('.ex-option[data-name="glass"]');
+  await clickOption('glass'); // glass is in a (collapsed) other category; expand then click
   await page.waitForFunction(
     () => document.getElementById('example-trigger').getAttribute('aria-expanded') === 'false',
     null,
