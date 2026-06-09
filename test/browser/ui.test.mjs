@@ -2344,6 +2344,111 @@ try {
   );
 
   await page.fill('#threads', '');
+
+  // ===========================================================================
+  // Mobile UX (coarse pointer): the iPhone fixes. A separate context emulates a
+  // touch, mobile-viewport, coarse-pointer device so the @media (pointer:coarse)
+  // editor/example rules actually apply (the default desktop page is fine-
+  // pointer). Chromium can't reproduce iOS's focus-zoom or text inflation, so we
+  // assert the CSS guards that prevent them by computed style; the real on-device
+  // zoom/inflation behaviour still needs a manual iPhone check. Live-draft is
+  // seeded OFF so no render fires while we only read layout. Runs in its own
+  // context, torn down before the shared browser closes; its coverage is not
+  // merged (the main page already exercises every ui.js branch).
+  // ===========================================================================
+  {
+    const mctx = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+      deviceScaleFactor: 3,
+      reducedMotion: 'reduce', // stable popover geometry (no entrance translate)
+    });
+    const mpage = await mctx.newPage();
+    await mpage.addInitScript(() =>
+      localStorage.setItem('povrayer.ui.v1', JSON.stringify({ liveDraft: false }))
+    );
+    await mpage.goto(server.url, { waitUntil: 'load' });
+    assert.equal(
+      await mpage.evaluate(() => globalThis.crossOriginIsolated),
+      true,
+      'the mobile context must still be cross-origin isolated'
+    );
+    await mpage.waitForFunction(
+      () => document.querySelectorAll('#example-listbox .ex-option').length >= 4,
+      null,
+      { timeout: 30_000 }
+    );
+    assert.equal(
+      await mpage.evaluate(() => matchMedia('(pointer: coarse)').matches),
+      true,
+      'the mobile context must report a coarse pointer (the iOS rules key on it)'
+    );
+
+    // iOS focus-zoom floor: the editor and the two layers locked to it (the line
+    // numbers + the syntax overlay) must all be >= 16px AND identical, or iOS
+    // zooms the page on focus and the colored overlay drifts off the caret.
+    const fonts = await mpage.evaluate(() => {
+      const fs = (id) => getComputedStyle(document.getElementById(id)).fontSize;
+      return { editor: fs('editor'), gutter: fs('gutter'), highlight: fs('editor-highlight') };
+    });
+    assert.equal(fonts.editor, '16px', 'the editor must be 16px on a coarse pointer (no iOS zoom)');
+    assert.equal(fonts.gutter, fonts.editor, 'the gutter font must match the editor');
+    assert.equal(fonts.highlight, fonts.editor, 'the syntax overlay font must match the editor');
+
+    // Text-inflation guard: without text-size-adjust, iOS/Android enlarge the
+    // editor + overlay text past their declared size ("font too big").
+    assert.equal(
+      await mpage.evaluate(() => getComputedStyle(document.documentElement).webkitTextSizeAdjust),
+      '100%',
+      'text-size-adjust must pin declared sizes against mobile text inflation'
+    );
+
+    // Scroll containment: the capped wrap=off editor scrolls itself without
+    // chaining into a page jump (the swipe trap), and stays scrollable.
+    assert.equal(
+      await mpage.evaluate(
+        () => getComputedStyle(document.getElementById('editor')).overscrollBehaviorY
+      ),
+      'contain',
+      'the editor must contain its overscroll so touch scrolling never chains a page jump'
+    );
+
+    // The example list is the phone's path to the scenes: an obvious 16px
+    // trigger, and a popover whose list scrolls in place (overscroll contained)
+    // and fits within the small viewport.
+    assert.equal(
+      await mpage.evaluate(
+        () => getComputedStyle(document.getElementById('example-trigger')).fontSize
+      ),
+      '16px',
+      'the example trigger must read as a 16px control on a phone'
+    );
+    await mpage.click('#example-trigger');
+    await mpage.waitForFunction(
+      () => document.getElementById('example-trigger').getAttribute('aria-expanded') === 'true',
+      null,
+      { timeout: 5_000 }
+    );
+    const list = await mpage.evaluate(() => {
+      const lb = document.getElementById('example-listbox');
+      const b = document.getElementById('example-browser').getBoundingClientRect();
+      return {
+        overscroll: getComputedStyle(lb).overscrollBehaviorY,
+        scrollable: lb.scrollHeight > lb.clientHeight,
+        bottom: b.bottom,
+        innerH: window.innerHeight,
+      };
+    });
+    assert.equal(list.overscroll, 'contain', 'the example list must contain its overscroll');
+    assert.ok(list.scrollable, 'the example list must scroll within the popover');
+    assert.ok(
+      list.bottom <= list.innerH,
+      `the example popover must fit the viewport (bottom ${list.bottom} <= ${list.innerH})`
+    );
+
+    await mctx.close();
+  }
 } catch (err) {
   failure = err;
 } finally {

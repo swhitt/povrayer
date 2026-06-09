@@ -100,6 +100,13 @@ html,
 body {
   margin: 0;
   padding: 0;
+  /* Pin text to its declared size on phones: iOS Safari and Android Chrome
+     "text autosizing" otherwise inflates large text blocks past the size we
+     set, most visibly the editor textarea and its <pre> syntax overlay, which
+     reads as "the editor font is huge". 100% (not `none`) leaves user
+     pinch-zoom intact, so it's not an accessibility regression. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
@@ -488,6 +495,10 @@ body.ui main > * {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* Flicking the scene list never scroll-chains the page behind the popover
+     (the open panel owns the gesture); momentum scroll for older iOS. */
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Category head: a disclosure toggle (role=button, aria-expanded). Grey,
@@ -1355,6 +1366,16 @@ body.source-open #repl-source {
     font-size: 16px;
   }
 
+  /* The capped-height, wrap=off editor is a finicky touch scroll target. Keep
+     its own scroll self-contained so dragging to the top/bottom of the source
+     doesn't chain into a page-scroll jump (the "swipe trap"), and hand older
+     iOS momentum scrolling. The textarea already owns its scroll (overflow:
+     auto + the max-height cap); this just makes that scroll comfortable. */
+  #editor {
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
   /* The REPL input is the page's primary control; its own min-height rule
      (an id selector) outranks the textarea floor above, so the 44px floor
      needs the same specificity. */
@@ -1379,6 +1400,14 @@ body.source-open #repl-source {
      (already center-aligned via align-items). */
   .ex-group-head {
     min-height: 44px;
+  }
+
+  /* The example trigger is the phone's entry point to the scene list. Size it
+     like the 16px inputs (not the 13px chrome) so it reads as an obvious,
+     comfortably-tappable control; the 44px tap floor already comes from the
+     base button rule above. */
+  #example-trigger {
+    font-size: 16px;
   }
 
   /* Inline links (nav, footer, save png): vertical padding on inline boxes
