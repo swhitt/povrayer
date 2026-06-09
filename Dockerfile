@@ -17,7 +17,7 @@ ARG LINK_EXTRA=""
 ARG WASM_MAX_MEMORY=2GB
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      autoconf automake m4 patch curl ca-certificates && \
+      autoconf automake m4 patch curl ca-certificates unzip && \
     rm -rf /var/lib/apt/lists/*
 
 # Shared flag sets. Ports must be present at BOTH compile and link;
@@ -95,6 +95,23 @@ RUN cd povray && emmake make -j"$(nproc)" -C platform
 # Iterating layer: real console content, then the small vfe lib
 COPY src/povrayer_console.cpp /build/povray/vfe/unix/povrayer_console.cpp
 RUN cd povray && emmake make -j"$(nproc)" -C vfe
+
+# Lightsys IV + the CIE XYZ colour-space macros (Jaime Vives Piqueres & "Ive",
+# bundling Philippe Debar's Skylight adaptation), licensed CC-BY-SA-4.0 per
+# https://www.ignorancia.org/index.php?page=lightsys . Fetched at build time so
+# the package is never vendored into this repo, then dropped FLAT into the
+# POV-Ray include dir embedded just below, so scenes can `#include "CIE.inc"` /
+# "lightsys.inc" etc. exactly like the stdlib includes. Only the 17 top-level
+# .inc files (not the demo/test scenes) are embedded. Pinned by sha256 for a
+# reproducible build; if the origin is down, the Internet Archive has a snapshot
+# (web.archive.org/web/20150911013706id_/<the URL below>).
+ARG LIGHTSYS_URL="http://www.ignorancia.org/uploads/zips/lightsys4d.zip"
+ARG LIGHTSYS_SHA256="d302b96a669ac776ac856fbd480427eb92c327099fd2856748a1d7bf6a8c84d1"
+RUN curl -fsSL --retry 3 --retry-delay 2 -o /tmp/lightsys.zip "${LIGHTSYS_URL}" \
+      && printf '%s  /tmp/lightsys.zip\n' "${LIGHTSYS_SHA256}" | sha256sum -c - \
+      && unzip -j -o /tmp/lightsys.zip 'LightsysIV/*.inc' -x 'LightsysIV/*/*.inc' \
+           -d povray/distribution/include \
+      && rm /tmp/lightsys.zip
 
 # Final link, hand-rolled for full control of -s flags and .mjs output.
 # libvfe.a listed twice: cyclic deps with libpovray.a (same as upstream LDADD).

@@ -184,6 +184,24 @@ exports the raw bundle and whose `runtime` stage is the CLI image. CI rebuilds
 the bundle from source on every push, so `dist/` is a build output, never a
 committed blob.
 
+## Bundled macros
+
+The wasm embeds POV-Ray's standard include library (`colors.inc`,
+`textures.inc`, `functions.inc`, `rad_def.inc`, ...) plus
+[Lightsys IV](https://www.ignorancia.org/index.php?page=lightsys), so scenes can
+`#include` them with no setup, in the browser or the CLI:
+
+```pov
+#include "CIE.inc"        // CIE XYZ colour-space macros
+#include "lightsys.inc"   // physically-based lights from colour temperature / spectra
+```
+
+Lightsys IV and the CIE colour-space macros are by Jaime Vives Piqueres and
+"Ive" (bundling Philippe Debar's Skylight), licensed
+[CC-BY-SA-4.0](https://creativecommons.org/licenses/by-sa/4.0/). The build
+downloads the package from the author's site and embeds the include files into
+the wasm; the package is not vendored into this repository.
+
 ## Memory
 
 The default build declares a 2GB shared-memory maximum (it starts at 256MB and
