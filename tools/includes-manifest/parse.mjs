@@ -4,14 +4,13 @@
 // build ships (T_Stone1..44, T_Gold_*, ...), not a hand-maintained list that
 // drifts from what the renderer actually has.
 //
-// Pure and dependency-free on purpose: the generator (generate.mjs) fetches the
-// pinned sources and hands their text here, but this module never touches the
-// network or the filesystem, so it unit-tests against small fixtures AND could
-// run in the browser against FS-read .inc files if we ever wanted live
-// extraction. Determinism is a hard requirement (the result is committed): files
-// are processed in name order, duplicate identifiers resolve first-wins, and the
-// symbol list is sorted by name, so the same inputs always yield byte-identical
-// output.
+// Pure on purpose: the generator (generate.mjs) fetches the pinned sources and
+// hands their text here, but this module never touches the network or the
+// filesystem, so it unit-tests against small fixtures. Determinism is a hard
+// requirement (the result is committed): files are processed in name order,
+// duplicate identifiers resolve first-wins, and the symbol list is sorted by
+// name, so the same inputs always yield byte-identical output.
+import { stripCommentsAndStrings } from '../../web/sdl-strip.js';
 
 // Color constructors and the `color`/`colour` keyword: all collapse to one kind.
 const COLOR = new Set([
@@ -108,78 +107,6 @@ export function classifyKind(word) {
   if (word === 'transform' || word === 'matrix') return 'transform';
   if (word === 'version') return 'version'; // the #declare X = version save/restore dance; filtered out
   return 'value';
-}
-
-/**
- * Replace comment and string CONTENT with spaces so the declaration regexes
- * can't trip over a `#declare` inside a comment or a `"..."`. Length and
- * newlines are preserved (so nothing shifts), but the delimiters of strings are
- * kept as `"` `"` and comment bodies become blanks. Block comments nest exactly
- * like POV-Ray 3.8; an unterminated comment or string runs to EOF/EOL.
- *
- * @param {string} src
- * @returns {string}
- */
-export function stripCommentsAndStrings(src) {
-  const n = src.length;
-  let out = '';
-  let i = 0;
-  while (i < n) {
-    if (src.startsWith('//', i)) {
-      while (i < n && src[i] !== '\n') {
-        out += ' ';
-        i++;
-      }
-      continue;
-    }
-    if (src.startsWith('/*', i)) {
-      let depth = 1;
-      out += '  ';
-      i += 2;
-      while (i < n && depth > 0) {
-        if (src.startsWith('/*', i)) {
-          depth++;
-          out += '  ';
-          i += 2;
-        } else if (src.startsWith('*/', i)) {
-          depth--;
-          out += '  ';
-          i += 2;
-        } else {
-          out += src[i] === '\n' ? '\n' : ' ';
-          i++;
-        }
-      }
-      continue;
-    }
-    if (src[i] === '"') {
-      out += '"';
-      i++;
-      while (i < n) {
-        if (src[i] === '\\') {
-          out += '  ';
-          i += 2;
-          continue;
-        }
-        if (src[i] === '"') {
-          out += '"';
-          i++;
-          break;
-        }
-        if (src[i] === '\n') {
-          out += '\n';
-          i++;
-          break;
-        }
-        out += ' ';
-        i++;
-      }
-      continue;
-    }
-    out += src[i];
-    i++;
-  }
-  return out;
 }
 
 // `#declare NAME = <lead>` where lead is the first RHS token: an identifier, a

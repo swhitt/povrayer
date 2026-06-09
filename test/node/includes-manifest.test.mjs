@@ -1,16 +1,12 @@
 // Unit tests for the include-manifest parser (tools/includes-manifest/parse.mjs):
 // the build-time extractor that turns the shipped .inc files into the
-// autocomplete's symbol list. Exhaustive over every kind branch, the
-// comment/string stripper, and the dedup/filter rules so the extraction stays
-// trustworthy as include pins change.
+// autocomplete's symbol list. Exhaustive over every kind branch and the
+// dedup/filter rules so the extraction stays trustworthy as include pins change.
+// (The shared comment/string stripper it relies on is tested in sdl-strip.test.mjs.)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-  classifyKind,
-  stripCommentsAndStrings,
-  parseManifest,
-} from '../../tools/includes-manifest/parse.mjs';
+import { classifyKind, parseManifest } from '../../tools/includes-manifest/parse.mjs';
 
 test('classifyKind maps each RHS lead keyword to its kind', () => {
   assert.equal(classifyKind('rgb'), 'color');
@@ -27,35 +23,6 @@ test('classifyKind maps each RHS lead keyword to its kind', () => {
   assert.equal(classifyKind('matrix'), 'transform');
   assert.equal(classifyKind('version'), 'version');
   assert.equal(classifyKind('SomeUserColor'), 'value');
-});
-
-test('stripCommentsAndStrings blanks line + nested block comments', () => {
-  assert.equal(stripCommentsAndStrings('a // #declare X = 1\nb'), 'a                  \nb');
-  // Nested block: the inner */ does not close the outer one.
-  const out = stripCommentsAndStrings('x /* a /* b */ c */ y');
-  assert.ok(!out.includes('a'));
-  assert.ok(!out.includes('b'));
-  assert.ok(!out.includes('c'));
-  assert.ok(out.startsWith('x '));
-  assert.ok(out.trimEnd().endsWith('y'));
-});
-
-test('stripCommentsAndStrings runs an unterminated block comment to EOF', () => {
-  const out = stripCommentsAndStrings('keep /* never closed #declare Z = 1');
-  assert.equal(out.trimEnd(), 'keep');
-});
-
-test('stripCommentsAndStrings blanks string content but keeps the quotes', () => {
-  const out = stripCommentsAndStrings('#declare S = "a\\"b#declare Q = 9"\n');
-  assert.ok(out.includes('"'));
-  assert.ok(!out.includes('Q = 9'));
-  // The declare BEFORE the string survives.
-  assert.equal(parseManifest([{ name: 's.inc', text: out }])[0].name, 'S');
-});
-
-test('stripCommentsAndStrings ends an unterminated string at the line break', () => {
-  const out = stripCommentsAndStrings('"open string\nback');
-  assert.ok(out.includes('back'));
 });
 
 test('parseManifest captures each declaration kind from its RHS lead', () => {

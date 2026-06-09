@@ -41,6 +41,7 @@
     "test/browser/serve.mjs",
     "web/examples.js",
     "web/highlight.js",
+    "web/sdl-strip.js",
     "web/complete.js",
     "web/context.js",
     "web/assets.js",

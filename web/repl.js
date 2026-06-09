@@ -10,6 +10,7 @@ import {
 } from './render-client.js';
 import { EXAMPLES, getExample } from './examples.js';
 import { highlight } from './highlight.js';
+import { stripCommentsAndStrings } from './sdl-strip.js';
 
 const isoWarning = document.getElementById('iso-warning');
 if (crossOriginIsolated) {
@@ -186,21 +187,18 @@ const SCAFFOLD = [
 // mid-scene version change, so the assembled scene ALWAYS starts with one.
 const VERSION_LINE = '#version 3.8;';
 
-// Comments must not satisfy a scaffold test: "// fix camera later" would
-// otherwise suppress the camera scaffold and silently render black from
-// POV-Ray's fallback origin camera, so the keyword probes run against a
-// comment-stripped copy.
-function stripComments(sdl) {
-  return sdl.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, '');
-}
-
 // Line spans of each entry within the last assembled scene (1-based,
 // inclusive), so error line numbers can be mapped back to "entry N, line M".
 let lastSpans = [];
 
 function assembleScene() {
   const body = entries.map((e) => e.source).join('\n');
-  const probe = stripComments(body);
+  // Comments + strings must not satisfy a scaffold test: "// fix camera later"
+  // (or a "camera" inside a string) would otherwise suppress the camera scaffold
+  // and silently render black from POV-Ray's fallback origin camera, so the
+  // keyword probes run against a comment/string-stripped copy. The shared
+  // stripper nests block comments (a flat regex couldn't).
+  const probe = stripCommentsAndStrings(body);
   const injected = SCAFFOLD.filter(([re]) => !re.test(probe)).map(([, line]) => line);
   const preamble = [VERSION_LINE, ...injected];
   // Span math mirrors the string assembly below: preamble lines, one blank
