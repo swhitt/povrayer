@@ -33,6 +33,7 @@ export const WEB_FILES = {
   'examples.js': resolve(repoRoot, 'web/examples.js'),
   'highlight.js': resolve(repoRoot, 'web/highlight.js'),
   'sdl-validate.js': resolve(repoRoot, 'web/sdl-validate.js'),
+  'permalink.js': resolve(repoRoot, 'web/permalink.js'),
 };
 
 // The 100%-or-bust set. Every file the gate enforces; a file missing from the
@@ -45,6 +46,7 @@ export const FIRST_PARTY = [
   resolve(repoRoot, 'web/highlight.js'),
   resolve(repoRoot, 'web/render-client.js'),
   resolve(repoRoot, 'web/sdl-validate.js'),
+  resolve(repoRoot, 'web/permalink.js'),
   resolve(repoRoot, 'web/ui.js'),
   resolve(repoRoot, 'web/repl.js'),
 ];
@@ -60,6 +62,7 @@ export const IGNORE_SCAN_FILES = [
   resolve(repoRoot, 'web/highlight.js'),
   resolve(repoRoot, 'web/render-client.js'),
   resolve(repoRoot, 'web/sdl-validate.js'),
+  resolve(repoRoot, 'web/permalink.js'),
   resolve(repoRoot, 'web/ui.js'),
   resolve(repoRoot, 'web/repl.js'),
 ];

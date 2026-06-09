@@ -796,6 +796,12 @@ body.ui main > * {
   gap: 8px;
 }
 
+/* Hold the Copy Link button's width across the transient "Copied" label flip so
+   the action row doesn't reflow narrower for ~1.2s. Pure width hold, no color. */
+#copy-link-btn {
+  min-width: 8.5em;
+}
+
 /* The single-row, ellipsis-truncated treatment is two-column only (see the
    min-width: 900px block, where it aligns with the example row's top edge). In
    one column the done line is allowed to wrap so the rays/thread payoff stays

@@ -12,6 +12,7 @@ import {
 import { EXAMPLES, getExample, getExampleRecord, groupByCategory } from './examples.js';
 import { highlight } from './highlight.js';
 import { validateScene } from './sdl-validate.js';
+import { encodeState, decodeState } from './permalink.js';
 
 const isoWarning = document.getElementById('iso-warning');
 if (crossOriginIsolated) {
@@ -63,6 +64,7 @@ const antialiasSelect = /** @type {HTMLSelectElement} */ (document.getElementByI
 const threadsInput = /** @type {HTMLInputElement} */ (document.getElementById('threads'));
 const renderBtn = /** @type {HTMLButtonElement} */ (document.getElementById('render-btn'));
 const cancelBtn = /** @type {HTMLButtonElement} */ (document.getElementById('cancel-btn'));
+const copyLinkBtn = /** @type {HTMLButtonElement} */ (document.getElementById('copy-link-btn'));
 const status = document.getElementById('status');
 const statusSpinner = document.getElementById('status-spinner');
 const stopBtn = /** @type {HTMLButtonElement} */ (document.getElementById('stop-btn'));
@@ -97,6 +99,7 @@ const STASH_KEY = 'povrayer.ui.stash';
 
 // 'still' renders a single frame; 'animate' drives POV-Ray's clock loop and
 // plays the frames back in #player-canvas. Restored from saved state below.
+/** @type {'still' | 'animate'} */
 let mode = 'still';
 // True once a still render has produced an image: lets a mode switch back to
 // 'still' re-show that image instead of the empty-state hint.
@@ -263,6 +266,25 @@ function saveState() {
   } catch {
     // Storage blocked or full: persistence is best-effort.
   }
+}
+
+// The current scene + settings as a permalink PermalinkState. Deliberately the
+// saveState() key set MINUS `example` and `liveDraft`: a shared link carries the
+// literal scene text and render settings, not the sender's example selection or
+// their live-draft preference.
+/** @returns {import('./permalink.js').PermalinkState} */
+function captureState() {
+  return {
+    source: editor.value,
+    width: widthInput.value,
+    height: heightInput.value,
+    quality: qualitySelect.value,
+    antialias: antialiasSelect.value,
+    threads: threadsInput.value,
+    mode,
+    frames: framesInput.value,
+    fps: fpsInput.value,
+  };
 }
 
 let saveTimer = null;
@@ -1718,6 +1740,42 @@ exportBtn.addEventListener('click', () => player.exportVideo());
 player.setFps(Number(fpsInput.value));
 applyMode();
 
+// ---- shareable permalink deep-link (#<payload>) ---------------------------
+
+// Apply a decoded permalink state to the editor + controls, then route the UI
+// (mode, gutter/highlight, save, live preview). Mirrors the example/gist "load
+// text into editor" replay (renderGutter/paintHighlight/scheduleSave/
+// scheduleDraft) PLUS the control writes the gist path doesn't need.
+/** @param {import('./permalink.js').PermalinkState} state */
+function hydrateFromState(state) {
+  editor.value = state.source;
+  widthInput.value = state.width;
+  heightInput.value = state.height;
+  // Only adopt a select value the markup actually offers; an out-of-range
+  // payload leaves the current option (matches the saved-state restore guard).
+  if (Array.from(qualitySelect.options).some((o) => o.value === state.quality)) {
+    qualitySelect.value = state.quality;
+  }
+  if (Array.from(antialiasSelect.options).some((o) => o.value === state.antialias)) {
+    antialiasSelect.value = state.antialias;
+  }
+  threadsInput.value = state.threads;
+  framesInput.value = state.frames;
+  fpsInput.value = state.fps;
+  player.setFps(Number(fpsInput.value));
+  // setMode() no-ops when next === current and would skip applyMode(); set the
+  // var + applyMode() directly so the plate/toggles always reflect the payload.
+  mode = state.mode;
+  applyMode();
+  // A permalink replaces "what counts as the loaded scene": clear the example
+  // dirty-baseline so the next example switch doesn't treat this as example text.
+  lastLoadedSource = state.source;
+  renderGutter();
+  paintHighlight();
+  scheduleSave();
+  scheduleDraft();
+}
+
 // ---- load a scene from a GitHub gist (?gist=<id>) -------------------------
 // Optional deep-link: ?gist=<id> on the editor URL loads a gist's scene into
 // the editor on page load, OVERRIDING the normally-restored saved scene. The
@@ -1813,13 +1871,29 @@ async function loadGistScene(raw) {
   scheduleDraft();
 }
 
-// On load: a ?gist=<id> link loads that gist (overriding the restored scene);
-// otherwise kick the restored scene's preview. Without the latter a cold page
-// load sits on the empty-state hint until the first keystroke, which reads as
-// "live is broken" (it isn't). scheduleDraft() self-guards to still-mode +
-// liveDraft, so animate mode or a saved live-off preference render nothing.
+// Deep-link precedence on load: a #<permalink> hash wins over ?gist, which wins
+// over the already-applied saved/default scene. The permalink decode is async
+// and tolerant (decodeState returns null on garbage); a null falls through to
+// the gist/cold-load path so a junk hash never strands the page. Without the
+// final scheduleDraft a cold page load sits on the empty-state hint until the
+// first keystroke, which reads as "live is broken" (it isn't); scheduleDraft()
+// self-guards to still-mode + liveDraft, so animate or a live-off preference
+// render nothing. We deliberately do NOT strip the hash after hydrating (unlike
+// ?gist, which is stripped to avoid a network re-fetch on reload): a hash is
+// self-contained, and leaving it lets the user re-copy or reload the permalink.
+const permalinkPayload = location.hash.slice(1);
 const gistParam = new URLSearchParams(location.search).get('gist');
-if (gistParam) {
+if (permalinkPayload) {
+  decodeState(permalinkPayload).then((state) => {
+    if (state) {
+      hydrateFromState(state);
+    } else if (gistParam) {
+      loadGistScene(gistParam);
+    } else {
+      scheduleDraft();
+    }
+  });
+} else if (gistParam) {
   loadGistScene(gistParam);
 } else {
   scheduleDraft();
@@ -1827,6 +1901,44 @@ if (gistParam) {
 
 renderBtn.addEventListener('click', startRender);
 cancelBtn.addEventListener('click', () => abortCtl?.abort());
+
+// Build a compressed permalink for the current scene + settings, copy it to the
+// clipboard, set location.hash (so the address bar reflects the shareable URL),
+// and flash the button label. Generate-on-demand only: the hash is never synced
+// on keystrokes. On a clipboard rejection we still set the hash (the URL is
+// selectable from the bar) and surface a brief failure label.
+let copyLabelTimer = null;
+/** @param {string} label */
+function flashCopyLabel(label) {
+  clearTimeout(copyLabelTimer);
+  copyLinkBtn.textContent = label;
+  copyLabelTimer = setTimeout(() => {
+    copyLinkBtn.textContent = 'Copy Link';
+  }, 1200);
+}
+async function copyPermalink() {
+  const payload = await encodeState(captureState());
+  const url = `${location.origin}${location.pathname}#${payload}`;
+  // Reflect it in the address bar regardless of the clipboard outcome.
+  location.hash = payload;
+  try {
+    await navigator.clipboard.writeText(url);
+    flashCopyLabel('Copied');
+  } catch {
+    /* c8 ignore next 2 -- clipboard.writeText rejects only on a denied permission / insecure context the COOP/COEP secure-context test page can't reach */
+    flashCopyLabel('Copy failed');
+  }
+}
+copyLinkBtn.addEventListener('click', copyPermalink);
+
+// Read-only test-observability probe (no behaviour; the app never reads it).
+// Surfaces the button label + current hash so the browser coverage suite can
+// await the async encode/clipboard's "Copied" flip and the hash being set
+// deterministically instead of racing them.
+/** @type {Window & { __permalinkProbe?: () => unknown }} */ (window).__permalinkProbe = () => ({
+  label: copyLinkBtn.textContent,
+  hash: location.hash,
+});
 
 // The prominent stop control on #status-row (syncSpinner shows it exactly while
 // something is rendering). It stops whatever is in flight: an explicit render is

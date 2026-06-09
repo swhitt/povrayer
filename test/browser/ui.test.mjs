@@ -12,6 +12,7 @@ import {
   startBrowserCoverage,
   saveBrowserCoverage,
 } from '../../tools/coverage/browser-collect.mjs';
+import { encodeState } from '../../web/permalink.js';
 
 // Hard watchdog: only cleared on success, after browser and server have shut
 // down cleanly.
@@ -2480,6 +2481,196 @@ try {
   await gistFailure('?gist=dead404', /HTTP 404/); // a 404 from the API
   await gistFailure('?gist=face', /reach the gist API/); // a network failure (route.abort)
   await gistFailure('?gist=nothex', /read a gist id/); // a malformed id (parsed, never fetched)
+
+  await page.unroute('https://api.github.com/gists/*');
+
+  // ===========================================================================
+  // Shareable permalink (#<payload>): the Copy Link button compresses the scene
+  // + settings into a base64url hash, copies a shareable URL to the clipboard,
+  // and reflects the hash in the address bar. A page opened with such a hash
+  // hydrates the editor + controls (overriding the restored scene), tolerates a
+  // garbage hash (falling through to ?gist then cold-load), and ignores select
+  // values the markup doesn't offer. The gist API is page.route-mocked so the
+  // junk-hash-falls-through-to-gist case stays deterministic.
+  // ===========================================================================
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+
+  // A known per-load fallback so a hash/gist override is unambiguous against it.
+  const PL_FALLBACK = '// permalink fallback scene\nsphere { 0, 1 }\n';
+  await page.addInitScript((fallback) => {
+    localStorage.clear();
+    localStorage.setItem('povrayer.ui.v1', JSON.stringify({ source: fallback, liveDraft: true }));
+  }, PL_FALLBACK);
+
+  const PL_GIST = '#version 3.8;\n// FROM GIST permalink test\nbox {}\n';
+  await page.route('https://api.github.com/gists/*', (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+      body: JSON.stringify({ files: { 's.pov': { filename: 's.pov', content: PL_GIST } } }),
+    })
+  );
+
+  // page.goto to a URL that differs from the current one ONLY in its hash is an
+  // in-page fragment change, not a reload, so the permalink init never re-runs.
+  // A unique throwaway ?pl=<n> search (the init code ignores any param but
+  // ?gist) forces a full document load every time without bouncing through
+  // about:blank, which would drop the page's accumulated V8 coverage.
+  let plNav = 0;
+  const plBootGoto = async (search, hash = '') => {
+    const sep = search ? '&' : '?';
+    await page.goto(`${server.url}${search}${sep}pl=${plNav++}${hash}`, { waitUntil: 'load' });
+    await page.waitForFunction(
+      () => document.querySelectorAll('#example-listbox .ex-option').length >= 4,
+      null,
+      { timeout: 30_000 }
+    );
+  };
+  const ctlValue = (id) => page.evaluate((i) => document.getElementById(i).value, id);
+  const bodyMode = () => page.evaluate(() => document.body.dataset.mode);
+  const aria = (id) =>
+    page.evaluate((i) => document.getElementById(i).getAttribute('aria-pressed'), id);
+
+  // --- Case 1: Copy Link writes a decodable permalink, sets the hash, flips the
+  // label, then reverts it. ---------------------------------------------------
+  await plBootGoto('');
+  await page.fill('#width', '321');
+  await page.fill('#height', '258');
+  await page.selectOption('#quality', '4');
+  await page.selectOption('#antialias', '0.3');
+  await page.evaluate(() => {
+    const ed = document.getElementById('editor');
+    ed.value = '#version 3.8;\n// permalink copy test\nsphere { 0, 1 }';
+    ed.dispatchEvent(new Event('input'));
+  });
+  await page.click('#copy-link-btn');
+  await page.waitForFunction(() => window.__permalinkProbe().label === 'Copied', null, {
+    timeout: 10_000,
+  });
+  await page.waitForFunction(() => window.__permalinkProbe().hash.length > 1, null, {
+    timeout: 10_000,
+  });
+  const copiedUrl = await page.evaluate(() => navigator.clipboard.readText());
+  assert.ok(
+    copiedUrl.startsWith((await page.evaluate(() => location.origin + location.pathname)) + '#'),
+    'the copied URL is origin + pathname + #<payload>'
+  );
+  const decoded = await page.evaluate(async (u) => {
+    const { decodeState } = await import('./permalink.js');
+    return decodeState(new URL(u).hash.slice(1));
+  }, copiedUrl);
+  assert.equal(decoded.width, '321', 'permalink round-trips width');
+  assert.equal(decoded.height, '258', 'permalink round-trips height');
+  assert.equal(decoded.quality, '4', 'permalink round-trips quality');
+  assert.equal(decoded.antialias, '0.3', 'permalink round-trips antialias');
+  assert.equal(decoded.mode, 'still', 'permalink round-trips the still mode');
+  assert.match(decoded.source, /permalink copy test/, 'permalink round-trips the scene source');
+  // The label reverts to "Copy Link" once the setTimeout fires.
+  await page.waitForFunction(() => window.__permalinkProbe().label === 'Copy Link', null, {
+    timeout: 4_000,
+  });
+
+  // --- Case 2: a still-mode permalink hash hydrates editor + controls. --------
+  const stillPayload = await encodeState({
+    source: '#version 3.8;\n// HYDRATED still\nbox {}',
+    width: '200',
+    height: '160',
+    quality: '2',
+    antialias: 'off',
+    threads: '3',
+    mode: 'still',
+    frames: '10',
+    fps: '8',
+  });
+  await plBootGoto('', '#' + stillPayload);
+  assert.match(await editorValue(), /HYDRATED still/, 'a permalink hash hydrates the editor');
+  assert.equal(await ctlValue('width'), '200', 'permalink hydrates width');
+  assert.equal(await ctlValue('height'), '160', 'permalink hydrates height');
+  assert.equal(await ctlValue('quality'), '2', 'permalink hydrates quality');
+  assert.equal(await ctlValue('antialias'), 'off', 'permalink hydrates antialias');
+  assert.equal(await ctlValue('threads'), '3', 'permalink hydrates threads');
+  assert.equal(await ctlValue('frames'), '10', 'permalink hydrates frames');
+  assert.equal(await ctlValue('fps'), '8', 'permalink hydrates fps');
+  assert.equal(await bodyMode(), 'still', 'permalink hydrates still mode');
+  assert.equal(await aria('mode-still'), 'true', 'still toggle reflects pressed');
+
+  // --- Case 3: an animate-mode permalink hydrates mode + player fps. ----------
+  const animPayload = await encodeState({
+    source: '#version 3.8;\n// HYDRATED animate\nbox {}',
+    width: '256',
+    height: '256',
+    quality: '',
+    antialias: '0.1',
+    threads: '',
+    mode: 'animate',
+    frames: '48',
+    fps: '30',
+  });
+  await plBootGoto('', '#' + animPayload);
+  assert.match(await editorValue(), /HYDRATED animate/, 'an animate permalink hydrates the editor');
+  assert.equal(await bodyMode(), 'animate', 'permalink hydrates animate mode');
+  assert.equal(await aria('mode-animate'), 'true', 'animate toggle reflects pressed');
+  assert.equal(await ctlValue('fps'), '30', 'permalink hydrates fps in animate');
+  assert.match(
+    await page.evaluate(() => document.getElementById('fps-readout').textContent),
+    /30/,
+    'player.setFps reflects the hydrated fps in the readout'
+  );
+  // A live draft never fires in animate (scheduleDraft self-guards to still).
+  assert.equal(
+    await page.evaluate(() => window.__liveDraftProbe().pending),
+    false,
+    'no live draft schedules in an animate permalink'
+  );
+
+  // --- Case 4: a garbage hash WITH ?gist falls through to the gist load. ------
+  await plBootGoto('?gist=abc123', '#%%%not-base64%%%');
+  await page.waitForFunction((v) => document.getElementById('editor').value === v, PL_GIST, {
+    timeout: 10_000,
+  });
+  assert.match(await editorValue(), /FROM GIST/, 'a junk hash falls through to the gist load');
+
+  // --- Case 5: out-of-range select values in the payload are ignored. ---------
+  const bogusSelects = await encodeState({
+    source: '#version 3.8;\n// bogus selects\nbox {}',
+    width: '512',
+    height: '384',
+    quality: '42', // not a real option
+    antialias: '9.9', // not a real option
+    threads: '',
+    mode: 'still',
+    frames: '24',
+    fps: '12',
+  });
+  await plBootGoto('', '#' + bogusSelects);
+  assert.match(
+    await editorValue(),
+    /bogus selects/,
+    'the bogus-select payload still hydrates source'
+  );
+  assert.equal(
+    await ctlValue('quality'),
+    '',
+    'an out-of-range quality keeps the default option (guard false arm)'
+  );
+  assert.equal(
+    await ctlValue('antialias'),
+    '0.1',
+    'an out-of-range antialias keeps the default option (guard false arm)'
+  );
+
+  // --- Case 6: a garbage hash with NO gist cold-loads the restored scene. -----
+  await plBootGoto('', '#zzzz');
+  await page.waitForFunction((v) => document.getElementById('editor').value === v, PL_FALLBACK, {
+    timeout: 10_000,
+  });
+  await page.waitForFunction(
+    () => window.__liveDraftProbe().pending || window.__liveDraftProbe().inFlight,
+    null,
+    {
+      timeout: 10_000,
+    }
+  );
 
   await page.unroute('https://api.github.com/gists/*');
 
