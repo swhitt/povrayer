@@ -175,6 +175,61 @@ try {
     'cancelled render must not replace the previous image'
   );
 
+  // ===========================================================================
+  // Stop control (#status-row): the prominent, always-visible render-stop the
+  // toolbar Cancel / Escape are easy to miss on mobile. It tracks the SAME
+  // in-flight signal as the spinner (busy render OR live draft) and activating
+  // it stops whatever is running. The live-draft case is exercised in the
+  // live-draft suite further down; here the explicit-render + idle cases.
+  // ===========================================================================
+  // Idle: nothing in flight, so Stop is hidden (it agrees with the spinner). A
+  // click while idle is a defensive no-op (neither abortCtl nor draftCtl set).
+  await page.waitForFunction(() => document.getElementById('status-spinner').hidden, null, {
+    timeout: 30_000,
+  });
+  assert.equal(
+    await page.evaluate(() => document.getElementById('stop-btn').hidden),
+    true,
+    'stop button should be hidden while idle'
+  );
+  const idleStatus = await page.evaluate(() => document.getElementById('status').textContent);
+  await page.evaluate(() => document.getElementById('stop-btn').click()); // idle no-op
+  assert.equal(
+    await page.evaluate(() => document.getElementById('status').textContent),
+    idleStatus,
+    'clicking Stop while idle must do nothing'
+  );
+
+  // Explicit render: Stop appears with the spinner the instant a render is in
+  // flight, and activating it cancels exactly like the toolbar Cancel.
+  await page.fill('#width', '1024');
+  await page.fill('#height', '768');
+  await page.selectOption('#antialias', '0.05');
+  await page.click('#render-btn');
+  await page.waitForFunction(
+    () =>
+      document.getElementById('status').dataset.state === 'busy' &&
+      !document.getElementById('stop-btn').hidden,
+    null,
+    { timeout: 15_000 }
+  );
+  await page.click('#stop-btn');
+  await page.waitForFunction(
+    () => document.getElementById('status').textContent === 'cancelled',
+    null,
+    { timeout: 30_000 }
+  );
+  assert.equal(
+    await page.evaluate(() => document.getElementById('stop-btn').hidden),
+    true,
+    'stop button hides once the explicit render is cancelled'
+  );
+  assert.equal(
+    await page.evaluate(() => document.getElementById('output').naturalWidth),
+    160,
+    'a Stop-cancelled render must not replace the previous image'
+  );
+
   // --- render-client.js direct coverage --------------------------------------
   // The UI's happy/cancel paths leave a handful of render-client branches
   // unreached: parseStats with no timing lines, errorHeadline on a worker-crash
@@ -2235,6 +2290,59 @@ try {
     'toggling live off from a draft footer must read "live off"'
   );
   await waitIdle();
+
+  // Stop control during a live DRAFT (the deliverable's draft case). Live is OFF
+  // here; re-enable it so a slow radiosity draft goes in flight, then click Stop.
+  // Unlike the toolbar Cancel (explicit renders only), Stop also turns live-draft
+  // OFF so the aborted draft can't immediately reschedule itself, and persists.
+  await typeScene(cornellA + '\n// stop-draft\n'); // distinct + slow; nothing fires while live is OFF
+  await page.click('#live-toggle'); // live ON -> schedules a draft for the fresh scene
+  await page.waitForFunction(() => window.__liveDraftProbe().inFlight, null, { timeout: 60_000 });
+  // Stop shows even though the state is 'draft' (not 'busy'): it rides draftCtl,
+  // the same in-flight signal the spinner uses.
+  assert.equal(
+    await page.evaluate(() => document.getElementById('stop-btn').hidden),
+    false,
+    'stop button should show while a live draft is in flight'
+  );
+  await page.click('#stop-btn'); // aborts the draft AND turns live-draft off
+  assert.equal(
+    await ariaPressed('live-toggle'),
+    'false',
+    'stopping a live draft flips the live-draft toggle off (aria-pressed false)'
+  );
+  // The footer neutralizes from the 'live draft · …' line to 'live off' (idle).
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const s = document.getElementById('status');
+      return { text: s.textContent, state: s.dataset.state };
+    }),
+    { text: 'live off', state: 'idle' },
+    'stopping a live draft reads "live off"'
+  );
+  // No re-fire: live is off, so the draft's backstop scheduleDraft early-returns.
+  // Wait for idle, then prove nothing is pending/in flight and Stop hid.
+  await waitIdle();
+  await page.waitForFunction(
+    () => !window.__liveDraftProbe().pending && !window.__liveDraftProbe().inFlight,
+    null,
+    { timeout: 30_000 }
+  );
+  assert.equal(
+    await page.evaluate(() => document.getElementById('stop-btn').hidden),
+    true,
+    'stop button hides once the live draft is stopped'
+  );
+  // The off state persists (debounced save).
+  await page.waitForFunction(
+    () => {
+      const raw = localStorage.getItem('povrayer.ui.v1');
+      return !!raw && JSON.parse(raw).liveDraft === false;
+    },
+    null,
+    { timeout: 5_000 }
+  );
+
   await page.fill('#threads', '');
 } catch (err) {
   failure = err;

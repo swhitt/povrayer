@@ -817,6 +817,18 @@ body.ui main > * {
   border-top-color: var(--accent);
 }
 
+/* The prominent render-stop, pinned to the right of #status-row beside the
+   spinner. The toolbar Cancel only stops explicit renders and is easy to miss on
+   mobile while a render runs, so this rides next to the live status line and JS
+   keeps it in lockstep with the spinner (visible exactly while a render or live
+   draft is in flight). A SECONDARY control: the base grey-bordered, square,
+   accent-free button treatment carries it (accent stays on Render), and the
+   @media (pointer: coarse) block already grows every button to a 44px tap
+   target. flex:none so the label never shrinks under the flexible status text. */
+#stop-btn {
+  flex: none;
+}
+
 #progress {
   margin-bottom: 8px;
 }

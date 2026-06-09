@@ -59,6 +59,7 @@ const renderBtn = document.getElementById('render-btn');
 const cancelBtn = document.getElementById('cancel-btn');
 const status = document.getElementById('status');
 const statusSpinner = document.getElementById('status-spinner');
+const stopBtn = document.getElementById('stop-btn');
 const errorBox = document.getElementById('error');
 const output = document.getElementById('output');
 const downloadBtn = document.getElementById('download-btn');
@@ -774,9 +775,13 @@ function setBusyStatus(text) {
 // data-state 'busy' for its whole duration; a live draft holds 'draft', but that
 // state also describes a *settled* draft (the resting "live draft · WxH" line),
 // so the draft case keys on the in-flight controller, not the state. Once both
-// clear, the spinner hides.
+// clear, the spinner hides. The prominent #stop-btn rides the SAME signal (its
+// click handler near the bottom stops whatever is in flight), so the spinner and
+// the stop control always agree on "something is rendering".
 function syncSpinner() {
-  statusSpinner.hidden = !(status.dataset.state === 'busy' || draftCtl !== null);
+  const inFlight = status.dataset.state === 'busy' || draftCtl !== null;
+  statusSpinner.hidden = !inFlight;
+  stopBtn.hidden = !inFlight;
 }
 
 // ---- progress bar ----
@@ -1713,6 +1718,29 @@ scheduleDraft();
 
 renderBtn.addEventListener('click', startRender);
 cancelBtn.addEventListener('click', () => abortCtl?.abort());
+
+// The prominent stop control on #status-row (syncSpinner shows it exactly while
+// something is rendering). It stops whatever is in flight: an explicit render is
+// aborted like the toolbar Cancel; a live draft is aborted AND live-draft is
+// turned off so the draft's finally backstop (scheduleDraft) can't immediately
+// reschedule it. The live toggle visibly reflects off; the user re-enables it to
+// resume. Idle clicks (neither controller set) are a defensive no-op.
+stopBtn.addEventListener('click', () => {
+  if (abortCtl) {
+    abortCtl.abort();
+  } else if (draftCtl) {
+    liveDraft = false;
+    liveToggle.setAttribute('aria-pressed', 'false');
+    clearTimeout(draftTimer);
+    draftTimer = null;
+    draftCtl.abort();
+    scheduleSave();
+    // The stop button is only visible mid-draft, so the footer is in the
+    // 'draft' state here; drop the "live draft · …" label so the now-frozen,
+    // editable preview isn't still announced as live.
+    setStatus('live off', 'idle');
+  }
+});
 
 // Document-level shortcuts: Ctrl/Cmd+Enter renders from anywhere (startRender
 // guards on busy), Escape aborts an in-flight render.
