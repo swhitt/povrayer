@@ -10,6 +10,8 @@ WebAssembly build runs headless in Node and ships as a Docker image.
 
 ### Try it live, no install: [swhitt.github.io/povrayer](https://swhitt.github.io/povrayer/)
 
+[![The povrayer editor: a sunset seascape ray-traced live in the browser](docs/screenshots/hero.png)](https://swhitt.github.io/povrayer/)
+
 The browser playground is a real renderer, not a gallery of pre-baked images.
 POV-Ray traces every pixel locally on `SharedArrayBuffer`-backed pthreads;
 nothing leaves the page.
@@ -25,6 +27,15 @@ nothing leaves the page.
 - **REPL.** An incremental mode where each entry appends to the scene and
   auto-renders, rolling back on error: [repl.html](https://swhitt.github.io/povrayer/repl.html).
 
+Every one of these is ray-traced in the browser, no GPU, no server round-trip:
+
+<p align="center">
+  <img src="docs/screenshots/gallery-glass.png" width="24%" alt="checkered glass sphere: refraction and reflection" />
+  <img src="docs/screenshots/gallery-cornell.png" width="24%" alt="Cornell box: radiosity and a glossy sphere" />
+  <img src="docs/screenshots/gallery-marbles.png" width="24%" alt="depth-of-field marbles" />
+  <img src="docs/screenshots/gallery-caustics.png" width="24%" alt="photon-mapped caustics through glass" />
+</p>
+
 One build, three surfaces: the [browser playground](#try-it-in-the-browser), a
 [Docker CLI](#render-with-docker), and a small [Node/browser wrapper API](#wrapper-api).
 
@@ -33,6 +44,18 @@ One build, three surfaces: the [browser playground](#try-it-in-the-browser), a
 Live, no install: <https://swhitt.github.io/povrayer/> (scene editor) and
 <https://swhitt.github.io/povrayer/repl.html> (the SDL REPL: each entry appends
 to the scene and auto-renders; a failed entry rolls back).
+
+<p align="center">
+  <img src="docs/screenshots/examples.png" width="49%" alt="the categorized, collapsible example browser" />
+  <img src="docs/screenshots/animation.png" width="49%" alt="animation mode: a clock-driven orbit with the built-in frame player" />
+</p>
+
+The REPL builds a scene incrementally and mirrors the assembled source in a
+slide-out panel:
+
+<p align="center">
+  <img src="docs/screenshots/repl.png" width="82%" alt="the REPL with the assembled scene-source slide-out open" />
+</p>
 
 REPL commands: `:help`, `:reset`, `:list`, `:source`, `:undo`, `:del N`,
 `:size WxH`, `:q N`, `:aa [threshold|off]`, `:threads N`, `:render`,
