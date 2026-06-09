@@ -14,6 +14,10 @@ import { highlight } from './highlight.js';
 import { validateScene } from './sdl-validate.js';
 import { encodeState, decodeState } from './permalink.js';
 import { parseRenderParams } from './url-params.js';
+import { parseFlags } from './flags.js';
+import { formatStats } from './stats.js';
+import { encodeGif } from './gif.js';
+import { encodeApng } from './apng.js';
 
 const isoWarning = document.getElementById('iso-warning');
 if (crossOriginIsolated) {
@@ -62,6 +66,8 @@ const heightInput = /** @type {HTMLInputElement} */ (document.getElementById('he
 const qualitySelect = /** @type {HTMLSelectElement} */ (document.getElementById('quality'));
 const antialiasSelect = /** @type {HTMLSelectElement} */ (document.getElementById('antialias'));
 const threadsInput = /** @type {HTMLInputElement} */ (document.getElementById('threads'));
+const flagsInput = /** @type {HTMLInputElement} */ (document.getElementById('flags'));
+const statsList = /** @type {HTMLElement} */ (document.getElementById('stats'));
 const renderBtn = /** @type {HTMLButtonElement} */ (document.getElementById('render-btn'));
 const cancelBtn = /** @type {HTMLButtonElement} */ (document.getElementById('cancel-btn'));
 const copyLinkBtn = /** @type {HTMLButtonElement} */ (document.getElementById('copy-link-btn'));
@@ -93,6 +99,7 @@ const frameReadout = document.getElementById('frame-readout');
 const fpsReadout = document.getElementById('fps-readout');
 const loopBtn = /** @type {HTMLButtonElement} */ (document.getElementById('loop-btn'));
 const exportBtn = /** @type {HTMLButtonElement} */ (document.getElementById('export-btn'));
+const exportFormat = /** @type {HTMLSelectElement} */ (document.getElementById('export-format'));
 
 const STORAGE_KEY = 'povrayer.ui.v1';
 const STASH_KEY = 'povrayer.ui.stash';
@@ -256,6 +263,7 @@ function saveState() {
         quality: qualitySelect.value,
         antialias: antialiasSelect.value,
         threads: threadsInput.value,
+        flags: flagsInput.value,
         example: selectedExample,
         mode,
         liveDraft,
@@ -281,6 +289,7 @@ function captureState() {
     quality: qualitySelect.value,
     antialias: antialiasSelect.value,
     threads: threadsInput.value,
+    flags: flagsInput.value,
     mode,
     frames: framesInput.value,
     fps: fpsInput.value,
@@ -341,6 +350,7 @@ let lastLoadedSource = '';
       antialiasSelect.value = saved.antialias;
     }
     if (typeof saved.threads === 'string') threadsInput.value = saved.threads;
+    if (typeof saved.flags === 'string') flagsInput.value = saved.flags;
     if (typeof saved.liveDraft === 'boolean') liveDraft = saved.liveDraft;
     if (saved.mode === 'still' || saved.mode === 'animate') mode = saved.mode;
     const savedFrames = parseInt(saved.frames, 10);
@@ -763,12 +773,17 @@ function readRenderOptions() {
 }
 
 // The explicit-render path: read + clamp, then write the clamped dims back into
-// the inputs so the UI always shows the values actually used.
+// the inputs so the UI always shows the values actually used. Raw flags from the
+// advanced field ride along as `args`, which the wrapper appends LAST on the
+// command line so they override the structured +W/+H/+Q/+A flags (last-wins).
+// Drafts deliberately skip this (they build their own fast opts) so a heavy flag
+// never bogs down the live preview.
 function collectOptions() {
   const opts = readRenderOptions();
   widthInput.value = String(opts.width);
   heightInput.value = String(opts.height);
-  return opts;
+  const args = parseFlags(flagsInput.value);
+  return args.length ? { ...opts, args } : opts;
 }
 
 for (const el of [
@@ -782,6 +797,10 @@ for (const el of [
 ]) {
   el.addEventListener('change', scheduleSave);
 }
+
+// The raw-flags field is free text, so persist + re-sync the permalink as it is
+// typed (input, not just change-on-blur), matching the editor's live behavior.
+flagsInput.addEventListener('input', scheduleSave);
 
 // fps is a playback control, not a render setting: changing it retunes the
 // player live (no re-render needed). Only valid in-range values apply; an
@@ -1064,6 +1083,35 @@ function doneLine(elapsedMs, opts, rawLog) {
   );
 }
 
+// One stat chip: <div class="stat"><dt>label</dt><dd>value</dd></div>.
+/** @param {string} label @param {string} value @returns {HTMLDivElement} */
+function statChip(label, value) {
+  const wrap = document.createElement('div');
+  wrap.className = 'stat';
+  const dt = document.createElement('dt');
+  dt.textContent = label;
+  const dd = document.createElement('dd');
+  dd.textContent = value;
+  wrap.append(dt, dd);
+  return wrap;
+}
+
+// Promote the render log's headline numbers into the stat-chip readout under the
+// image. Driven off the same parseStats the done-line uses, plus the dimensions
+// and wall-clock time. Called only from the explicit still-render success path
+// (drafts are previews, animate has its own footer); the chips then persist as
+// the last full render's stats until the next one.
+/** @param {string} rawLog @param {{ width: number, height: number }} opts @param {number} elapsedMs */
+function showStats(rawLog, opts, elapsedMs) {
+  const rows = formatStats(parseStats(rawLog), {
+    width: opts.width,
+    height: opts.height,
+    elapsedMs,
+  });
+  statsList.replaceChildren(...rows.map((r) => statChip(r.label, r.value)));
+  statsList.hidden = false;
+}
+
 let abortCtl = null;
 let lastUrl = null;
 // True once any engine output has ever arrived this session: the first
@@ -1250,6 +1298,7 @@ async function startRender() {
   errorBox.textContent = '';
   output.classList.add('stale');
   downloadBtn.classList.add('stale');
+  statsList.classList.add('stale');
   progressStart();
   setStatus(engineSeen ? 'rendering… parsing' : 'rendering… loading engine', 'busy');
 
@@ -1302,6 +1351,8 @@ async function startRender() {
     downloadBtn.download = downloadName(opts);
     downloadBtn.hidden = false;
     downloadBtn.classList.remove('stale');
+    statsList.classList.remove('stale');
+    showStats(rawLog, opts, elapsedMs);
 
     setStatus(doneLine(elapsedMs, opts, rawLog), 'done');
     logSummary.textContent = summaryWithCount('render log');
@@ -1321,6 +1372,7 @@ async function startRender() {
       // The kept image is the legitimate last result; don't leave it stale.
       output.classList.remove('stale');
       downloadBtn.classList.remove('stale');
+      statsList.classList.remove('stale');
       setStatus('cancelled', 'cancelled');
     } else {
       setStatus('error', 'error');
@@ -1484,6 +1536,14 @@ function createPlayer() {
   const ctx = playerCanvas.getContext('2d');
   let bitmaps = [];
   let urls = [];
+  // The raw per-frame PNG bytes, kept for the lossless APNG export (which repacks
+  // their already-compressed pixel data; no canvas round-trip, alpha preserved).
+  /** @type {Uint8Array[]} */
+  let pngFrames = [];
+  // A detached canvas reused to read RGBA back out of the bitmaps for the GIF
+  // encoder (the visible playerCanvas stays untouched mid-playback).
+  /** @type {HTMLCanvasElement | null} */
+  let exportCanvas = null;
   let idx = 0;
   let fps = 12;
   let loop = true;
@@ -1582,6 +1642,7 @@ function createPlayer() {
     destroy();
     bitmaps = result.bitmaps;
     urls = result.blobUrls;
+    pngFrames = result.frames;
     idx = 0;
     setFps(playbackFps);
     playerCanvas.width = bitmaps[0].width;
@@ -1610,10 +1671,39 @@ function createPlayer() {
     a.remove();
   }
 
-  // No MediaRecorder/codec: fall back to saving the frames as sequential PNGs.
+  // Sequential per-frame PNG download: the raw blob URLs we already hold, named
+  // frame001.png, frame002.png, ... Also the degraded path when WebM has no codec.
   function downloadFramesAsPng() {
     urls.forEach((url, i) => {
       triggerDownload(url, `frame${String(i + 1).padStart(3, '0')}.png`);
+    });
+  }
+
+  // Wrap encoder output bytes in a Blob and trigger a download, revoking the URL
+  // after a grace window (the click navigates synchronously; the timeout frees it).
+  /** @param {Uint8Array} bytes @param {string} mime @param {string} name */
+  function saveBytes(bytes, mime, name) {
+    const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+    triggerDownload(url, name);
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+
+  // Read every frame's RGBA back out of the bitmaps via a detached canvas, for
+  // the GIF encoder. Each getImageData call allocates a fresh buffer, so the
+  // per-frame Uint8Array views never alias each other.
+  /** @returns {{ data: Uint8Array }[]} */
+  function frameRgba() {
+    const w = bitmaps[0].width;
+    const h = bitmaps[0].height;
+    if (!exportCanvas) exportCanvas = document.createElement('canvas');
+    exportCanvas.width = w;
+    exportCanvas.height = h;
+    const ectx = exportCanvas.getContext('2d', { willReadFrequently: true });
+    return bitmaps.map((bm) => {
+      ectx.clearRect(0, 0, w, h);
+      ectx.drawImage(bm, 0, 0);
+      const { data } = ectx.getImageData(0, 0, w, h);
+      return { data: new Uint8Array(data.buffer) };
     });
   }
 
@@ -1640,16 +1730,67 @@ function createPlayer() {
     return candidates.find((t) => window.MediaRecorder?.isTypeSupported?.(t)) ?? null;
   }
 
+  function canWebm() {
+    return pickMime() !== null;
+  }
+
+  // WebM via MediaRecorder over a canvas captureStream: the one lossy/codec path
+  // (GIF + APNG are deterministic client-side encodes). Records real-time
+  // playback, so it takes ~clip-length to finish.
+  async function exportWebm() {
+    const mime = pickMime();
+    const stream = playerCanvas.captureStream(fps);
+    const recorder = new MediaRecorder(stream, { mimeType: mime });
+    const chunks = [];
+    recorder.ondataavailable = (e) => chunks.push(e.data);
+    const stopped = new Promise((resolve) => {
+      recorder.onstop = resolve;
+    });
+    recorder.start();
+    await playOnce();
+    recorder.stop();
+    await stopped;
+    const url = URL.createObjectURL(new Blob(chunks, { type: mime }));
+    triggerDownload(url, 'animation.webm');
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+
+  // Animated GIF: a single global palette (median-cut) over the frames' RGBA,
+  // looping unless loop is off. The rAF yield lets the 'exporting…' label paint
+  // before the synchronous encode blocks the main thread.
+  async function exportGif() {
+    await new Promise((r) => requestAnimationFrame(r));
+    const bytes = encodeGif(frameRgba(), {
+      width: bitmaps[0].width,
+      height: bitmaps[0].height,
+      delayCs: Math.max(1, Math.round(100 / fps)),
+      numPlays: loop ? 0 : 1,
+    });
+    saveBytes(bytes, 'image/gif', 'animation.gif');
+  }
+
+  // Lossless animated PNG: repacks the source PNGs' compressed pixel data, so it
+  // keeps full color + alpha. Carries a .png extension (APNG is a PNG superset).
+  async function exportApng() {
+    await new Promise((r) => requestAnimationFrame(r));
+    const bytes = encodeApng(pngFrames, {
+      delayNum: Math.max(1, Math.round(1000 / fps)),
+      delayDen: 1000,
+      numPlays: loop ? 0 : 1,
+    });
+    saveBytes(bytes, 'image/apng', 'animation.png');
+  }
+
   let exporting = false;
 
-  async function exportVideo() {
-    // Re-entrancy guard: a real export runs for seconds (playOnce holds each
-    // frame a full fps interval). Without it, a second click starts a second
-    // MediaRecorder on the same captureStream and you get two garbled files.
+  // The export entry point: dispatch on the chosen format. PNG frames are
+  // synchronous (no relabel needed); WebM with no codec degrades to PNG frames.
+  // The heavy paths (webm/gif/apng) share one re-entrancy guard + 'exporting…'
+  // relabel so a second click can't start a second encode over the same frames.
+  /** @param {string} format gif | apng | webm | png */
+  async function exportAs(format) {
     if (!bitmaps.length || exporting) return;
-    const mime = pickMime();
-    if (!mime) {
-      // Synchronous PNG fallback; nothing to guard or relabel.
+    if (format === 'png' || (format === 'webm' && !canWebm())) {
       downloadFramesAsPng();
       return;
     }
@@ -1659,20 +1800,9 @@ function createPlayer() {
     exportBtn.textContent = 'exporting…';
     pause();
     try {
-      const stream = playerCanvas.captureStream(fps);
-      const recorder = new MediaRecorder(stream, { mimeType: mime });
-      const chunks = [];
-      recorder.ondataavailable = (e) => chunks.push(e.data);
-      const stopped = new Promise((resolve) => {
-        recorder.onstop = resolve;
-      });
-      recorder.start();
-      await playOnce();
-      recorder.stop();
-      await stopped;
-      const url = URL.createObjectURL(new Blob(chunks, { type: mime }));
-      triggerDownload(url, 'animation.webm');
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      if (format === 'gif') await exportGif();
+      else if (format === 'apng') await exportApng();
+      else await exportWebm();
     } finally {
       exporting = false;
       exportBtn.disabled = false;
@@ -1684,7 +1814,19 @@ function createPlayer() {
     return bitmaps.length > 0;
   }
 
-  return { load, toggle, play, pause, seek, setFps, setLoop, exportVideo, destroy, hasFrames };
+  return {
+    load,
+    toggle,
+    play,
+    pause,
+    seek,
+    setFps,
+    setLoop,
+    exportAs,
+    canWebm,
+    destroy,
+    hasFrames,
+  };
 }
 const player = createPlayer();
 
@@ -1775,7 +1917,14 @@ scrubber.addEventListener('input', () => player.seek(Number(scrubber.value)));
 loopBtn.addEventListener('click', () => {
   player.setLoop(loopBtn.getAttribute('aria-pressed') !== 'true');
 });
-exportBtn.addEventListener('click', () => player.exportVideo());
+exportBtn.addEventListener('click', () => player.exportAs(exportFormat.value));
+// Drop the WebM option where MediaRecorder has no webm codec (e.g. some Safari):
+// GIF/APNG/PNG cover every browser deterministically, so a dead option would
+// just mislead. GIF stays the default (first option) regardless.
+/* c8 ignore next 3 -- Chromium (the only coverage browser) always has a webm codec, so this Safari-only option removal never runs under the gate */
+if (!player.canWebm()) {
+  exportFormat.querySelector('option[value="webm"]')?.remove();
+}
 
 // Seed the player fps from the (restored) input and route the plate for the
 // restored mode.
@@ -1802,6 +1951,9 @@ function hydrateFromState(state) {
     antialiasSelect.value = state.antialias;
   }
   threadsInput.value = state.threads;
+  // flags is optional on PermalinkState (older links predate the field); a
+  // non-string payload clears the field rather than writing junk into it.
+  flagsInput.value = typeof state.flags === 'string' ? state.flags : '';
   framesInput.value = state.frames;
   fpsInput.value = state.fps;
   player.setFps(Number(fpsInput.value));

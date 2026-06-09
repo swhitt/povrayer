@@ -47,6 +47,11 @@ export const FIRST_PARTY = [
   resolve(repoRoot, 'web/render-client.js'),
   resolve(repoRoot, 'web/sdl-validate.js'),
   resolve(repoRoot, 'web/permalink.js'),
+  resolve(repoRoot, 'web/url-params.js'),
+  resolve(repoRoot, 'web/flags.js'),
+  resolve(repoRoot, 'web/stats.js'),
+  resolve(repoRoot, 'web/apng.js'),
+  resolve(repoRoot, 'web/gif.js'),
   resolve(repoRoot, 'web/ui.js'),
   resolve(repoRoot, 'web/repl.js'),
 ];
@@ -63,6 +68,11 @@ export const IGNORE_SCAN_FILES = [
   resolve(repoRoot, 'web/render-client.js'),
   resolve(repoRoot, 'web/sdl-validate.js'),
   resolve(repoRoot, 'web/permalink.js'),
+  resolve(repoRoot, 'web/url-params.js'),
+  resolve(repoRoot, 'web/flags.js'),
+  resolve(repoRoot, 'web/stats.js'),
+  resolve(repoRoot, 'web/apng.js'),
+  resolve(repoRoot, 'web/gif.js'),
   resolve(repoRoot, 'web/ui.js'),
   resolve(repoRoot, 'web/repl.js'),
 ];

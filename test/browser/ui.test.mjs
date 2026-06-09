@@ -146,6 +146,46 @@ try {
     `unexpected log summary after a successful render: ${logSummary}`
   );
 
+  // Stats readout: the still render populates the chip row (showStats). The
+  // always-on rows are present plus the timing/ray rows the log carries.
+  assert.equal(
+    await page.evaluate(() => document.getElementById('stats').hidden),
+    false,
+    'the stats readout is visible after a still render'
+  );
+  const statChips = await page.evaluate(() =>
+    [...document.querySelectorAll('#stats .stat')].map((c) => c.querySelector('dt').textContent)
+  );
+  assert.ok(
+    ['resolution', 'pixels', 'total'].every((k) => statChips.includes(k)),
+    `stats chips should include the always-on rows, got: ${statChips.join(',')}`
+  );
+
+  // Raw flags ride along as args on an explicit render (collectOptions's truthy
+  // branch). The field lives in the collapsed "advanced" disclosure, so open it
+  // first (as a user would). Typing persists it (input -> debounced scheduleSave)
+  // and the next render runs with the flag appended; +Q1 is a fast, valid extra.
+  await page.evaluate(() => (document.getElementById('advanced').open = true));
+  await page.fill('#flags', '+Q1');
+  await page.waitForFunction(
+    () => {
+      try {
+        return JSON.parse(localStorage.getItem('povrayer.ui.v1') || '{}').flags === '+Q1';
+      } catch {
+        return false;
+      }
+    },
+    null,
+    { timeout: 5_000 }
+  );
+  await page.click('#render-btn');
+  await page.waitForFunction(
+    () => document.getElementById('status').dataset.state === 'done',
+    null,
+    { timeout: 120_000 }
+  );
+  await page.fill('#flags', ''); // clear so later renders see the default opts again
+
   // Cancel path: start a deliberately slow render (big frame, tight AA),
   // abort it, and require the 'cancelled' status. Only the AbortError branch
   // sets that text, so this proves cancellation actually rejects the render.
@@ -1270,6 +1310,7 @@ try {
       quality: '5',
       antialias: '0.1',
       threads: '6',
+      flags: '+R3',
       example: 'glass',
     })
   );
@@ -1281,6 +1322,7 @@ try {
       quality: document.getElementById('quality').value,
       antialias: document.getElementById('antialias').value,
       threads: document.getElementById('threads').value,
+      flags: document.getElementById('flags').value,
       example: document.getElementById('example-trigger').dataset.name,
     })),
     {
@@ -1290,6 +1332,7 @@ try {
       quality: '5',
       antialias: '0.1',
       threads: '6',
+      flags: '+R3',
       example: 'glass',
     },
     'a full saved blob should restore every control'
@@ -1394,7 +1437,7 @@ try {
   await page.evaluate(() => {
     document.getElementById('play-btn').click(); // toggle -> play -> !bitmaps.length
     document.getElementById('scrubber').dispatchEvent(new Event('input')); // seek -> !bitmaps.length
-    document.getElementById('export-btn').click(); // exportVideo -> !bitmaps.length
+    document.getElementById('export-btn').click(); // exportAs -> !bitmaps.length
   });
 
   // First animate render (3 frames, fresh page so engineSeen is false).
@@ -1517,13 +1560,82 @@ try {
   );
   assert.equal(resync.aria, 'frame 2 of 3', 'the resync-advanced frame announces "frame 2 of 3"');
 
-  // Export WebM via a stubbed MediaRecorder -> 'animation.webm' download.
+  // Export pipeline. Capture both the download filenames (stubbed anchor click)
+  // and the produced Blobs (stubbed createObjectURL) so each encoder's real
+  // output bytes can be asserted. Both stubs delegate to the originals so the
+  // player's blob-URL revokes still work.
   await page.evaluate(() => {
     window.__dl = [];
     window.__origAClick = HTMLAnchorElement.prototype.click;
     HTMLAnchorElement.prototype.click = function () {
       window.__dl.push(this.download);
     };
+    window.__blobs = [];
+    window.__origCOU = URL.createObjectURL.bind(URL);
+    URL.createObjectURL = (b) => {
+      if (b instanceof Blob) window.__blobs.push(b);
+      return window.__origCOU(b);
+    };
+  });
+  // First `n` bytes of the most recent captured Blob of a given MIME type.
+  const lastBlobHead = (type, n) =>
+    page.evaluate(
+      async ([t, count]) => {
+        const b = [...window.__blobs].reverse().find((x) => x.type === t);
+        return b ? [...new Uint8Array(await b.slice(0, count).arrayBuffer())] : null;
+      },
+      [type, n]
+    );
+
+  // GIF, and the shared re-entrancy + feedback check (a heavy encode path): the
+  // first click flips the label to 'exporting…' synchronously and disables the
+  // button; a second click while exporting hits the guard and no-ops, so only
+  // one GIF comes out.
+  await page.evaluate(() => (document.getElementById('export-format').value = 'gif'));
+  const exportFeedback = await page.evaluate(() => {
+    const btn = document.getElementById('export-btn');
+    const prevLabel = btn.textContent;
+    btn.click(); // export #1 begins
+    const midLabel = btn.textContent;
+    const midDisabled = btn.disabled;
+    btn.click(); // export #2: re-entrant -> guard returns immediately
+    return { prevLabel, midLabel, midDisabled };
+  });
+  assert.equal(exportFeedback.midLabel, 'exporting…', 'the export button relabels while exporting');
+  assert.equal(exportFeedback.midDisabled, true, 'the export button disables while exporting');
+  await page.waitForFunction(
+    (label) => {
+      const btn = document.getElementById('export-btn');
+      return !btn.disabled && btn.textContent === label;
+    },
+    exportFeedback.prevLabel,
+    { timeout: 15_000 }
+  );
+  assert.deepEqual(
+    await lastBlobHead('image/gif', 6),
+    [...'GIF89a'].map((c) => c.charCodeAt(0)),
+    'the GIF export must start with the GIF89a signature'
+  );
+  assert.equal(
+    await page.evaluate(() => window.__dl.filter((n) => /animation\.gif$/.test(n)).length),
+    1,
+    'a re-entrant export click must not produce a second GIF'
+  );
+
+  // APNG: lossless animated PNG, so a PNG signature on the output bytes.
+  await page.evaluate(() => (document.getElementById('export-format').value = 'apng'));
+  await page.click('#export-btn'); // page.click auto-waits for the button to re-enable
+  await page.waitForFunction(() => window.__dl.some((n) => /^animation\.png$/.test(n)), null, {
+    timeout: 15_000,
+  });
+  assert.deepEqual(
+    await lastBlobHead('image/apng', 8),
+    [137, 80, 78, 71, 13, 10, 26, 10],
+    'the APNG export must start with the PNG signature'
+  );
+
+  // WebM via a stubbed MediaRecorder -> 'animation.webm'.
+  await page.evaluate(() => {
     class FakeRecorder {
       start() {
         this.ondataavailable?.({ data: new Blob(['x'], { type: 'video/webm' }) });
@@ -1537,58 +1649,42 @@ try {
     }
     window.__origMR = window.MediaRecorder;
     window.MediaRecorder = FakeRecorder;
+    document.getElementById('export-format').value = 'webm';
   });
-  // Re-entrancy + feedback: the first click disables the button and relabels it
-  // 'exporting…' (synchronously, before the playOnce await); a SECOND click
-  // while that export is still running hits the `exporting` guard and no-ops, so
-  // only one file is produced (no second MediaRecorder on the same stream).
-  const exportFeedback = await page.evaluate(() => {
-    const btn = document.getElementById('export-btn');
-    const prevLabel = btn.textContent;
-    btn.click(); // export #1 begins
-    const midLabel = btn.textContent;
-    const midDisabled = btn.disabled;
-    btn.click(); // export #2: re-entrant -> guard returns immediately
-    return { prevLabel, midLabel, midDisabled };
-  });
-  assert.equal(exportFeedback.midLabel, 'exporting…', 'the export button relabels while exporting');
-  assert.equal(exportFeedback.midDisabled, true, 'the export button disables while exporting');
-  await page.waitForFunction(() => (window.__dl ?? []).some((n) => /\.webm$/.test(n)), null, {
+  await page.click('#export-btn');
+  await page.waitForFunction(() => window.__dl.some((n) => /\.webm$/.test(n)), null, {
     timeout: 15_000,
   });
-  // The export finished: button re-enabled + relabel restored, and exactly one
-  // webm came out despite the re-entrant second click.
-  await page.waitForFunction(
-    (label) => {
-      const btn = document.getElementById('export-btn');
-      return !btn.disabled && btn.textContent === label;
-    },
-    exportFeedback.prevLabel,
-    { timeout: 15_000 }
-  );
-  assert.equal(
-    await page.evaluate(() => (window.__dl ?? []).filter((n) => /\.webm$/.test(n)).length),
-    1,
-    'a re-entrant export click must not produce a second file'
-  );
 
-  // Export fallback (MediaRecorder gone) -> sequential frameNNN.png downloads.
+  // PNG frames (the explicit format) -> sequential frameNNN.png downloads.
   await page.evaluate(() => {
-    HTMLAnchorElement.prototype.click = window.__origAClick;
-    delete window.MediaRecorder;
-    window.__dl2 = [];
-    HTMLAnchorElement.prototype.click = function () {
-      window.__dl2.push(this.download);
-    };
+    window.__dl.length = 0;
+    document.getElementById('export-format').value = 'png';
   });
   await page.click('#export-btn');
   await page.waitForFunction(
-    () => (window.__dl2 ?? []).filter((n) => /frame\d+\.png/.test(n)).length >= 3,
+    () => window.__dl.filter((n) => /frame\d+\.png/.test(n)).length >= 3,
     null,
     { timeout: 5_000 }
   );
+
+  // WebM with no codec available degrades to the same PNG-frames fallback.
+  await page.evaluate(() => {
+    delete window.MediaRecorder;
+    window.__dl.length = 0;
+    document.getElementById('export-format').value = 'webm';
+  });
+  await page.click('#export-btn');
+  await page.waitForFunction(
+    () => window.__dl.filter((n) => /frame\d+\.png/.test(n)).length >= 3,
+    null,
+    { timeout: 5_000 }
+  );
+
+  // Restore the stubbed globals.
   await page.evaluate(() => {
     HTMLAnchorElement.prototype.click = window.__origAClick;
+    URL.createObjectURL = window.__origCOU;
     if (window.__origMR) window.MediaRecorder = window.__origMR;
   });
 
@@ -2587,6 +2683,7 @@ try {
     quality: '2',
     antialias: 'off',
     threads: '3',
+    flags: '+A0.05 +AM2',
     mode: 'still',
     frames: '10',
     fps: '8',
@@ -2598,6 +2695,7 @@ try {
   assert.equal(await ctlValue('quality'), '2', 'permalink hydrates quality');
   assert.equal(await ctlValue('antialias'), 'off', 'permalink hydrates antialias');
   assert.equal(await ctlValue('threads'), '3', 'permalink hydrates threads');
+  assert.equal(await ctlValue('flags'), '+A0.05 +AM2', 'permalink hydrates raw flags');
   assert.equal(await ctlValue('frames'), '10', 'permalink hydrates frames');
   assert.equal(await ctlValue('fps'), '8', 'permalink hydrates fps');
   assert.equal(await bodyMode(), 'still', 'permalink hydrates still mode');

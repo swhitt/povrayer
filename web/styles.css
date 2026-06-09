@@ -823,6 +823,37 @@ body.ui main > * {
   min-width: 8.5em;
 }
 
+/* Advanced disclosure: the raw-flags escape hatch, collapsed by default so the
+   toolbar stays uncluttered (it only matters to power users). Its own row under
+   the controls; the summary is the same quiet dim marker as the log disclosure. */
+#advanced {
+  margin-top: 12px;
+}
+
+.advanced-body {
+  margin-top: 8px;
+}
+
+/* The flags field stretches to the editor width: long +flag strings need room,
+   and a full-width text input reads clearly as "type engine flags here". The
+   monospace is inherited; a touch smaller so the flag soup stays legible. */
+#flags-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#flags-field > span {
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+#flags {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-out);
+}
+
 /* The single-row, ellipsis-truncated treatment is two-column only (see the
    min-width: 900px block, where it aligns with the example row's top edge). In
    one column the done line is allowed to wrap so the rays/thread payoff stays
@@ -951,6 +982,34 @@ body.ui main > * {
   color: var(--bg);
 }
 
+/* Stats readout: a row of dim label/value chips promoted from the render log's
+   numbers (resolution, timings, rays, threads). Square + monospace like the
+   rest; tabular-nums so the figures hold a steady column as they update. Wraps
+   to as many rows as the pane needs. JS unhides it after a still render. */
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 0 0 12px;
+  font-size: var(--fs-out);
+}
+
+.stats .stat {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.stats dt {
+  color: var(--dim);
+}
+
+.stats dd {
+  margin: 0;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Diagnostics collapse behind the disclosure; JS unhides #log-details once
    the first line arrives (an :empty trick dies on the progress node). */
 #log {
@@ -1074,6 +1133,16 @@ body.ui[data-mode='animate'] .still-only {
   color: var(--dim);
   font-size: var(--fs-out);
   white-space: nowrap;
+}
+
+/* Export cluster: the format picker + the Export button, kept together so they
+   wrap as a unit when the player controls run out of room. The select matches
+   the quality/antialias selects; the button is the standard secondary treatment
+   (accent stays on Render). */
+.export-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* ---- REPL page ---- */

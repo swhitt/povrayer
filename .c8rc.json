@@ -41,7 +41,12 @@
     "test/browser/serve.mjs",
     "web/examples.js",
     "web/highlight.js",
-    "web/sdl-validate.js"
+    "web/sdl-validate.js",
+    "web/url-params.js",
+    "web/flags.js",
+    "web/stats.js",
+    "web/apng.js",
+    "web/gif.js"
   ],
   "exclude": [
     "web/coi-serviceworker.js",

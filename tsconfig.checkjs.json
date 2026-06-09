@@ -43,6 +43,10 @@
   },
 
   "include": [
+    "web/apng.js",
+    "web/gif.js",
+    "web/flags.js",
+    "web/stats.js",
     "web/ui.js",
     "web/repl.js",
     "web/render-client.js",

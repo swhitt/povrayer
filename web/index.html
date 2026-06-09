@@ -177,6 +177,27 @@
             </button>
           </span>
         </div>
+        <details id="advanced">
+          <summary>advanced</summary>
+          <div class="advanced-body">
+            <label
+              id="flags-field"
+              title="Extra POV-Ray command-line flags, appended last so they override the controls above. Antialiasing: +A0.05 threshold, +AM2 stochastic method, +R4 depth, +J0.5 jitter. Anything the engine accepts works (e.g. Sampling_Method=2)."
+            >
+              <span>raw flags</span>
+              <input
+                id="flags"
+                type="text"
+                spellcheck="false"
+                autocapitalize="off"
+                autocorrect="off"
+                autocomplete="off"
+                placeholder="+A0.05 +AM2 +R4 +J0.5"
+                aria-label="raw POV-Ray command-line flags"
+              />
+            </label>
+          </div>
+        </details>
       </section>
       <section id="output-pane" aria-label="render output">
         <div id="status-row">
@@ -217,9 +238,21 @@
           <span id="frame-readout" class="player-readout">0 / 0</span>
           <span id="fps-readout" class="player-readout">12 fps</span>
           <button id="loop-btn" class="toggle-btn" type="button" aria-pressed="true">loop</button>
-          <button id="export-btn" type="button" title="Export the animation as a WebM video">
-            Export WebM
-          </button>
+          <span class="export-field">
+            <select id="export-format" aria-label="animation export format">
+              <option value="gif">GIF</option>
+              <option value="apng">APNG</option>
+              <option value="webm">WebM</option>
+              <option value="png">PNG frames</option>
+            </select>
+            <button
+              id="export-btn"
+              type="button"
+              title="Export the animation in the selected format"
+            >
+              Export
+            </button>
+          </span>
         </div>
         <div class="meta-row still-only">
           <a id="download-btn" hidden download="render.png">Download PNG</a>
@@ -233,6 +266,7 @@
             fit
           </button>
         </div>
+        <dl id="stats" class="stats still-only" aria-label="render statistics" hidden></dl>
         <details id="log-details" hidden>
           <summary id="log-summary">render log</summary>
           <pre id="log" tabindex="0" aria-label="render log"></pre>
