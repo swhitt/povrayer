@@ -98,7 +98,7 @@
             ></textarea>
             <span id="editor-tabhelp" class="sr-only"
               >Tab indents the line. Press Escape, then Tab (or Shift+Tab) to move focus out of the
-              editor. Ctrl+Space lists completions.</span
+              editor. Ctrl+Space lists completions. Alt+drag a number to scrub its value.</span
             >
             <!-- Autocomplete popup; ui.js positions it at the caret and fills it.
                  The textarea keeps its textbox role (a combobox role is not well
@@ -123,6 +123,15 @@
         </div>
         <!-- Transient feedback for a drop that couldn't be imported. -->
         <p id="asset-note" class="asset-note" role="status" aria-live="polite" hidden></p>
+        <!-- Auto-generated sliders, one per top-level `#declare NAME = <number>`;
+             ui.js fills this and hides it when the scene has no such params.
+             (Alt+drag a number in the editor to scrub it the same way.) -->
+        <div
+          id="sliders"
+          aria-label="scene parameter sliders"
+          title="Drag to adjust; add a `// min..max` comment after a #declare to set its slider range"
+          hidden
+        ></div>
         <div id="controls">
           <span class="ctl-group">
             <span class="seg-group" id="mode-toggle" role="group" aria-label="render mode">

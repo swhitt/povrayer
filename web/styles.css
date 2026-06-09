@@ -924,6 +924,58 @@ body.ui main > * {
   display: none;
 }
 
+/* Auto-sliders for `#declare NAME = <number>` params. The range control is the
+   one place a slider's filled track reads as a value affordance, so it borrows
+   the accent via accent-color (the same family as the progress bar), and nothing
+   else here does. Names dim, values tabular like the rest of the readouts. */
+#sliders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 8px;
+}
+
+#sliders[hidden] {
+  display: none;
+}
+
+.slider-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.slider-name {
+  color: var(--dim);
+  font-size: var(--fs-out);
+}
+
+.slider-row input[type='range'] {
+  width: 120px;
+  accent-color: var(--accent);
+}
+
+.slider-value {
+  min-width: 5ch;
+  color: var(--text);
+  font-size: var(--fs-out);
+  font-variant-numeric: tabular-nums;
+}
+
+.slider-reset {
+  border: 0;
+  padding: 0 2px;
+  background: none;
+  color: var(--dim);
+  font-size: var(--fs-out);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.slider-reset:hover {
+  color: var(--text);
+}
+
 /* Three-level spacing rhythm: 6px label-to-control (pair), 10px within a
    .ctl-group (below), 20px between groups here. Row-gap 12px so wrapped tiers
    read as deliberate rows, not an accidental overflow. */

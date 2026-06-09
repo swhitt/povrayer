@@ -54,6 +54,7 @@
     "web/complete.js",
     "web/context.js",
     "web/assets.js",
+    "web/sliders.js",
     "web/sdl-validate.js",
     "web/examples.js",
     "src/cli.mjs",

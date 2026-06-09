@@ -1128,7 +1128,7 @@ try {
     {
       describedBy: 'editor-tabhelp',
       helpText:
-        'Tab indents the line. Press Escape, then Tab (or Shift+Tab) to move focus out of the editor. Ctrl+Space lists completions.',
+        'Tab indents the line. Press Escape, then Tab (or Shift+Tab) to move focus out of the editor. Ctrl+Space lists completions. Alt+drag a number to scrub its value.',
       clipped: true,
       visible: true,
     },
@@ -3306,6 +3306,156 @@ try {
     await page.evaluate(() => document.getElementById('assets').hidden),
     true,
     'removing every asset hides the strip'
+  );
+
+  // ===========================================================================
+  // Live numeric controls: a slider per top-level `#declare = <number>`, and
+  // Alt+drag scrubbing of any numeric literal. The parse/format logic is
+  // node-tested; here the panel, the in-place rewrites, and the pointer wiring.
+  // ===========================================================================
+  await page.evaluate(() => {
+    const e = document.getElementById('editor');
+    e.value = '#declare A = 5;\n#declare B = 7;';
+    e.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  assert.equal(
+    await page.evaluate(() => document.getElementById('sliders').hidden),
+    false,
+    'declared numbers reveal the slider panel'
+  );
+  assert.deepEqual(
+    await page.evaluate(() =>
+      [...document.querySelectorAll('#sliders .slider-name')].map((s) => s.textContent)
+    ),
+    ['A', 'B'],
+    'one slider per declared number'
+  );
+
+  // Dragging slider A rewrites its literal; B's tracked span shifts so dragging B
+  // then rewrites the correct (moved) literal.
+  await page.evaluate(() => {
+    const inp = document.querySelectorAll('#sliders input')[0];
+    inp.value = '8';
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  assert.equal(
+    await page.evaluate(() => document.getElementById('editor').value.split('\n')[0]),
+    '#declare A = 8.0;',
+    'the slider rewrites its literal in place'
+  );
+  await page.evaluate(() => {
+    const inp = document.querySelectorAll('#sliders input')[1];
+    inp.value = '9';
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  assert.equal(
+    await page.evaluate(() => document.getElementById('editor').value.split('\n')[1]),
+    '#declare B = 9.0;',
+    'the second slider tracks its shifted literal correctly'
+  );
+
+  // The per-slider reset restores the ORIGINAL literal text (5, not a reformatted
+  // 5.0), even after the drag rewrote the code to 8.0.
+  await page.evaluate(() => document.querySelector('#sliders .slider-reset').click());
+  assert.equal(
+    await page.evaluate(() => document.getElementById('editor').value.split('\n')[0]),
+    '#declare A = 5;',
+    'reset restores the original literal text, not a reformatted value'
+  );
+
+  // Editing the number in the CODE makes that the new slider value + default.
+  await page.evaluate(() => {
+    const e = document.getElementById('editor');
+    e.value = '#declare A = 20;';
+    e.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  assert.equal(
+    await page.evaluate(() => document.querySelector('#sliders input').value),
+    '20',
+    'a code edit updates the slider to the new default value'
+  );
+
+  // Inline Alt+drag scrub of a numeric literal, plus the no-scrub guards. The
+  // line is TAB-indented so offsetFromPoint's tab-expansion path is exercised.
+  const scrubbed = await page.evaluate(() => {
+    const e = document.getElementById('editor');
+    e.value = '\t#declare S = 5;';
+    e.dispatchEvent(new Event('input', { bubbles: true }));
+    const cs = getComputedStyle(e);
+    const rect = e.getBoundingClientRect();
+    const probe = document.createElement('span');
+    for (const k of ['fontFamily', 'fontSize', 'fontWeight', 'letterSpacing'])
+      probe.style[k] = cs[k];
+    probe.style.position = 'absolute';
+    probe.style.visibility = 'hidden';
+    probe.style.whiteSpace = 'pre';
+    probe.textContent = '0'.repeat(20);
+    document.body.appendChild(probe);
+    const cw = probe.offsetWidth / 20;
+    probe.remove();
+    // The '5' sits at visual column 15: a 2-column tab then `#declare S = ` (13).
+    const x = rect.left + parseFloat(cs.paddingLeft) + 15 * cw;
+    const y = rect.top + parseFloat(cs.paddingTop) + 0.5 * parseFloat(cs.lineHeight);
+    // move/up while NOT scrubbing first (the early-return guards)
+    document.dispatchEvent(new MouseEvent('mousemove', { clientX: 0, clientY: 0, bubbles: true }));
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    // a real Alt+drag scrub
+    e.dispatchEvent(
+      new MouseEvent('mousedown', { altKey: true, clientX: x, clientY: y, bubbles: true })
+    );
+    document.dispatchEvent(
+      new MouseEvent('mousemove', { clientX: x + 40, clientY: y, bubbles: true })
+    );
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    // no-scrub cases: above the text, below the text, and a non-Alt press
+    e.dispatchEvent(
+      new MouseEvent('mousedown', {
+        altKey: true,
+        clientX: x,
+        clientY: rect.top - 20,
+        bubbles: true,
+      })
+    );
+    e.dispatchEvent(
+      new MouseEvent('mousedown', {
+        altKey: true,
+        clientX: x,
+        clientY: rect.top + 9999,
+        bubbles: true,
+      })
+    );
+    e.dispatchEvent(
+      new MouseEvent('mousedown', { altKey: false, clientX: x, clientY: y, bubbles: true })
+    );
+    return e.value;
+  });
+  assert.match(scrubbed, /#declare S = \d+\.\d;/, 'Alt+drag scrubs the literal to a fresh value');
+  assert.notEqual(scrubbed, '\t#declare S = 5;', 'the scrubbed value changed');
+
+  // Holding Alt reveals the scrub cursor on the editor; releasing clears it.
+  await page.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Alt' })));
+  assert.equal(
+    await page.evaluate(() => document.getElementById('editor').style.cursor),
+    'ew-resize',
+    'holding Alt reveals the number-scrub cursor'
+  );
+  await page.evaluate(() => window.dispatchEvent(new KeyboardEvent('keyup', { key: 'Alt' })));
+  assert.equal(
+    await page.evaluate(() => document.getElementById('editor').style.cursor),
+    '',
+    'releasing Alt clears the scrub cursor'
+  );
+
+  // A scene with no declared numbers hides the slider panel again.
+  await page.evaluate(() => {
+    const e = document.getElementById('editor');
+    e.value = 'sphere { 0, 1 }';
+    e.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  assert.equal(
+    await page.evaluate(() => document.getElementById('sliders').hidden),
+    true,
+    'a scene with no declared numbers hides the slider panel'
   );
 
   // ===========================================================================

@@ -20,6 +20,7 @@ import { encodeGif } from './gif.js';
 import { encodeApng } from './apng.js';
 import { buildPool, complete, applyCompletion, signatureText } from './complete.js';
 import { classifyAsset, assetSnippet, safeName, uniqueName } from './assets.js';
+import { parseDeclaredNumbers, numberTokenAt, scrubStep, formatScrubbed } from './sliders.js';
 
 const isoWarning = document.getElementById('iso-warning');
 if (crossOriginIsolated) {
@@ -68,6 +69,7 @@ const completeStatus = document.getElementById('complete-status');
 const assetsStrip = document.getElementById('assets');
 const assetChips = document.getElementById('asset-chips');
 const assetNote = document.getElementById('asset-note');
+const slidersPanel = document.getElementById('sliders');
 const gutter = document.getElementById('gutter');
 const liveToggle = document.getElementById('live-toggle');
 const widthInput = /** @type {HTMLInputElement} */ (document.getElementById('width'));
@@ -722,6 +724,7 @@ editor.addEventListener('input', () => {
   renderGutter();
   paintHighlight();
   refreshComplete(false);
+  buildSliders();
   scheduleSave();
   scheduleDraft();
 });
@@ -782,6 +785,7 @@ editor.addEventListener('keydown', (e) => {
 editor.addEventListener('blur', () => {
   escapePrimed = false;
   closeComplete(); // focus left the editor (clicking a popup item keeps focus, so it doesn't fire here)
+  editor.style.cursor = ''; // clear any Alt-held scrub cursor
 });
 
 // ---- editor autocomplete (SDL keywords + the shipped include library) ----
@@ -1197,6 +1201,165 @@ editorWrap.addEventListener('drop', (e) => {
   editorWrap.classList.remove('drag-over');
   handleDrop(e.dataTransfer.files);
 });
+
+// ---- live numeric controls: auto-sliders + inline scrub ----
+// Every top-level `#declare NAME = <number>` gets a slider; dragging it rewrites
+// the literal in place. Alt+dragging any numeric literal in the editor scrubs it
+// the same way. Both edit the source text directly (setRangeText keeps undo and
+// the scene-as-single-source-of-truth intact) and re-render via the live draft.
+// parseDeclaredNumbers / numberTokenAt / formatScrubbed are the pure half.
+
+/**
+ * @type {{ name: string, start: number, end: number, step: number,
+ *   input: HTMLInputElement, readout: HTMLElement | null }[]}
+ */
+let sliderModels = [];
+
+// The panel is rebuilt from the source on every edit, so a slider's DEFAULT is
+// always the number currently written in the code: editing `#declare A = 5` to
+// `= 20` makes 20 the new default and the new slider position. A drag/scrub does
+// NOT rebuild (setRangeText fires no input event), so the default survives a drag
+// and the per-slider reset restores it.
+function buildSliders() {
+  slidersPanel.replaceChildren();
+  sliderModels = parseDeclaredNumbers(editor.value).map((n) => {
+    const literal = editor.value.slice(n.start, n.end); // the exact source text
+    const row = document.createElement('label');
+    row.className = 'slider-row';
+    const name = document.createElement('span');
+    name.className = 'slider-name';
+    name.textContent = n.name;
+    const input = /** @type {HTMLInputElement} */ (document.createElement('input'));
+    input.type = 'range';
+    input.min = String(n.min);
+    input.max = String(n.max);
+    input.step = String(n.step);
+    input.value = String(n.value);
+    const readout = document.createElement('span');
+    readout.className = 'slider-value';
+    readout.textContent = literal; // mirror the source literal until it's moved
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'slider-reset';
+    reset.textContent = '↺';
+    reset.title = `Reset ${n.name} to ${literal}`;
+    reset.setAttribute('aria-label', reset.title);
+    /** @type {(typeof sliderModels)[number]} */
+    const model = { name: n.name, start: n.start, end: n.end, step: n.step, input, readout };
+    input.addEventListener('input', () =>
+      writeLiteralText(model, formatScrubbed(Number(input.value), model.step))
+    );
+    reset.addEventListener('click', () => {
+      input.value = String(n.value);
+      writeLiteralText(model, literal); // restore the ORIGINAL literal text, byte for byte
+    });
+    row.append(name, input, readout, reset);
+    slidersPanel.appendChild(row);
+    return model;
+  });
+  slidersPanel.hidden = sliderModels.length === 0;
+}
+
+// Rewrite a tracked literal to the exact text `literal`, keeping the spans of the
+// OTHER tracked literals correct (a shorter/longer number shifts everything after
+// it). Shared by the sliders, the reset, and the inline scrub; never regenerates
+// the panel, so a drag stays smooth (setRangeText fires no input event). The
+// equal-start case (scrubbing a declared number's own literal) is deliberately
+// left unshifted: that slider's stale span is fixed by the mouseup rebuild.
+function writeLiteralText(model, literal) {
+  const delta = literal.length - (model.end - model.start);
+  editor.setRangeText(literal, model.start, model.end, 'preserve');
+  model.end = model.start + literal.length;
+  for (const m of sliderModels) {
+    if (m.start > model.start) {
+      m.start += delta;
+      m.end += delta;
+    }
+  }
+  if (model.readout) model.readout.textContent = literal;
+  renderGutter();
+  paintHighlight();
+  scheduleSave();
+  scheduleDraft();
+}
+
+/** @type {{ start: number, end: number, step: number, readout: null } | null} */
+let scrubModel = null;
+let scrubStartX = 0;
+let scrubStartValue = 0;
+
+// One monospace glyph's width, measured off-screen with the editor's font.
+function measureCharWidth(cs) {
+  const probe = document.createElement('span');
+  for (const p of ['fontFamily', 'fontSize', 'fontWeight', 'letterSpacing']) probe.style[p] = cs[p];
+  probe.style.position = 'absolute';
+  probe.style.visibility = 'hidden';
+  probe.style.whiteSpace = 'pre';
+  probe.textContent = '0'.repeat(20);
+  document.body.appendChild(probe);
+  const w = probe.offsetWidth / 20;
+  probe.remove();
+  return w;
+}
+
+// Map a pointer position to a character offset in the textarea via the monospace
+// metrics + scroll, or -1 when the point is outside the text. Tabs are expanded
+// to their tab stops (a tab is one character but advances to the next multiple
+// of tab-size columns), so the offset is right on tab-indented lines.
+function offsetFromPoint(clientX, clientY) {
+  const rect = editor.getBoundingClientRect();
+  const cs = getComputedStyle(editor);
+  const x = clientX - rect.left - parseFloat(cs.paddingLeft) + editor.scrollLeft;
+  const y = clientY - rect.top - parseFloat(cs.paddingTop) + editor.scrollTop;
+  const lines = editor.value.split('\n');
+  const row = Math.floor(y / parseFloat(cs.lineHeight));
+  if (row < 0 || row >= lines.length) return -1;
+  let off = 0;
+  for (let i = 0; i < row; i++) off += lines[i].length + 1;
+  const targetCol = Math.round(x / measureCharWidth(cs));
+  const tabSize = parseInt(cs.tabSize, 10);
+  const line = lines[row];
+  let col = 0;
+  let i = 0;
+  while (i < line.length && col < targetCol) {
+    col += line[i] === '\t' ? tabSize - (col % tabSize) : 1;
+    i++;
+  }
+  return off + i;
+}
+
+editor.addEventListener('mousedown', (e) => {
+  if (!e.altKey) return; // plain drag stays a text selection
+  const tok = numberTokenAt(editor.value, offsetFromPoint(e.clientX, e.clientY));
+  if (!tok) return;
+  e.preventDefault(); // suppress the selection an alt-drag would otherwise start
+  scrubModel = { start: tok.start, end: tok.end, step: scrubStep(tok.value), readout: null };
+  scrubStartX = e.clientX;
+  scrubStartValue = tok.value;
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (!scrubModel) return;
+  const value = scrubStartValue + (e.clientX - scrubStartX) * scrubModel.step;
+  writeLiteralText(scrubModel, formatScrubbed(value, scrubModel.step));
+});
+
+document.addEventListener('mouseup', () => {
+  if (!scrubModel) return;
+  scrubModel = null;
+  buildSliders(); // refresh any slider that tracks the just-scrubbed literal
+});
+
+// Holding Alt reveals that editor numbers are scrubbable (the only affordance the
+// otherwise-invisible scrub gets); the cursor clears on release or on blur.
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Alt') editor.style.cursor = 'ew-resize';
+});
+window.addEventListener('keyup', (e) => {
+  if (e.key === 'Alt') editor.style.cursor = '';
+});
+
+buildSliders(); // initial panel from the loaded scene
 
 // ---- controls ----
 
