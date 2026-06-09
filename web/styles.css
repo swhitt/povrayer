@@ -1616,6 +1616,36 @@ body.source-open #repl-source {
     min-height: 35vh;
   }
 
+  /* On a narrow screen, WRAP long lines instead of horizontal-scrolling them off
+     the edge (the worst part of the desktop wrap=off editor on a phone). The
+     syntax overlay can't stay glyph-aligned with a soft-wrapped textarea (their
+     content widths differ by a scrollbar, so they break at different columns),
+     so we drop the overlay + the now-meaningless line gutter and let the
+     textarea paint its OWN text, wrapped: fully readable + editable beats
+     highlighted-but-clipped. CSS white-space overrides the wrap="off" attribute.
+     The color override matches the base's `#editor-wrap #editor` specificity. */
+  #editor-wrap #editor {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    overflow-x: hidden;
+    color: var(--text);
+    -webkit-text-fill-color: var(--text);
+  }
+
+  #editor::selection {
+    color: var(--text);
+    -webkit-text-fill-color: var(--text);
+  }
+  #editor::-moz-selection {
+    color: var(--text);
+    -webkit-text-fill-color: var(--text);
+  }
+
+  #editor-highlight,
+  #gutter {
+    display: none;
+  }
+
   /* The primary CTA becomes a full-width thumb bar on its own stable row. */
   .actions {
     width: 100%;

@@ -3518,8 +3518,8 @@ try {
       'text-size-adjust must pin declared sizes against mobile text inflation'
     );
 
-    // Scroll containment: the capped wrap=off editor scrolls itself without
-    // chaining into a page jump (the swipe trap), and stays scrollable.
+    // Scroll containment: the capped editor scrolls itself without chaining into
+    // a page jump (the swipe trap), and stays scrollable.
     assert.equal(
       await mpage.evaluate(
         () => getComputedStyle(document.getElementById('editor')).overscrollBehaviorY
@@ -3527,6 +3527,27 @@ try {
       'contain',
       'the editor must contain its overscroll so touch scrolling never chains a page jump'
     );
+
+    // On a phone the editor SOFT-WRAPS long lines (overriding wrap=off) and
+    // paints its own text, with the unalignable syntax overlay + the now-
+    // meaningless line gutter hidden: readable + editable beats clipped.
+    const wrap = await mpage.evaluate(() => {
+      const cs = getComputedStyle(document.getElementById('editor'));
+      return {
+        whiteSpace: cs.whiteSpace,
+        fill: cs.webkitTextFillColor,
+        overlay: getComputedStyle(document.getElementById('editor-highlight')).display,
+        gutter: getComputedStyle(document.getElementById('gutter')).display,
+      };
+    });
+    assert.equal(wrap.whiteSpace, 'pre-wrap', 'the phone editor soft-wraps long lines');
+    assert.notEqual(
+      wrap.fill,
+      'rgba(0, 0, 0, 0)',
+      'the phone editor paints its own (non-transparent) text'
+    );
+    assert.equal(wrap.overlay, 'none', 'the unalignable syntax overlay is hidden when wrapped');
+    assert.equal(wrap.gutter, 'none', 'the line gutter is hidden when wrapped');
 
     // The example list is the phone's path to the scenes: an obvious 16px
     // trigger, and a popover whose list scrolls in place (overscroll contained)
