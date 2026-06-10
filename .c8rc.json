@@ -58,6 +58,7 @@
     "web/coi-serviceworker.js",
     "web/ui.js",
     "web/repl.js",
+    "web/anim-export.js",
     "web/render-client.js",
     "dist/povray.mjs",
     "dist/index.d.ts",

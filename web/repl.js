@@ -11,6 +11,12 @@ import {
 import { EXAMPLES, getExample } from './examples.js';
 import { highlight } from './highlight.js';
 import { stripCommentsAndStrings } from './sdl-strip.js';
+import {
+  pickWebmMime,
+  triggerDownload,
+  downloadPngFrames,
+  recordCanvasWebm,
+} from './anim-export.js';
 
 const isoWarning = document.getElementById('iso-warning');
 if (crossOriginIsolated) {
@@ -593,30 +599,12 @@ async function runAnimRender(frames) {
   }
 }
 
-// WebM mimes tried in preference order; the first MediaRecorder-supported one
-// wins, null (no MediaRecorder or no WebM codec) falls back to per-frame PNGs.
-const ANIM_EXPORT_MIMES = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
-
-function pickExportMime() {
-  for (const mime of ANIM_EXPORT_MIMES) {
-    if (window.MediaRecorder?.isTypeSupported?.(mime)) return mime;
-  }
-  return null;
-}
-
 function clampFps(value) {
   if (!Number.isFinite(value)) return ANIM_FPS_DEFAULT;
   return Math.min(60, Math.max(1, Math.round(value)));
 }
 
 const animDelay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function triggerDownload(href, name) {
-  const a = document.createElement('a');
-  a.href = href;
-  a.download = name;
-  a.click();
-}
 
 // Swaps the pending figure for the inline animation player: a canvas hero plus
 // a transport row (play/pause · scrubber · frame counter · loop · fps ·
@@ -771,11 +759,9 @@ function completeAnimResult(fig, result, w, h) {
 
   // Best-effort WebM via MediaRecorder; PNG-per-frame fallback when unavailable.
   async function exportAnim() {
-    const mime = pickExportMime();
+    const mime = pickWebmMime();
     if (!mime) {
-      blobUrls.forEach((url, i) =>
-        triggerDownload(url, `frame${String(i + 1).padStart(3, '0')}.png`)
-      );
+      downloadPngFrames(blobUrls);
       return;
     }
     pause();
@@ -783,21 +769,12 @@ function completeAnimResult(fig, result, w, h) {
     const prevLabel = exportBtn.textContent;
     exportBtn.textContent = 'exporting…';
     try {
-      const stream = canvas.captureStream(fps);
-      const recorder = new MediaRecorder(stream, { mimeType: mime });
-      const chunks = [];
-      recorder.ondataavailable = (e) => chunks.push(e.data);
-      const stopped = new Promise((resolve) => {
-        recorder.onstop = resolve;
+      const url = await recordCanvasWebm(canvas, fps, mime, async () => {
+        for (let i = 0; i < total; i++) {
+          draw(i);
+          await animDelay(1000 / fps);
+        }
       });
-      recorder.start();
-      for (let i = 0; i < total; i++) {
-        draw(i);
-        await animDelay(1000 / fps);
-      }
-      recorder.stop();
-      await stopped;
-      const url = URL.createObjectURL(new Blob(chunks, { type: mime }));
       triggerDownload(url, `anim-${w}x${h}.webm`);
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } finally {

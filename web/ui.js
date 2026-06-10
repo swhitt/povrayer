@@ -22,6 +22,12 @@ import { buildPool, complete, applyCompletion, signatureText } from './complete.
 import { classifyAsset, assetSnippet, safeName, uniqueName } from './assets.js';
 import { parseDeclaredNumbers, numberTokenAt, scrubStep, formatScrubbed } from './sliders.js';
 import { CONTROL_FIELDS, coerceSaved, coerceParam, coerceHydrate } from './settings.js';
+import {
+  pickWebmMime,
+  triggerDownload,
+  downloadPngFrames,
+  recordCanvasWebm,
+} from './anim-export.js';
 
 const isoWarning = document.getElementById('iso-warning');
 if (crossOriginIsolated) {
@@ -2294,23 +2300,6 @@ function createPlayer() {
     else setPlayLabel();
   }
 
-  function triggerDownload(url, name) {
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = name;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  }
-
-  // Sequential per-frame PNG download: the raw blob URLs we already hold, named
-  // frame001.png, frame002.png, ... Also the degraded path when WebM has no codec.
-  function downloadFramesAsPng() {
-    urls.forEach((url, i) => {
-      triggerDownload(url, `frame${String(i + 1).padStart(3, '0')}.png`);
-    });
-  }
-
   // Wrap encoder output bytes in a Blob and trigger a download, revoking the URL
   // after a grace window (the click navigates synchronously; the timeout frees it).
   /** @param {Uint8Array} bytes @param {string} mime @param {string} name */
@@ -2357,32 +2346,15 @@ function createPlayer() {
     });
   }
 
-  function pickMime() {
-    const candidates = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
-    return candidates.find((t) => window.MediaRecorder?.isTypeSupported?.(t)) ?? null;
-  }
-
   function canWebm() {
-    return pickMime() !== null;
+    return pickWebmMime() !== null;
   }
 
-  // WebM via MediaRecorder over a canvas captureStream: the one lossy/codec path
-  // (GIF + APNG are deterministic client-side encodes). Records real-time
-  // playback, so it takes ~clip-length to finish.
+  // WebM via MediaRecorder over the player canvas: the one lossy/codec path (GIF +
+  // APNG are deterministic client-side encodes). recordCanvasWebm runs playOnce in
+  // real time so the recorder captures every frame, so it takes ~clip-length.
   async function exportWebm() {
-    const mime = pickMime();
-    const stream = playerCanvas.captureStream(fps);
-    const recorder = new MediaRecorder(stream, { mimeType: mime });
-    const chunks = [];
-    recorder.ondataavailable = (e) => chunks.push(e.data);
-    const stopped = new Promise((resolve) => {
-      recorder.onstop = resolve;
-    });
-    recorder.start();
-    await playOnce();
-    recorder.stop();
-    await stopped;
-    const url = URL.createObjectURL(new Blob(chunks, { type: mime }));
+    const url = await recordCanvasWebm(playerCanvas, fps, pickWebmMime(), playOnce);
     triggerDownload(url, 'animation.webm');
     setTimeout(() => URL.revokeObjectURL(url), 10000);
   }
@@ -2423,7 +2395,7 @@ function createPlayer() {
   async function exportAs(format) {
     if (!bitmaps.length || exporting) return;
     if (format === 'png' || (format === 'webm' && !canWebm())) {
-      downloadFramesAsPng();
+      downloadPngFrames(urls);
       return;
     }
     exporting = true;
