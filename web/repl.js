@@ -97,6 +97,7 @@ let renderCounter = 0; // "render #N" per-session counter
 const HISTORY_MAX = 100;
 let historyIndex = 0; // === history.length means "not recalling"
 let draft = ''; // unsubmitted input stashed while recalling history
+let recallFilter = ''; // prefix the active recall walk is limited to ('' = every entry)
 const SCROLLBACK_CAP = 300;
 
 // :anim N renders N frames over clock 0..1 and plays them inline. N is clamped
@@ -867,7 +868,7 @@ const HELP_KEYS = [
   ['Enter / run', 'submit'],
   ['Shift+Enter', 'insert a newline'],
   ['Esc / cancel', 'stop a render (fresh entries roll back)'],
-  ['ArrowUp / ArrowDown', 'recall input history'],
+  ['ArrowUp / ArrowDown', 'recall input history (typed text recalls by prefix)'],
   ['Tab', 'complete :commands'],
   ['click an old entry', 'copy it back into the input'],
 ];
@@ -1372,6 +1373,15 @@ function completeCommand() {
   return true;
 }
 
+// Nearest history index in `dir` (-1 = older, +1 = newer) whose entry starts
+// with the active recall filter. Returns history.length when the walk runs
+// off the newest end (back at the draft) and -1 when nothing older matches.
+function recallStep(dir) {
+  let i = historyIndex + dir;
+  while (i >= 0 && i < history.length && !history[i].startsWith(recallFilter)) i += dir;
+  return i;
+}
+
 input.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (!e.shiftKey || e.ctrlKey || e.metaKey)) {
     // Enter and Ctrl/Cmd+Enter submit; Shift+Enter inserts a newline.
@@ -1384,12 +1394,22 @@ input.addEventListener('keydown', (e) => {
     return;
   }
   if (e.key === 'ArrowUp' && caretOnFirstLine() && historyIndex > 0) {
-    if (historyIndex === history.length) draft = input.value;
-    historyIndex -= 1;
-    setInputValue(history[historyIndex]);
-    e.preventDefault();
+    if (historyIndex === history.length) {
+      draft = input.value;
+      // Bash-style prefix recall: typed text limits the walk to entries that
+      // start with it; an empty input recalls linearly. Captured once, when
+      // the walk leaves the draft, so editing a recalled entry mid-walk
+      // doesn't re-filter the rest of the walk.
+      recallFilter = draft;
+    }
+    const i = recallStep(-1);
+    if (i >= 0) {
+      historyIndex = i;
+      setInputValue(history[i]);
+      e.preventDefault();
+    }
   } else if (e.key === 'ArrowDown' && caretOnLastLine() && historyIndex < history.length) {
-    historyIndex += 1;
+    historyIndex = recallStep(1);
     setInputValue(historyIndex === history.length ? draft : history[historyIndex]);
     e.preventDefault();
   }

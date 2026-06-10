@@ -812,6 +812,34 @@ try {
     i.setSelectionRange(0, 0); // caret on the first line, not the last
   });
   await page.keyboard.press('ArrowDown'); // caretOnLastLine false -> no recall
+
+  // Prefix recall (bash-style): typed text limits ArrowUp to entries that
+  // START with it; ArrowDown walks back through the same matches and restores
+  // the typed draft at the end.
+  await submit(page, ':aa off');
+  await submit(page, ':threads 3');
+  await submit(page, ':aa 0.5');
+  await page.fill('#input', ':aa');
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await inputVal(), ':aa 0.5', "typed ':aa' + ArrowUp recalls the newest :aa entry");
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await inputVal(), ':aa off', "prefix recall skips the non-matching ':threads 3'");
+  await page.keyboard.press('ArrowDown');
+  assert.equal(await inputVal(), ':aa 0.5', 'ArrowDown walks back through matches only');
+  await page.keyboard.press('ArrowDown');
+  assert.equal(await inputVal(), ':aa', 'ArrowDown past the newest match restores the draft');
+
+  // Empty input keeps the exact linear walk (no filtering), even right after a
+  // prefix recall: the filter is re-captured each time a walk leaves the draft.
+  await page.evaluate(() => {
+    const i = document.getElementById('input');
+    i.value = '';
+    i.focus();
+  });
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await inputVal(), ':aa 0.5', 'empty-input ArrowUp recalls the newest entry');
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await inputVal(), ':threads 3', 'empty-input ArrowUp walks linearly, unfiltered');
   await page.evaluate(() => {
     document.getElementById('input').value = '';
   });
