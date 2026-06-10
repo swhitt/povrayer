@@ -65,6 +65,7 @@ const FILES = [
   { path: 'web/anim-export.js', browser: true },
   { path: 'web/asset-drop.js', browser: true },
   { path: 'web/coi.js', browser: true },
+  { path: 'web/live-draft.js', browser: true },
 ];
 
 // Browser modules measured via Playwright V8 coverage, keyed by the basename the

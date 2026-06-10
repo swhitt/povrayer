@@ -54,6 +54,7 @@
     "web/anim-export.js",
     "web/asset-drop.js",
     "web/coi.js",
+    "web/live-draft.js",
     "web/render-client.js",
     "web/highlight.js",
     "web/sdl-strip.js",

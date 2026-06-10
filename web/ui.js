@@ -24,6 +24,7 @@ import { CONTROL_FIELDS, coerceSaved, coerceParam, coerceHydrate } from './setti
 import { triggerDownload } from './anim-export.js';
 import { createPlayer } from './player.js';
 import { ensureCrossOriginIsolation } from './coi.js';
+import { createLiveDraftController } from './live-draft.js';
 
 const isoWarning = document.getElementById('iso-warning');
 ensureCrossOriginIsolation({ warningEl: isoWarning });
@@ -1586,10 +1587,10 @@ function readRenderOptions() {
 // One-shot final-quality override, armed by Shift+Ctrl/Cmd+Enter: the next
 // explicit render runs at quality 9 + antialias 0.05 without touching the
 // persisted control values. A module flag rather than a startRender argument
-// because the draft-abort handoff re-enters startRender() from runDraft's
-// finally with no arguments; collectOptions consumes it at the moment the
-// options are actually read, and startRender's bail paths disarm it so a
-// swallowed chord can't silently upgrade a LATER plain render.
+// because the draft-abort handoff re-enters startRender() through the
+// live-draft controller with no arguments; collectOptions consumes it at the
+// moment the options are actually read, and startRender's bail paths disarm it
+// so a swallowed chord can't silently upgrade a LATER plain render.
 let finalRenderOnce = false;
 
 // The explicit-render path: read + clamp, then write the clamped dims back into
@@ -1629,7 +1630,7 @@ for (const el of [
 // attempted this source" guard so the unchanged scene re-drafts at the new
 // resolution (scheduleDraft self-guards on mode/live-off).
 draftSelect.addEventListener('change', () => {
-  lastDraftSource = null;
+  liveDraftController.resetAttempted();
   scheduleDraft();
 });
 
@@ -1722,7 +1723,7 @@ function setBusyStatus(text) {
 // click handler near the bottom stops whatever is in flight), so the spinner and
 // the stop control always agree on "something is rendering".
 function syncSpinner() {
-  const inFlight = status.dataset.state === 'busy' || draftCtl !== null;
+  const inFlight = status.dataset.state === 'busy' || liveDraftController.isDrafting();
   statusSpinner.hidden = !inFlight;
   stopBtn.hidden = !inFlight;
 }
@@ -2379,41 +2380,11 @@ function showImage(blobUrl, alt, holdWidth = null) {
 // AbortSignal; it never duplicates orchestration. Explicit renders always win
 // (see startRender). The persisted `liveDraft` toggle is wired further down.
 
-const DRAFT_DEBOUNCE_MIN_MS = 250;
-const DRAFT_DEBOUNCE_MAX_MS = 2000;
-const DRAFT_DEBOUNCE_FACTOR = 0.75;
-
 // Longest draft edge in px (the downscaled fast preview), from the advanced
 // "draft" select (256/320/512, default 320; persisted via CONTROL_FIELDS like
 // quality/antialias). A select always has a numeric option chosen.
 function draftMaxEdge() {
   return Number(draftSelect.value);
-}
-
-let draftTimer = null; // pending debounce timeout, or null
-let draftCtl = null; // AbortController for the in-flight DRAFT, or null
-let draftingSource = ''; // the source the in-flight draft is rendering
-let lastDraftSource = null; // last source actually attempted (draft or explicit)
-let lastDraftMs = 0; // last draft's elapsed ms; drives the adaptive debounce
-let pendingFull = false; // an explicit render is waiting on a draft to abort
-
-// Read-only test-observability probe (no behaviour; the app never reads it).
-// Surfaces the draft scheduler's internal state (a debounced fire pending, a
-// draft render in flight, and which source it is rendering) so the browser
-// coverage suite can await the coalescing / supersede / mid-flight-abort
-// transitions deterministically instead of racing the adaptive debounce with
-// fixed sleeps (which broke whenever a cold, slow prior draft inflated it).
-/** @type {Window & { __liveDraftProbe?: () => unknown }} */ (window).__liveDraftProbe = () => ({
-  pending: draftTimer !== null,
-  inFlight: draftCtl !== null,
-  source: draftingSource,
-});
-
-// Scale the debounce with the last draft's elapsed time so a slow scene waits
-// longer between auto-renders and a fast one fires near the floor. Simple
-// last-duration scaling, clamped; no hysteresis/EWMA/multi-pass.
-function computeDraftDebounce() {
-  return clamp(lastDraftMs * DRAFT_DEBOUNCE_FACTOR, DRAFT_DEBOUNCE_MIN_MS, DRAFT_DEBOUNCE_MAX_MS);
 }
 
 // Fast + clearly lower-res than the full Render: antialias always off and the
@@ -2433,41 +2404,20 @@ function draftOptions() {
   };
 }
 
-function scheduleDraft() {
-  if (mode !== 'still' || !liveDraft) return;
-  clearTimeout(draftTimer);
-  draftTimer = setTimeout(fireDraft, computeDraftDebounce());
-}
-
-function fireDraft() {
-  draftTimer = null;
-  // Re-read the newest text every time: that's what makes coalescing collapse a
-  // burst of keystrokes to a single render of the FINAL text (no queue).
-  const src = editor.value;
-  if (mode !== 'still' || !liveDraft || !crossOriginIsolated) return;
-  if (src === lastDraftSource) return; // nothing changed since the last attempt
-  if (!validateScene(src).ready) return; // looks mid-edit; stay quiet
-  if (abortCtl) return; // an explicit render owns the engine; its finally reschedules
-  if (draftCtl) {
-    if (src === draftingSource) return; // already rendering this exact text
-    draftCtl.abort(); // supersede with the newer text; the abort's finally reschedules
-    return;
-  }
-  if (isBusy()) return; // defensive: never pile up on the busy singleton
-  runDraft(src);
-}
-
-async function runDraft(src) {
-  draftCtl = new AbortController();
-  const ctl = draftCtl;
-  draftingSource = src;
-  const opts = draftOptions();
-  const dims = `${opts.width}×${opts.height}`;
-  setStatus(`live draft · ${dims}`, 'draft');
-  try {
-    const { blobUrl, elapsedMs } = await renderScene(src, { ...opts, signal: ctl.signal });
-    lastDraftMs = elapsedMs;
-    lastDraftSource = src;
+const liveDraftController = createLiveDraftController({
+  enabled: () => mode === 'still' && liveDraft && crossOriginIsolated,
+  readSource: () => editor.value,
+  sourceReady: (source) => validateScene(source).ready,
+  explicitInFlight: () => abortCtl !== null,
+  renderBusy: isBusy,
+  draftOptions,
+  renderDraft: (source, options, signal) => renderScene(source, { ...options, signal }),
+  onStart: (_source, opts) => {
+    const dims = `${opts.width}×${opts.height}`;
+    setStatus(`live draft · ${dims}`, 'draft');
+  },
+  onSuccess: (_source, result, opts) => {
+    const dims = `${opts.width}×${opts.height}`;
     // Success is the ONLY time the image swaps (a draft error keeps the last
     // good one). Drafts never touch the progress bar or the render log.
     errorBox.hidden = true;
@@ -2475,61 +2425,45 @@ async function runDraft(src) {
     errorBox.classList.remove('draft');
     // Hold the draft at the FULL render's target width (re-read at swap time so
     // a width edit mid-draft lands), keeping the plate footprint stable.
-    showImage(blobUrl, `live draft, ${sceneName()}, ${dims}`, readRenderOptions().width);
+    showImage(result.blobUrl, `live draft, ${sceneName()}, ${dims}`, readRenderOptions().width);
     downloadBtn.hidden = true; // the preview is low-res, not a downloadable full render
     setStatus(`live draft · ${dims}`, 'draft');
-  } catch (err) {
-    if (!isAbortError(err)) {
-      // Record the failed source too. The success path sets lastDraftSource, but
-      // a deterministic parse failure must also mark this exact text as
-      // attempted, or the finally's backstop scheduleDraft re-fires the same
-      // erroring scene forever (fireDraft's `src === lastDraftSource` guard never
-      // short-circuits). That loop is a silent CPU/battery drain with status
-      // flicker, worst on mobile.
-      lastDraftSource = src;
-      // Non-destructive: keep the last good image (no #output.src change, no
-      // .stale, no canvas clear). Surface the message quietly inline and do NOT
-      // jump the caret (hostile while typing). A draft error is a polite live
-      // region (role swapped to status), not the assertive alert the explicit
-      // Render path uses, so a screen reader isn't interrupted on every keystroke.
-      errorBox.setAttribute('role', 'status');
-      errorBox.textContent = formatError(err);
-      errorBox.classList.add('draft');
-      errorBox.hidden = false;
-      setStatus('live draft · error', 'draft');
-    }
-    // On abort (superseded by newer text) do nothing: keep the image.
-  } finally {
-    draftCtl = null;
-    syncSpinner();
-    if (pendingFull) {
-      // An explicit render is waiting on this abort; renderScene cleared `busy`
-      // synchronously in its finally before ours, so the restart is race-free.
-      pendingFull = false;
-      startRender();
-    } else {
-      // Backstop: re-read the latest text even if the user stopped typing right
-      // at an abort.
-      scheduleDraft();
-    }
-  }
+  },
+  onError: (_source, err) => {
+    // Non-destructive: keep the last good image (no #output.src change, no
+    // .stale, no canvas clear). Surface the message quietly inline and do NOT
+    // jump the caret (hostile while typing). A draft error is a polite live
+    // region (role swapped to status), not the assertive alert the explicit
+    // Render path uses, so a screen reader isn't interrupted on every keystroke.
+    errorBox.setAttribute('role', 'status');
+    errorBox.textContent = formatError(err);
+    errorBox.classList.add('draft');
+    errorBox.hidden = false;
+    setStatus('live draft · error', 'draft');
+  },
+  onSettled: syncSpinner,
+  startFullRender: () => startRender(),
+});
+
+// Read-only test-observability probe (no behaviour; the app never reads it).
+// Surfaces the draft scheduler's internal state so the browser coverage suite
+// can await coalescing / supersede / mid-flight-abort transitions deterministically.
+/** @type {Window & { __liveDraftProbe?: () => unknown }} */ (window).__liveDraftProbe =
+  liveDraftController.probe;
+
+function scheduleDraft() {
+  liveDraftController.schedule();
 }
 
 async function startRender() {
   // An explicit render always wins over a live draft. Drop any pending draft
   // timer, and if a draft is mid-flight, abort it and let its finally restart
   // us once `busy` clears.
-  clearTimeout(draftTimer);
-  draftTimer = null;
-  if (draftCtl) {
-    pendingFull = true;
-    draftCtl.abort();
-    return;
-  }
+  if (liveDraftController.requestFullRender()) return;
   // Bail while busy or non-isolated (first-visit SW install window: the
   // banner is visible and the page will reload itself once installed). The
-  // pendingFull return above deliberately KEEPS finalRenderOnce armed (the
-  // restarted render is the same user intent); these dead ends disarm it.
+  // draft handoff above deliberately KEEPS finalRenderOnce armed (the restarted
+  // render is the same user intent); these dead ends disarm it.
   if (abortCtl || isBusy()) {
     finalRenderOnce = false;
     return;
@@ -2663,7 +2597,7 @@ async function startRender() {
     // Mark this exact source as already attempted so the backstop draft no-ops
     // until the next edit. If the user typed during the render, editor.value
     // now differs from renderedSource, so the draft fires for the latest text.
-    lastDraftSource = renderedSource;
+    liveDraftController.markAttempted(renderedSource);
     scheduleDraft();
   }
 }
@@ -2808,9 +2742,7 @@ function setMode(next) {
   if (abortCtl) return; // an explicit/animate render locks the mode
   // A live draft is still-only; aborting it must not block the switch (its
   // finally re-checks mode and won't reschedule in animate).
-  if (draftCtl) draftCtl.abort();
-  clearTimeout(draftTimer);
-  draftTimer = null;
+  liveDraftController.cancel();
   mode = next;
   // The log + stat chips narrate the OTHER mode's last render; left visible
   // they read as describing the new plate (a still's "render log" lingering
@@ -2993,9 +2925,7 @@ liveToggle.addEventListener('click', () => {
   if (liveDraft) {
     scheduleDraft();
   } else {
-    clearTimeout(draftTimer);
-    draftTimer = null;
-    draftCtl?.abort();
+    liveDraftController.cancel();
     // Drop the "live draft · …" label so the now-frozen, editable preview isn't
     // still announced as live. Only when the footer is actually showing a draft
     // line (don't clobber a real render's done/error payoff).
@@ -3224,12 +3154,10 @@ copyLinkBtn.addEventListener('click', copyPermalink);
 stopBtn.addEventListener('click', () => {
   if (abortCtl) {
     abortCtl.abort();
-  } else if (draftCtl) {
+  } else if (liveDraftController.isDrafting()) {
     liveDraft = false;
     liveToggle.setAttribute('aria-pressed', 'false');
-    clearTimeout(draftTimer);
-    draftTimer = null;
-    draftCtl.abort();
+    liveDraftController.cancel();
     scheduleSave();
     // The stop button is only visible mid-draft, so the footer is in the
     // 'draft' state here; drop the "live draft · …" label so the now-frozen,
