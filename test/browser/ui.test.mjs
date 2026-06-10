@@ -3527,6 +3527,130 @@ try {
   );
 
   // ===========================================================================
+  // Scene history: a successful render snapshots the scene (deduped + capped),
+  // the panel lists versions newest-first, clicking one loads it back, and the
+  // load guards (junk / non-array / malformed localStorage) are exercised via
+  // seeded reloads.
+  // ===========================================================================
+  await page.evaluate(() => document.getElementById('mode-still').click()); // ensure the still path
+  const histScene = (tag) =>
+    `// ${tag}\n#version 3.8;\ncamera { location <0,0,-3> look_at 0 }\n` +
+    `light_source { <2,4,-3> rgb 1 }\nsphere { 0, 1 pigment { rgb <1,0,0> } }`;
+  const histCount = () =>
+    page.evaluate(() => document.querySelectorAll('#history .history-entry').length);
+  const histRender = async () => {
+    await page.click('#render-btn');
+    await page.waitForFunction(
+      () => document.getElementById('status').dataset.state === 'done',
+      null,
+      { timeout: 120_000 }
+    );
+  };
+
+  await setSceneSource(histScene('HIST ALPHA'));
+  await histRender();
+  const afterAlpha = await histCount();
+  assert.ok(afterAlpha >= 1, 'a successful render adds a history entry');
+  assert.equal(
+    await page.evaluate(() => document.getElementById('history').hidden),
+    false,
+    'history panel is revealed once there is a version'
+  );
+  assert.equal(
+    await page.evaluate(() => document.querySelector('#history .history-preview').textContent),
+    'HIST ALPHA',
+    'the newest row previews the rendered scene, comment marker stripped'
+  );
+
+  await histRender(); // re-render the identical scene -> dedup, no new entry
+  assert.equal(await histCount(), afterAlpha, 're-rendering the same scene does not duplicate it');
+
+  await setSceneSource(histScene('HIST BETA'));
+  await histRender();
+  assert.equal(await histCount(), afterAlpha + 1, 'a changed render adds a newer version');
+
+  // Opening the panel refreshes it (the toggle-open path); rows are newest-first.
+  await page.evaluate(() => (document.getElementById('history').open = true));
+  assert.deepEqual(
+    await page.evaluate(() =>
+      [...document.querySelectorAll('#history .history-preview')]
+        .slice(0, 2)
+        .map((p) => p.textContent)
+    ),
+    ['HIST BETA', 'HIST ALPHA'],
+    'versions list newest-first'
+  );
+
+  // Clicking a version loads it back (undoable via the restore note) and collapses.
+  await page.evaluate(() => document.querySelectorAll('#history .history-entry')[1].click());
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      first: document.getElementById('editor').value.split('\n')[0],
+      restore: !document.getElementById('restore-note').hidden,
+      open: document.getElementById('history').open,
+    })),
+    { first: '// HIST ALPHA', restore: true, open: false },
+    'loading a version restores its source, offers undo, and collapses the panel'
+  );
+
+  // saveHistory is best-effort: a setItem failure during a render must not throw.
+  await page.evaluate(() => {
+    window.__histOrigSet = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = () => {
+      throw new Error('storage blocked');
+    };
+  });
+  await setSceneSource(histScene('HIST GAMMA'));
+  await histRender();
+  assert.equal(
+    await page.evaluate(() => document.querySelector('#history .history-preview').textContent),
+    'HIST GAMMA',
+    'a storage failure does not block the in-memory history update'
+  );
+  await page.evaluate(() => {
+    localStorage.setItem = window.__histOrigSet;
+  });
+
+  // loadHistory guards via seeded reloads: a valid blob with junk keeps only the
+  // well-formed snapshots; a non-array and malformed JSON both yield no history.
+  const seedHistory = async (raw) => {
+    await page.addInitScript((r) => localStorage.setItem('povrayer.ui.history', r), raw);
+    await page.goto(`${server.url}?seed=${seedNav++}`, { waitUntil: 'load' });
+    await page.waitForFunction(
+      () => document.querySelectorAll('#example-listbox .ex-option').length >= 4,
+      null,
+      { timeout: 30_000 }
+    );
+  };
+  await seedHistory(
+    JSON.stringify([
+      { t: 1, source: '// kept one' },
+      { t: 'bad', source: 'rejected: t not a number' },
+      { nope: true },
+      { t: 2, source: '// kept two' },
+    ])
+  );
+  assert.deepEqual(
+    await page.evaluate(() =>
+      [...document.querySelectorAll('#history .history-preview')].map((p) => p.textContent)
+    ),
+    ['kept one', 'kept two'],
+    'a seeded history keeps only well-formed snapshots'
+  );
+  await seedHistory('{ "not": "an array" }');
+  assert.equal(
+    await page.evaluate(() => document.getElementById('history').hidden),
+    true,
+    'a non-array history payload yields no history'
+  );
+  await seedHistory('{ broken json');
+  assert.equal(
+    await page.evaluate(() => document.getElementById('history').hidden),
+    true,
+    'malformed history JSON is swallowed'
+  );
+
+  // ===========================================================================
   // Mobile UX (coarse pointer): the iPhone fixes. A separate context emulates a
   // touch, mobile-viewport, coarse-pointer device so the @media (pointer:coarse)
   // editor/example rules actually apply (the default desktop page is fine-

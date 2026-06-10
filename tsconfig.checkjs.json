@@ -59,6 +59,7 @@
     "web/assets.js",
     "web/sliders.js",
     "web/settings.js",
+    "web/history.js",
     "web/sdl-validate.js",
     "web/permalink.js",
     "web/url-params.js",

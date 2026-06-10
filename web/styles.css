@@ -1144,6 +1144,55 @@ body.ui main > * {
   gap: 12px;
 }
 
+/* Scene history: the same quiet disclosure language as scene-params / advanced.
+   The list is compact full-width rows, each a borderless button that loads that
+   rendered version back into the editor. */
+#history {
+  margin-top: 12px;
+}
+
+#history-list {
+  display: flex;
+  flex-direction: column;
+  margin-top: 8px;
+}
+
+/* height:auto (not min-height:0) so desktop rows stay compact while the coarse-
+   pointer 44px floor still applies on touch. The hover is a faint row tint, NOT
+   the secondary button's hard invert. */
+.history-entry {
+  height: auto;
+  border: 0;
+  padding: 5px 8px;
+  background: none;
+  color: var(--text);
+  font-size: var(--fs-out);
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  overflow: hidden;
+}
+
+.history-entry:hover:not(:disabled) {
+  background: var(--border);
+  color: var(--text);
+}
+
+.history-time {
+  flex: none;
+  min-width: 7ch;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.history-preview {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* The flags field stretches to the editor width: long +flag strings need room,
    and a full-width text input reads clearly as "type engine flags here". The
    monospace is inherited; a touch smaller so the flag soup stays legible. */

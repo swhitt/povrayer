@@ -261,6 +261,17 @@
             </label>
           </div>
         </details>
+        <!-- Scene history: a lightweight, text-only list of previously RENDERED
+             scene versions (ui.js snapshots on a successful render, deduped + capped
+             in localStorage). Hidden until there's history; click a row to load that
+             version (undoable via the restore note). No thumbnails, by design. -->
+        <details id="history" hidden>
+          <summary>
+            <span class="disclosure-label">history</span>
+            <span id="history-count" class="disclosure-count"></span>
+          </summary>
+          <div id="history-list" aria-label="rendered scene history"></div>
+        </details>
       </section>
       <section id="output-pane" aria-label="render output">
         <div id="status-row">

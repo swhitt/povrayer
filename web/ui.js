@@ -20,6 +20,7 @@ import { encodeGif } from './gif.js';
 import { encodeApng } from './apng.js';
 import { buildPool, complete, applyCompletion, signatureText } from './complete.js';
 import { createAssetDrop } from './asset-drop.js';
+import { addSnapshot, snapshotPreview, relativeTime } from './history.js';
 import { parseDeclaredNumbers, numberTokenAt, scrubStep, formatScrubbed } from './sliders.js';
 import { CONTROL_FIELDS, coerceSaved, coerceParam, coerceHydrate } from './settings.js';
 import {
@@ -78,6 +79,9 @@ const sceneParamsCount = document.getElementById('scene-params-count');
 const restoreNote = document.getElementById('restore-note');
 const restoreBtn = document.getElementById('restore-btn');
 const advanced = /** @type {HTMLDetailsElement} */ (document.getElementById('advanced'));
+const historyDetails = /** @type {HTMLDetailsElement} */ (document.getElementById('history'));
+const historyCount = document.getElementById('history-count');
+const historyList = document.getElementById('history-list');
 const gutter = document.getElementById('gutter');
 const liveToggle = document.getElementById('live-toggle');
 const widthInput = /** @type {HTMLInputElement} */ (document.getElementById('width'));
@@ -121,6 +125,8 @@ const exportBtn = /** @type {HTMLButtonElement} */ (document.getElementById('exp
 const exportFormat = /** @type {HTMLSelectElement} */ (document.getElementById('export-format'));
 
 const STORAGE_KEY = 'povrayer.ui.v1';
+const HISTORY_KEY = 'povrayer.ui.history';
+const HISTORY_MAX = 20; // capped + deduped, text-only: keeps localStorage light
 
 // 'still' renders a single frame; 'animate' drives POV-Ray's clock loop and
 // plays the frames back in #player-canvas. Restored from saved state below.
@@ -1090,6 +1096,15 @@ function reflectSceneReplaced() {
   scheduleDraft();
 }
 
+// Replace the whole scene with `text`, stashing the outgoing one first so the swap
+// is undoable via the restore note. Shared by the scene-drop import and loading a
+// version from history.
+function replaceScene(text) {
+  stashScene();
+  editor.value = text;
+  reflectSceneReplaced();
+}
+
 // Insert text at the caret, advancing past it, and resync the overlay/gutter and
 // the save + live-draft schedules (setRangeText fires no input event). A
 // newline is prefixed unless the caret is already at the start of a line, so a
@@ -1109,11 +1124,75 @@ function insertAtCaret(text) {
 // editor (insert a snippet, or replace the scene the way an example switch does).
 const assetDrop = createAssetDrop({
   insertSnippet: insertAtCaret,
-  replaceScene: (text) => {
-    stashScene();
-    editor.value = text;
-    reflectSceneReplaced();
-  },
+  replaceScene,
+});
+
+// ---- scene history ----
+// A lightweight, text-only record of previously RENDERED scene versions, so a user
+// can jump back to one. Captured only on a successful still render (never on a
+// keystroke or the live draft), deduped + capped, persisted in its own localStorage
+// key. Loading a version replaces the scene (undoable via the restore note).
+/** @type {import('./history.js').Snapshot[]} */
+let sceneHistory = loadHistory();
+
+function loadHistory() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+    return Array.isArray(raw)
+      ? raw.filter((e) => e && typeof e.source === 'string' && typeof e.t === 'number')
+      : [];
+  } catch {
+    return []; // malformed JSON: start fresh, history is best-effort
+  }
+}
+
+function saveHistory() {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(sceneHistory));
+  } catch {
+    // Storage blocked or full: history is best-effort, like the main save.
+  }
+}
+
+// Snapshot `source` as a new version, unless it duplicates the newest one. Returns
+// early (no save/re-render) on a dedup so a re-render of the same text is free.
+function recordHistory(source) {
+  const next = addSnapshot(sceneHistory, source, Date.now(), HISTORY_MAX);
+  if (next === sceneHistory) return;
+  sceneHistory = next;
+  saveHistory();
+  renderHistory();
+}
+
+function renderHistory() {
+  historyDetails.hidden = sceneHistory.length === 0;
+  historyCount.textContent = sceneHistory.length ? `(${sceneHistory.length})` : '';
+  const now = Date.now();
+  historyList.replaceChildren();
+  for (const entry of sceneHistory) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'history-entry';
+    const time = document.createElement('span');
+    time.className = 'history-time';
+    time.textContent = relativeTime(entry.t, now);
+    const preview = document.createElement('span');
+    preview.className = 'history-preview';
+    preview.textContent = snapshotPreview(entry.source);
+    row.append(time, preview);
+    row.addEventListener('click', () => {
+      replaceScene(entry.source);
+      historyDetails.open = false; // collapse once a version is loaded
+    });
+    historyList.appendChild(row);
+  }
+}
+renderHistory(); // restore the panel from a prior session's localStorage
+
+// Refresh the relative times when the panel is opened (they're stamped at render
+// time and would otherwise read stale).
+historyDetails.addEventListener('toggle', () => {
+  if (historyDetails.open) renderHistory();
 });
 
 // ---- live numeric controls: auto-sliders + inline scrub ----
@@ -1896,6 +1975,7 @@ async function startRender() {
     showStats(rawLog, opts);
 
     setStatus(doneLine(elapsedMs, opts), 'done');
+    recordHistory(renderedSource); // a milestone worth remembering: this scene just rendered
     logSummary.textContent = summaryWithCount('render log');
     if (!matchMedia('(min-width: 900px)').matches) {
       // Wait for the intrinsic size: block:'nearest' measures the box, and an
