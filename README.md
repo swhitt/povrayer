@@ -8,9 +8,9 @@ WebAssembly build runs headless in Node and ships as a Docker image.
 [![Pages](https://github.com/swhitt/povrayer/actions/workflows/pages.yml/badge.svg)](https://github.com/swhitt/povrayer/actions/workflows/pages.yml)
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-ffd23f)](#license)
 
-### Try it live, no install: [swhitt.github.io/povrayer](https://swhitt.github.io/povrayer/)
+### Try it live, no install: [povrayer.com](https://povrayer.com/)
 
-[![The povrayer editor: a sunset seascape ray-traced live in the browser](docs/screenshots/hero.png)](https://swhitt.github.io/povrayer/)
+[![The povrayer editor: a sunset seascape ray-traced live in the browser](docs/screenshots/hero.png)](https://povrayer.com/)
 
 The browser playground is a real renderer, not a gallery of pre-baked images.
 POV-Ray traces every pixel locally on `SharedArrayBuffer`-backed pthreads;
@@ -25,7 +25,7 @@ nothing leaves the page.
 - **Examples gallery.** A spread of scenes to fork from (CSG, isosurfaces,
   radiosity, media, depth of field, clock-driven animation, ...).
 - **REPL.** An incremental mode where each entry appends to the scene and
-  auto-renders, rolling back on error: [repl.html](https://swhitt.github.io/povrayer/repl.html).
+  auto-renders, rolling back on error: [repl.html](https://povrayer.com/repl.html).
 
 Every one of these is ray-traced in the browser, no GPU, no server round-trip:
 
@@ -41,8 +41,8 @@ One build, three surfaces: the [browser playground](#try-it-in-the-browser), a
 
 ## Try it in the browser
 
-Live, no install: <https://swhitt.github.io/povrayer/> (scene editor) and
-<https://swhitt.github.io/povrayer/repl.html> (the SDL REPL: each entry appends
+Live, no install: <https://povrayer.com/> (scene editor) and
+<https://povrayer.com/repl.html> (the SDL REPL: each entry appends
 to the scene and auto-renders; a failed entry rolls back).
 
 <p align="center">
