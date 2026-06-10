@@ -243,12 +243,8 @@ export function createPlayer(elements) {
   // WebM via MediaRecorder over the player canvas: the one lossy/codec path (GIF +
   // APNG are deterministic client-side encodes). recordCanvasWebm runs playOnce in
   // real time so the recorder captures every frame, so it takes ~clip-length.
-  async function exportWebm() {
-    const mime = pickWebmMime();
-    if (!mime) {
-      downloadPngFrames(urls);
-      return;
-    }
+  /** @param {string} mime */
+  async function exportWebm(mime) {
     const url = await recordCanvasWebm(playerCanvas, fps, mime, playOnce);
     triggerDownload(url, 'animation.webm');
     setTimeout(() => URL.revokeObjectURL(url), 10000);
@@ -289,7 +285,8 @@ export function createPlayer(elements) {
   /** @param {string} format gif | apng | webm | png */
   async function exportAs(format) {
     if (!bitmaps.length || exporting) return;
-    if (format === 'png' || (format === 'webm' && !canWebm())) {
+    const webmMime = format === 'webm' ? pickWebmMime() : null;
+    if (format === 'png' || (format === 'webm' && !webmMime)) {
       downloadPngFrames(urls);
       return;
     }
@@ -301,7 +298,7 @@ export function createPlayer(elements) {
     try {
       if (format === 'gif') await exportGif();
       else if (format === 'apng') await exportApng();
-      else await exportWebm();
+      else if (webmMime) await exportWebm(webmMime);
     } finally {
       exporting = false;
       exportBtn.disabled = false;

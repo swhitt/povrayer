@@ -81,6 +81,34 @@ test('controlled non-isolated page reloads once', () => {
   assert.equal(reloads, 1);
 });
 
+test('controlled non-isolated page can use the default global reload hook', () => {
+  const warningEl = fakeWarning();
+  const session = fakeSession();
+  let reloads = 0;
+  const previousLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  Object.defineProperty(globalThis, 'location', {
+    configurable: true,
+    value: { reload: () => reloads++ },
+  });
+
+  try {
+    const ok = ensureCrossOriginIsolation({
+      warningEl,
+      isolated: false,
+      session,
+      serviceWorker: /** @type {ServiceWorkerContainer} */ ({ controller: fakeWorker() }),
+    });
+
+    assert.equal(ok, false);
+    assert.equal(warningEl.hidden, false);
+    assert.deepEqual(session.written, [['coi-retry', '1']]);
+    assert.equal(reloads, 1);
+  } finally {
+    if (previousLocation) Object.defineProperty(globalThis, 'location', previousLocation);
+    else delete globalThis.location;
+  }
+});
+
 test('retry guard prevents reload loops', () => {
   const warningEl = fakeWarning();
   const session = fakeSession('1');

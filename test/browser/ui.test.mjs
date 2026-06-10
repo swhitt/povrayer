@@ -1542,6 +1542,28 @@ try {
     document.getElementById('scrubber').dispatchEvent(new Event('input')); // seek -> !bitmaps.length
     document.getElementById('export-btn').click(); // exportAs -> !bitmaps.length
   });
+  assert.equal(
+    await page.evaluate(async () => {
+      const { createPlayer } = await import('./player.js');
+      try {
+        createPlayer({
+          canvas: { getContext: () => null },
+          controls: {},
+          playButton: {},
+          scrubber: {},
+          frameReadout: {},
+          loopButton: {},
+          exportButton: {},
+          exportFormat: {},
+        });
+      } catch (err) {
+        return err instanceof Error ? err.message : String(err);
+      }
+      return null;
+    }),
+    '2D canvas context unavailable',
+    'createPlayer should fail early when a 2D canvas context is unavailable'
+  );
 
   // First animate render (3 frames, fresh page so engineSeen is false).
   await page.fill('#frames', '3');
