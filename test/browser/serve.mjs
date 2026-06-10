@@ -4,7 +4,7 @@
 // isolation headers SharedArrayBuffer requires.
 //
 //   import { startServer } from './serve.mjs'   -> ephemeral port (CI)
-//   node test/browser/serve.mjs                 -> port 8080 (interactive debugging)
+//   node test/browser/serve.mjs                 -> port 8080, or $PORT (interactive debugging)
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, resolve, sep } from 'node:path';
@@ -86,7 +86,7 @@ export function startServer(port = 0) {
 
 /* c8 ignore start -- CLI entrypoint guard: only runs via `node serve.mjs`, never under the import-based test suite */
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const { url } = await startServer(8080);
+  const { url } = await startServer(Number(process.env.PORT) || 8080);
   console.log(`povrayer test server: ${url}`);
 }
 /* c8 ignore stop -- end CLI entrypoint guard */
