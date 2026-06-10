@@ -235,7 +235,18 @@ function buildExampleBrowser() {
       by.className = 'ex-by';
       by.textContent = exByline(ex);
       by.hidden = by.textContent === '';
-      opt.append(title, desc, by);
+      const thumb = document.createElement('img');
+      thumb.className = 'ex-thumb';
+      thumb.src = ex.thumbnail;
+      thumb.alt = '';
+      thumb.loading = 'lazy';
+      thumb.decoding = 'async';
+      thumb.width = 64;
+      thumb.height = 48;
+      const text = document.createElement('span');
+      text.className = 'ex-text';
+      text.append(title, desc, by);
+      opt.append(thumb, text);
 
       groupEl.appendChild(opt);
       // Filter target: everything a user might type, joined + lowercased. Tags

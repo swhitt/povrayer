@@ -78,6 +78,11 @@ test('EXAMPLES is a non-empty array of fully-specified records', () => {
       renderTierKeys.has(ex.renderTier),
       `renderTier '${ex.renderTier}' is not a RENDER_TIERS key (${ex.name})`
     );
+    assert.equal(
+      ex.thumbnail,
+      `example-thumbnails/${ex.name}.png`,
+      `thumbnail path must be canonical (${ex.name})`
+    );
 
     // author non-empty; sourceUrl is '' or an https URL; license is on the list.
     assert.ok(

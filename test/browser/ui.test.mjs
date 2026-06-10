@@ -765,6 +765,12 @@ try {
       focused: document.activeElement?.id,
       aria: document.querySelector('.ex-option.is-active')?.getAttribute('aria-selected'),
       loaded: document.querySelector('.ex-option[data-loaded="true"]')?.dataset.name,
+      thumb: document
+        .querySelector('.ex-option[data-name="csg-die"] .ex-thumb')
+        ?.getAttribute('src'),
+      thumbW: document
+        .querySelector('.ex-option[data-name="csg-die"] .ex-thumb')
+        ?.getAttribute('width'),
       attr: document.querySelector('#example-attribution .ex-attr-text').textContent,
       srcHidden: document.querySelector('#example-attribution .ex-attr-src').hidden,
     })),
@@ -772,10 +778,12 @@ try {
       focused: 'example-search',
       aria: 'true',
       loaded: 'csg-die',
+      thumb: 'example-thumbnails/csg-die.png',
+      thumbW: '64',
       attr: 'by povrayer · CC0-1.0',
       srcHidden: true,
     },
-    'open focuses search, marks the loaded option active, shows the CC0 attribution with hidden link'
+    'open focuses search, marks the loaded option active, shows a thumbnail and CC0 attribution'
   );
 
   const modelingNames = await page.evaluate(async () => {

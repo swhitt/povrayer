@@ -99,7 +99,11 @@ const EXAMPLE_META = {
   'sourced-diffract': { difficulty: 'intro', renderTier: 'instant' },
 };
 
-const addExampleMetadata = (ex) => ({ ...ex, ...EXAMPLE_META[ex.name] });
+const addExampleMetadata = (ex) => ({
+  ...ex,
+  ...EXAMPLE_META[ex.name],
+  thumbnail: `example-thumbnails/${ex.name}.png`,
+});
 
 const CORE_EXAMPLES = [
   {

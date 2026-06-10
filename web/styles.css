@@ -671,10 +671,27 @@ body.ui main > * {
 
 .ex-option {
   display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
   gap: 1px;
+  column-gap: 8px;
+  align-items: center;
   padding: 6px 8px;
   cursor: pointer;
   border-bottom: 1px solid var(--border);
+}
+
+.ex-thumb {
+  width: 64px;
+  height: 48px;
+  object-fit: cover;
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+}
+
+.ex-text {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
 }
 
 .ex-title {
