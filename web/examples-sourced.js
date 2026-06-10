@@ -1207,4 +1207,871 @@ box { <-0.55,0,-0.55>, <0.55,0.85,0.55> pigment { color rgb <0.2,0.48,0.82> } fi
 #end
 `,
   },
+  {
+    name: 'sourced-orthographic-camera',
+    title: 'Orthographic camera study (CC-BY sample adaptation)',
+    category: 'camera',
+    tags: ['camera', 'orthographic', 'scale', 'projection', 'sample'],
+    description: 'An orthographic view flattens a clean row of colored solids',
+    author: 'Fabien Mosen / Friedrich A. Lohmueller',
+    sourceUrl: officialSceneUrl('camera/orthographic.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's camera/orthographic.pov sample by Fabien Mosen.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { orthographic location <3, 2.5, -6> look_at <0, 0.65, 0> right x*4 up y*3 }
+light_source { <-4, 6, -4> color rgb <1.1,1.02,0.88> area_light x*2, y*2, 3, 3 adaptive 1 }
+plane { y, 0 pigment { color rgb <0.05,0.055,0.065> } finish { reflection { 0.04,0.14 } specular 0.25 } }
+#for (I, -2, 2)
+  union {
+    sphere { <0,0.55,0>, 0.38 }
+    box { <-0.32,0,-0.32>, <0.32,0.26,0.32> }
+    pigment { color rgb <0.25+I*0.12,0.55,0.82-I*0.08> }
+    finish { specular 0.45 roughness 0.025 }
+    translate <I*0.72,0,I*0.18>
+  }
+#end
+`,
+  },
+  {
+    name: 'sourced-omnimax-camera',
+    title: 'Omnimax dome view (CC-BY sample adaptation)',
+    category: 'camera',
+    tags: ['camera', 'omnimax', 'dome', 'lens', 'sample'],
+    description: 'A fisheye dome camera bends a tiny pavilion into a circular frame',
+    author: 'Fabien Mosen / Friedrich A. Lohmueller',
+    sourceUrl: officialSceneUrl('camera/omnimax.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's camera/omnimax.pov sample by Fabien Mosen.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { omnimax location <0, 1.0, -0.01> look_at <0, 1.0, 1> angle 180 }
+light_source { <0, 5, -1> color rgb 1.1 }
+sky_sphere { pigment { gradient y color_map { [0 rgb <0.05,0.08,0.18>] [1 rgb <0.56,0.76,1>] } } }
+plane { y, 0 pigment { checker color rgb <0.08,0.09,0.1>, color rgb <0.7,0.74,0.76> scale 0.65 } }
+#for (A, 0, 300, 60)
+  cylinder { <1.4*cos(radians(A)),0,1.4*sin(radians(A))+1.6>,
+             <1.4*cos(radians(A)),1.1,1.4*sin(radians(A))+1.6>, 0.08
+    pigment { color rgb <0.9,0.6,0.25> } finish { specular 0.25 } }
+#end
+torus { 1.4, 0.035 translate <0,1.1,1.6> pigment { color rgb <0.9,0.9,0.75> } finish { specular 0.35 } }
+sphere { <0,1.55,1.6>, 0.42 pigment { color rgb <0.12,0.42,0.8> } finish { specular 0.45 } }
+`,
+  },
+  {
+    name: 'sourced-spherical-camera',
+    title: 'Spherical camera panorama (CC-BY sample adaptation)',
+    category: 'camera',
+    tags: ['camera', 'spherical', 'panorama', 'projection', 'sample'],
+    description: 'A full spherical camera wraps towers and horizon into a panorama',
+    author: 'Fabien Mosen / Friedrich A. Lohmueller',
+    sourceUrl: officialSceneUrl('camera/spherical.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's camera/spherical.pov sample by Fabien Mosen.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { spherical location <0, 1.0, -0.2> look_at <0, 1.0, 1> angle 360, 180 }
+light_source { <-4, 6, -3> color rgb <1.05,0.96,0.82> }
+sky_sphere { pigment { gradient y color_map { [0 rgb <0.82,0.90,1>] [1 rgb <0.08,0.14,0.35>] } } }
+plane { y, 0 pigment { color rgb <0.18,0.22,0.18> } normal { bumps 0.08 scale 0.45 } }
+#for (A, 0, 330, 30)
+  #declare R = 2.1 + 0.4*sin(radians(A*3));
+  cylinder { <R*cos(radians(A)),0,R*sin(radians(A))>, <R*cos(radians(A)),0.65+0.35*mod(A/30,3),R*sin(radians(A))>, 0.12
+    pigment { color rgb <0.25+0.5*mod(A/60,2),0.35,0.75> } finish { specular 0.25 } }
+#end
+`,
+  },
+  {
+    name: 'sourced-ultra-wide-camera',
+    title: 'Ultra wide angle room (CC-BY sample adaptation)',
+    category: 'camera',
+    tags: ['camera', 'wide-angle', 'interior', 'lens', 'sample'],
+    description: 'A wide camera exaggerates a checker room and central sculpture',
+    author: 'Fabien Mosen / Friedrich A. Lohmueller',
+    sourceUrl: officialSceneUrl('camera/ultra_wide_angle.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's camera/ultra_wide_angle.pov sample by Fabien Mosen.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { ultra_wide_angle location <0, 1.0, -3.0> look_at <0, 0.8, 0> angle 110 }
+light_source { <0, 4.5, -2.4> color rgb 1.05 area_light x*2, z*2, 3, 3 adaptive 1 }
+plane { y, 0 pigment { checker color rgb <0.04,0.045,0.05>, color rgb <0.78,0.80,0.78> scale 0.5 } finish { specular 0.2 } }
+plane { z, 2.2 pigment { checker color rgb <0.16,0.18,0.22>, color rgb <0.48,0.52,0.58> scale 0.45 } }
+torus { 0.62, 0.08 rotate x*90 translate <0,0.82,0> pigment { color rgb <0.9,0.22,0.18> } finish { specular 0.55 } }
+sphere { <0,0.82,0>, 0.28 pigment { color rgb <0.12,0.55,0.95> } finish { specular 0.7 reflection 0.08 } }
+`,
+  },
+  {
+    name: 'sourced-circular-area-light',
+    title: 'Circular area light (CC-BY sample adaptation)',
+    category: 'lighting',
+    tags: ['area-light', 'circular', 'shadow', 'lighting', 'sample'],
+    description: 'A circular area light leaves broad soft shadows around glossy forms',
+    author: 'POV-Ray sample scene authors',
+    sourceUrl: officialSceneUrl('lights/circular.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's lights/circular.pov sample.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <3.4,2.5,-5.2> look_at <0,0.55,0> angle 38 }
+light_source { <-2.5,4.6,-3.5> color rgb 1.15 area_light x*2.5, z*2.5, 5, 5 circular orient adaptive 1 jitter }
+plane { y, 0 pigment { color rgb <0.68,0.68,0.63> } finish { diffuse 0.72 specular 0.12 } }
+box { <-0.75,0,-0.35>, <-0.25,0.85,0.35> pigment { color rgb <0.15,0.42,0.85> } finish { specular 0.35 } }
+sphere { <0.45,0.48,0.08>, 0.48 pigment { color rgb <0.9,0.38,0.1> } finish { specular 0.55 roughness 0.02 } }
+torus { 0.72, 0.025 rotate x*90 translate <-2.5,4.6,-3.5> pigment { color rgb <1,0.92,0.62> } finish { emission 0.3 diffuse 0 } no_shadow }
+`,
+  },
+  {
+    name: 'sourced-spotlight',
+    title: 'Spotlight cone (CC-BY sample adaptation)',
+    category: 'lighting',
+    tags: ['spotlight', 'cone', 'shadow', 'lighting', 'sample'],
+    description: 'A tight spotlight isolates one sphere on a dark studio floor',
+    author: 'Alexander Enzmann / Drew Wells',
+    sourceUrl: officialSceneUrl('lights/spotlite.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's lights/spotlite.pov sample by Alexander Enzmann and Drew Wells.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <2.8,2.0,-4.6> look_at <0,0.45,0> angle 38 }
+background { color rgb <0.006,0.007,0.010> }
+light_source { <-2,4,-3> color rgb <1.25,1.12,0.85> spotlight point_at <0,0.35,0> radius 8 falloff 18 tightness 18 }
+light_source { <3,3,-4> color rgb <0.08,0.12,0.2> shadowless }
+plane { y, 0 pigment { color rgb <0.025,0.026,0.03> } finish { reflection { 0.04,0.18 } specular 0.35 } }
+sphere { <0,0.46,0>, 0.46 pigment { checker color rgb <0.92,0.92,0.82>, color rgb <0.18,0.22,0.32> scale 0.22 } finish { specular 0.65 roughness 0.018 } }
+cone { <-2,4,-3>, 0.08, <0,0.38,0>, 0.72 pigment { color rgbf <1,0.78,0.35,0.88> } finish { emission 0.12 diffuse 0 } hollow no_shadow }
+`,
+  },
+  {
+    name: 'sourced-parallel-light',
+    title: 'Parallel sun light (CC-BY sample adaptation)',
+    category: 'lighting',
+    tags: ['parallel', 'sun', 'shadow', 'lighting', 'sample'],
+    description: 'Parallel light casts matching shadows from repeated columns',
+    author: 'POV-Ray sample scene authors',
+    sourceUrl: officialSceneUrl('lights/parallel_lights.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's lights/parallel_lights.pov sample.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <3.8,2.8,-5.4> look_at <0,0.7,0> angle 40 }
+light_source { <-10, 10, -10> color rgb <1.1,1.0,0.82> parallel point_at <0,0,0> }
+plane { y, 0 pigment { color rgb <0.70,0.71,0.68> } finish { diffuse 0.75 specular 0.1 } }
+#for (I, -2, 2)
+  cylinder { <I*0.55,0,0>, <I*0.55,1.25,0>, 0.12 pigment { color rgb <0.25,0.42+I*0.06,0.75> } finish { specular 0.25 } }
+  sphere { <I*0.55,1.42,0>, 0.18 pigment { color rgb <0.9,0.75,0.28> } finish { specular 0.4 } }
+#end
+`,
+  },
+  {
+    name: 'sourced-projected-through',
+    title: 'Projected through glass (CC-BY sample adaptation)',
+    category: 'lighting',
+    tags: ['projected-through', 'glass', 'shadow', 'lighting', 'sample'],
+    description: 'Colored panes tint projected light onto a small back wall',
+    author: 'POV-Ray sample scene authors',
+    sourceUrl: officialSceneUrl('lights/projected_through.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's lights/projected_through.pov sample.
+#version 3.8;
+global_settings { assumed_gamma 1.0 max_trace_level 6 }
+
+camera { location <0,1.5,-5> look_at <0,0.75,0> angle 38 }
+light_source { <0,2.1,-3.4> color rgb <1.2,1.15,1.05> projected_through { box { <-0.95,0.35,-1.3>, <0.95,1.45,-1.24> } } }
+plane { y, 0 pigment { color rgb <0.045,0.045,0.05> } finish { reflection { 0.04,0.12 } } }
+plane { z, 1.45 pigment { color rgb <0.72,0.74,0.78> } finish { diffuse 0.75 } }
+#for (I, -1, 1)
+  box { <-0.28,0.35,-1.3>, <0.28,1.45,-1.24> translate x*(I*0.55)
+    pigment { color rgbf <0.3+0.3*I,0.45,0.9-0.25*I,0.55> } finish { specular 0.4 } interior { ior 1.2 } no_shadow }
+#end
+sphere { <0,0.42,0>, 0.42 pigment { color rgb <0.9,0.9,0.82> } finish { specular 0.45 } }
+`,
+  },
+  {
+    name: 'sourced-blob-cluster',
+    title: 'Blob cluster (CC-BY sample adaptation)',
+    category: 'implicit',
+    tags: ['blob', 'metaball', 'implicit', 'sample'],
+    description: 'Metaball components merge into a glossy organic cluster',
+    author: 'Alexander Enzmann',
+    sourceUrl: officialSceneUrl('objects/blob.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's objects/blob.pov sample by Alexander Enzmann.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <3.0,2.2,-4.8> look_at <0,0.65,0> angle 36 }
+light_source { <-3,5,-4> color rgb <1.1,1.0,0.86> area_light x*2, y*2, 3, 3 adaptive 1 }
+plane { y, -0.72 pigment { color rgb <0.035,0.038,0.045> } finish { reflection { 0.05,0.18 } specular 0.35 } }
+blob {
+  threshold 0.58
+  sphere { <0,0,0>, 0.78, 1.0 }
+  sphere { <0.55,0.22,0.12>, 0.54, 0.9 }
+  sphere { <-0.52,0.08,-0.18>, 0.50, 0.85 }
+  sphere { <0.05,0.58,-0.10>, 0.45, 0.82 }
+  pigment { color rgb <0.8,0.12,0.42> }
+  finish { specular 0.75 roughness 0.012 reflection 0.08 }
+}
+`,
+  },
+  {
+    name: 'sourced-fractal-julia',
+    title: 'Julia fractal shard (CC-BY sample adaptation)',
+    category: 'implicit',
+    tags: ['julia-fractal', 'fractal', 'math', 'sample'],
+    description: 'A compact quaternion Julia shard floats over a dark floor',
+    author: 'POV-Ray sample scene authors',
+    sourceUrl: officialSceneUrl('objects/fractal1.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's objects/fractal1.pov sample.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <2.8,2.0,-4.4> look_at <0,0.25,0> angle 35 }
+light_source { <-4,5,-4> color rgb <1.05,0.95,0.82> }
+plane { y, -1.05 pigment { color rgb <0.03,0.032,0.038> } finish { reflection { 0.05,0.2 } specular 0.25 } }
+julia_fractal {
+  <-0.083, 0.0, -0.83, -0.025>
+  quaternion sqr max_iteration 9 precision 80
+  scale 1.15 rotate <12,32,0>
+  pigment { color rgb <0.28,0.78,0.95> }
+  finish { specular 0.65 roughness 0.012 reflection 0.05 }
+}
+`,
+  },
+  {
+    name: 'sourced-isosurface-gallery',
+    title: 'Isosurface gallery (CC-BY sample adaptation)',
+    category: 'implicit',
+    tags: ['isosurface', 'function', 'gallery', 'sample'],
+    description: 'Four small function surfaces compare ripples, ridges, and saddles',
+    author: 'Chris Huff',
+    sourceUrl: officialSceneUrl('objects/isosurfaces.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's objects/isosurfaces.pov sample by Chris Huff.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+#include "functions.inc"
+
+camera { location <3.6,2.6,-5.2> look_at <0,0.25,0> angle 42 }
+light_source { <-4,6,-4> color rgb 1.1 area_light x*2, y*2, 3, 3 adaptive 1 }
+plane { y, -0.7 pigment { color rgb <0.04,0.043,0.05> } finish { reflection { 0.04,0.14 } } }
+isosurface {
+  function { y + 0.22*sin(8*x) + 0.16*cos(8*z) }
+  contained_by { box { <-0.8,-0.8,-0.8>, <0.8,0.8,0.8> } }
+  max_gradient 4
+  pigment { color rgb <0.9,0.32,0.18> } finish { specular 0.55 roughness 0.018 }
+  translate <-1.0,0,0>
+}
+isosurface {
+  function { sqrt(x*x+z*z)-0.42-0.08*sin(12*y) }
+  contained_by { box { <-0.8,-0.8,-0.8>, <0.8,0.8,0.8> } }
+  max_gradient 4
+  pigment { color rgb <0.18,0.66,0.92> } finish { specular 0.55 roughness 0.018 }
+  translate <0.95,0,0>
+}
+isosurface {
+  function { x*x - y + z*z - 0.08 }
+  contained_by { box { <-0.8,-0.8,-0.8>, <0.8,0.8,0.8> } }
+  max_gradient 4
+  pigment { color rgb <0.78,0.72,0.18> } finish { specular 0.55 roughness 0.018 }
+  translate <-1.0,0,1.15>
+}
+isosurface {
+  function { y*y - x*z - 0.05 }
+  contained_by { box { <-0.8,-0.8,-0.8>, <0.8,0.8,0.8> } }
+  max_gradient 4
+  pigment { color rgb <0.52,0.85,0.38> } finish { specular 0.55 roughness 0.018 }
+  translate <0.95,0,1.15>
+}
+`,
+  },
+  {
+    name: 'sourced-lathe-gallery',
+    title: 'Lathe gallery (CC-BY sample adaptation)',
+    category: 'modeling',
+    tags: ['lathe', 'surface-of-revolution', 'vase', 'sample'],
+    description: 'Three lathe profiles show simple surfaces of revolution',
+    author: 'Dieter Bayer / Friedrich A. Lohmueller',
+    sourceUrl: officialSceneUrl('objects/lathe2.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's objects/lathe2.pov sample by Dieter Bayer.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <3.4,2.3,-5.0> look_at <0,0.8,0> angle 38 }
+light_source { <-4,6,-4> color rgb <1.1,1.0,0.82> area_light x*2, y*2, 3, 3 adaptive 1 }
+plane { y, 0 pigment { color rgb <0.045,0.047,0.052> } finish { reflection { 0.04,0.16 } specular 0.25 } }
+#macro Vessel(X, Col)
+  lathe {
+    cubic_spline 7
+    <0.18,0>, <0.48,0.08>, <0.35,0.45>, <0.52,0.9>, <0.28,1.35>, <0.42,1.55>, <0.26,1.68>
+    pigment { color rgb Col } finish { specular 0.62 roughness 0.018 reflection 0.04 }
+    translate <X,0,0>
+  }
+#end
+Vessel(-1.05, <0.86,0.34,0.18>)
+Vessel(0, <0.18,0.65,0.78>)
+Vessel(1.05, <0.78,0.72,0.32>)
+`,
+  },
+  {
+    name: 'sourced-mesh2-cushion',
+    title: 'Mesh2 cushion (CC-BY sample adaptation)',
+    category: 'modeling',
+    tags: ['mesh2', 'triangle', 'surface', 'sample'],
+    description: 'A hand-built mesh2 patch forms a small faceted cushion',
+    author: 'Christoph Hormann',
+    sourceUrl: officialSceneUrl('objects/mesh2.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's objects/mesh2.pov sample by Christoph Hormann.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <2.8,2.0,-4.2> look_at <0,0.25,0> angle 35 }
+light_source { <-3,5,-4> color rgb <1.1,1.0,0.86> area_light x*2, y*2, 3, 3 adaptive 1 }
+plane { y, -0.35 pigment { color rgb <0.04,0.043,0.05> } finish { reflection { 0.04,0.16 } specular 0.25 } }
+mesh2 {
+  vertex_vectors { 9,
+    <-1,0,-1>, <0,0.24,-1>, <1,0,-1>,
+    <-1,0.18,0>, <0,0.58,0>, <1,0.18,0>,
+    <-1,0,1>, <0,0.24,1>, <1,0,1> }
+  face_indices { 8, <0,1,4>, <0,4,3>, <1,2,5>, <1,5,4>, <3,4,7>, <3,7,6>, <4,5,8>, <4,8,7> }
+  pigment { color rgb <0.22,0.62,0.9> } finish { specular 0.55 roughness 0.018 }
+}
+`,
+  },
+  {
+    name: 'sourced-prism-sweep',
+    title: 'Prism sweep set (CC-BY sample adaptation)',
+    category: 'modeling',
+    tags: ['prism', 'sweep', 'extrusion', 'sample'],
+    description: 'Three prism sweeps compare linear, conic, and star-like profiles',
+    author: 'Dieter Bayer',
+    sourceUrl: officialSceneUrl('objects/prism1.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's objects/prism1.pov sample by Dieter Bayer.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <3.6,2.4,-5.2> look_at <0,0.5,0> angle 38 }
+light_source { <-4,6,-4> color rgb <1.12,1.02,0.84> area_light x*2, y*2, 3, 3 adaptive 1 }
+plane { y, 0 pigment { color rgb <0.045,0.047,0.052> } finish { reflection { 0.04,0.16 } specular 0.22 } }
+#macro StarPrism(X, Col)
+  prism {
+    linear_sweep linear_spline 0, 0.85, 11,
+    <0,0.5>, <0.12,0.12>, <0.5,0.12>, <0.2,-0.08>, <0.32,-0.48>,
+    <0,-0.25>, <-0.32,-0.48>, <-0.2,-0.08>, <-0.5,0.12>, <-0.12,0.12>, <0,0.5>
+    rotate x*90 translate <X,0.85,0>
+    pigment { color rgb Col } finish { specular 0.5 roughness 0.02 }
+  }
+#end
+StarPrism(-1.0, <0.85,0.26,0.18>)
+StarPrism(0, <0.20,0.64,0.85>)
+StarPrism(1.0, <0.72,0.78,0.22>)
+`,
+  },
+  {
+    name: 'sourced-sor-gallery',
+    title: 'Surface of revolution set (CC-BY sample adaptation)',
+    category: 'modeling',
+    tags: ['sor', 'surface-of-revolution', 'profile', 'sample'],
+    description: 'Surface-of-revolution profiles become polished bottle silhouettes',
+    author: 'Dieter Bayer',
+    sourceUrl: officialSceneUrl('objects/sor1.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's objects/sor1.pov sample by Dieter Bayer.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <3.2,2.2,-5> look_at <0,0.8,0> angle 38 }
+light_source { <-4,5,-4> color rgb <1.1,0.98,0.82> area_light x*2, y*2, 3, 3 adaptive 1 }
+plane { y, 0 pigment { color rgb <0.04,0.044,0.052> } finish { reflection { 0.04,0.16 } specular 0.28 } }
+#macro Bottle(X, Col)
+  sor {
+    7, <0.18,0>, <0.42,0.12>, <0.50,0.42>, <0.33,0.86>, <0.22,1.20>, <0.28,1.45>, <0.20,1.58>
+    pigment { color rgbf <Col.x,Col.y,Col.z,0.15> } finish { specular 0.7 roughness 0.01 reflection 0.06 }
+    interior { ior 1.35 }
+    translate <X,0,0>
+  }
+#end
+Bottle(-0.85, <0.9,0.34,0.18>)
+Bottle(0.15, <0.18,0.62,0.86>)
+Bottle(1.05, <0.48,0.82,0.32>)
+`,
+  },
+  {
+    name: 'sourced-superellipsoid-cubes',
+    title: 'Superellipsoid cubes (CC-BY sample adaptation)',
+    category: 'modeling',
+    tags: ['superellipsoid', 'rounded-cube', 'shape', 'sample'],
+    description: 'A row of superellipsoids shows rounded-cube exponents',
+    author: 'Dieter Bayer',
+    sourceUrl: officialSceneUrl('objects/superel1.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's objects/superel1.pov sample by Dieter Bayer.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <3.5,2.5,-5.0> look_at <0,0.65,0> angle 38 }
+light_source { <-4,6,-4> color rgb <1.12,1.03,0.84> area_light x*2, y*2, 3, 3 adaptive 1 }
+plane { y, -0.62 pigment { color rgb <0.045,0.048,0.055> } finish { reflection { 0.04,0.16 } specular 0.25 } }
+#macro Super(X, E, Col)
+  superellipsoid { <E,E> scale 0.58 translate <X,0,0>
+    pigment { color rgb Col } finish { specular 0.65 roughness 0.015 reflection 0.04 } }
+#end
+Super(-1.15, 0.12, <0.88,0.22,0.18>)
+Super(0, 0.28, <0.18,0.64,0.9>)
+Super(1.15, 0.55, <0.75,0.76,0.24>)
+`,
+  },
+  {
+    name: 'sourced-torus-gallery',
+    title: 'Torus gallery (CC-BY sample adaptation)',
+    category: 'modeling',
+    tags: ['torus', 'ring', 'primitive', 'sample'],
+    description: 'Nested glossy torii compare scale, tilt, and material response',
+    author: 'Dieter Bayer',
+    sourceUrl: officialSceneUrl('objects/torus1.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's objects/torus1.pov sample by Dieter Bayer.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <3.1,2.1,-4.5> look_at <0,0.45,0> angle 36 }
+light_source { <-4,5,-4> color rgb <1.1,1.0,0.86> area_light x*2, y*2, 3, 3 adaptive 1 }
+plane { y, -0.72 pigment { color rgb <0.035,0.038,0.045> } finish { reflection { 0.05,0.2 } specular 0.25 } }
+#for (I, -1, 1)
+  torus { 0.48+0.08*I, 0.09 rotate <90, 18*I, 0> translate <I*0.82,0,0>
+    pigment { color rgb <0.35+0.25*I,0.58,0.84-0.16*I> } finish { specular 0.72 roughness 0.012 reflection 0.06 } }
+#end
+`,
+  },
+  {
+    name: 'sourced-lemniscate',
+    title: 'Quartic lemniscate (CC-BY sample adaptation)',
+    category: 'implicit',
+    tags: ['quartic', 'lemniscate', 'math', 'sample'],
+    description: 'A lemniscate-inspired figure-eight curve is traced with glossy beads',
+    author: 'Alexander Enzmann',
+    sourceUrl: officialSceneUrl('objects/quartic/lemnisca.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's objects/quartic/lemnisca.pov sample by Alexander Enzmann.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <0,2.2,-5.0> look_at <0,0.15,0> angle 37 }
+light_source { <-3,5,-4> color rgb <1.1,0.98,0.82> }
+plane { y, -0.55 pigment { color rgb <0.035,0.038,0.045> } finish { reflection { 0.04,0.16 } } }
+#declare LTex = texture { pigment { color rgb <0.95,0.25,0.48> } finish { specular 0.65 roughness 0.014 reflection 0.05 } }
+#for (I, 0, 127)
+  #declare T = radians(I*360/128);
+  #declare D = 1 + pow(sin(T),2);
+  sphere { <1.45*cos(T)/D, 0.15 + 0.35*sin(2*T), 1.45*sin(T)*cos(T)/D>, 0.055 texture { LTex } }
+#end
+`,
+  },
+  {
+    name: 'sourced-monkey-saddle',
+    title: 'Monkey saddle surface (CC-BY sample adaptation)',
+    category: 'implicit',
+    tags: ['quartic', 'saddle', 'math', 'surface', 'sample'],
+    description: 'A sampled saddle surface turns algebraic curvature into a mesh',
+    author: 'Alexander Enzmann',
+    sourceUrl: officialSceneUrl('objects/quartic/monkey.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's objects/quartic/monkey.pov sample by Alexander Enzmann.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <3.2,2.3,-4.8> look_at <0,0,0> angle 38 }
+light_source { <-4,6,-4> color rgb <1.1,1.0,0.84> area_light x*2, y*2, 3, 3 adaptive 1 }
+plane { y, -0.75 pigment { color rgb <0.035,0.038,0.046> } finish { reflection { 0.04,0.16 } specular 0.25 } }
+#for (X, -6, 6)
+  #for (Z, -6, 6)
+    #declare xx = X/6;
+    #declare zz = Z/6;
+    #declare yy = 0.22*(xx*xx*xx - 3*xx*zz*zz);
+    sphere { <xx, yy, zz>, 0.045 pigment { color rgb <0.2+0.35*(xx+1)/2,0.65,0.9-0.35*(zz+1)/2> } finish { specular 0.45 } }
+  #end
+#end
+`,
+  },
+  {
+    name: 'sourced-steiner-surface',
+    title: 'Steiner surface (CC-BY sample adaptation)',
+    category: 'implicit',
+    tags: ['quartic', 'steiner', 'math', 'surface', 'sample'],
+    description: 'A compact Steiner-inspired surface forms a self-crossing shell',
+    author: 'Alexander Enzmann',
+    sourceUrl: officialSceneUrl('objects/quartic/steiner.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's objects/quartic/steiner.pov sample by Alexander Enzmann.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <3.1,2.2,-4.7> look_at <0,0.2,0> angle 36 }
+light_source { <-4,5,-4> color rgb <1.08,0.98,0.82> area_light x*2, y*2, 3, 3 adaptive 1 }
+plane { y, -0.85 pigment { color rgb <0.032,0.035,0.042> } finish { reflection { 0.04,0.16 } } }
+isosurface {
+  function { pow(x*x+y*y+z*z,2) - 0.82*(x*x*y*y + y*y*z*z + z*z*x*x) - 0.055 }
+  contained_by { sphere { <0,0,0>, 1.35 } }
+  max_gradient 6
+  pigment { color rgb <0.18,0.74,0.82> }
+  finish { specular 0.62 roughness 0.014 reflection 0.06 }
+  rotate <10,26,0>
+}
+`,
+  },
+  {
+    name: 'sourced-witch-surface',
+    title: 'Witch curve surface (CC-BY sample adaptation)',
+    category: 'implicit',
+    tags: ['quartic', 'witch', 'math', 'curve', 'sample'],
+    description: 'A witch-of-Agnesi-inspired curve becomes a luminous bead arc',
+    author: 'Alexander Enzmann',
+    sourceUrl: officialSceneUrl('objects/quartic/witch.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's objects/quartic/witch.pov sample by Alexander Enzmann.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <0,2.2,-5.2> look_at <0,0.55,0> angle 36 }
+light_source { <-3,5,-4> color rgb <1.1,0.98,0.82> }
+plane { y, -0.05 pigment { color rgb <0.035,0.038,0.045> } finish { reflection { 0.04,0.15 } } }
+#for (I, -42, 42)
+  #declare X = I/18;
+  #declare Y = 1.65/(1 + X*X);
+  sphere { <X, Y, 0.18*sin(I*0.35)>, 0.055
+    pigment { color rgb <0.9,0.36+0.25*Y/1.65,0.15> } finish { specular 0.55 } }
+#end
+`,
+  },
+  {
+    name: 'sourced-agate-pattern',
+    title: 'Agate pattern wall (CC-BY sample adaptation)',
+    category: 'texturing',
+    tags: ['agate', 'pattern', 'texture', 'sample'],
+    description: 'Agate bands wrap a row of spheres with varied turbulence',
+    author: 'POV-Ray sample scene authors',
+    sourceUrl: officialSceneUrl('textures/patterns/agate.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's textures/patterns/agate.pov sample.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <0,2.1,-5> look_at <0,0.55,0> angle 38 }
+light_source { <-3,5,-4> color rgb 1.1 }
+plane { y, 0 pigment { color rgb <0.045,0.047,0.052> } finish { reflection { 0.04,0.16 } } }
+#for (I, -2, 2)
+  sphere { <I*0.58,0.55,0>, 0.42
+    pigment { agate color_map { [0 rgb <0.12,0.05,0.03>] [0.45 rgb <0.8,0.42,0.18>] [1 rgb <1,0.86,0.48>] } turbulence 0.45+0.08*I scale 0.35 }
+    finish { specular 0.42 roughness 0.025 } }
+#end
+`,
+  },
+  {
+    name: 'sourced-marble-pattern',
+    title: 'Marble material row (CC-BY sample adaptation)',
+    category: 'texturing',
+    tags: ['marble', 'pattern', 'texture', 'veins', 'sample'],
+    description: 'Procedural marble veins cut across polished primitive shapes',
+    author: 'POV-Ray sample scene authors',
+    sourceUrl: officialSceneUrl('textures/patterns/marble.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's textures/patterns/marble.pov sample.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <3.0,2.1,-4.8> look_at <0,0.55,0> angle 36 }
+light_source { <-4,5,-4> color rgb <1.12,1.02,0.86> area_light x*2, y*2, 3, 3 adaptive 1 }
+plane { y, 0 pigment { color rgb <0.035,0.038,0.045> } finish { reflection { 0.05,0.2 } specular 0.25 } }
+#declare MarbleTex = texture {
+  pigment { marble color_map { [0 rgb <0.95,0.93,0.84>] [0.42 rgb <0.32,0.34,0.38>] [1 rgb <0.85,0.78,0.62>] } turbulence 0.7 scale 0.45 }
+  finish { specular 0.6 roughness 0.018 reflection 0.06 }
+}
+sphere { <-0.85,0.52,0>, 0.52 texture { MarbleTex } }
+box { <-0.2,0, -0.45>, <0.65,0.85,0.4> rotate y*18 texture { MarbleTex } }
+torus { 0.42, 0.09 rotate x*90 translate <1.18,0.55,0> texture { MarbleTex } }
+`,
+  },
+  {
+    name: 'sourced-spiral-pattern',
+    title: 'Spiral pigment disks (CC-BY sample adaptation)',
+    category: 'texturing',
+    tags: ['spiral', 'pattern', 'pigment', 'sample'],
+    description: 'Spiral pigments turn flat disks into bold procedural targets',
+    author: 'POV-Ray sample scene authors',
+    sourceUrl: officialSceneUrl('textures/patterns/spiral1.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's textures/patterns/spiral1.pov sample.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <0,1.6,-4.2> look_at <0,0.7,0> angle 38 }
+light_source { <0,4,-4> color rgb 1.1 }
+plane { y, 0 pigment { color rgb <0.04,0.043,0.05> } finish { reflection { 0.04,0.14 } } }
+#for (I, -1, 1)
+  disc { <I*0.82,0.78,0>, -z, 0.38
+    pigment { spiral1 5 color_map { [0 rgb <0.95,0.22,0.12>] [0.5 rgb <1,0.92,0.25>] [1 rgb <0.1,0.45,0.9>] } scale 0.34 rotate z*(I*25) }
+    finish { specular 0.35 } }
+#end
+`,
+  },
+  {
+    name: 'sourced-crackle-cells',
+    title: 'Crackle cell material (CC-BY sample adaptation)',
+    category: 'texturing',
+    tags: ['crackle', 'cells', 'pattern', 'sample'],
+    description: 'Crackle pigment cells turn blocks into chipped ceramic tiles',
+    author: 'POV-Ray sample scene authors',
+    sourceUrl: officialSceneUrl('textures/patterns/crackle1.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's textures/patterns/crackle1.pov sample.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <3.2,2.2,-4.8> look_at <0,0.45,0> angle 37 }
+light_source { <-4,5,-4> color rgb <1.1,1.0,0.86> }
+plane { y, 0 pigment { color rgb <0.035,0.038,0.045> } finish { reflection { 0.04,0.16 } } }
+#declare CellTex = texture {
+  pigment { crackle color_map { [0 rgb <0.08,0.10,0.12>] [0.08 rgb <0.18,0.22,0.26>] [1 rgb <0.88,0.72,0.42>] } scale 0.32 }
+  normal { crackle 0.18 scale 0.32 }
+  finish { specular 0.28 roughness 0.04 }
+}
+#for (X, -1, 1)
+  box { <-0.35,0,-0.35>, <0.35,0.55,0.35> translate <X*0.82,0,0> texture { CellTex } }
+#end
+`,
+  },
+  {
+    name: 'sourced-pavement-tiles',
+    title: 'Pavement tile swatch (CC-BY sample adaptation)',
+    category: 'texturing',
+    tags: ['pavement', 'tiles', 'pattern', 'sample'],
+    description: 'A pavement-style procedural tile grid makes an ornate floor swatch',
+    author: 'POV-Ray sample scene authors',
+    sourceUrl: officialSceneUrl('textures/patterns/pavement.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's textures/patterns/pavement.pov sample.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <0,4.0,-3.4> look_at <0,0,0> angle 42 }
+light_source { <-3,5,-4> color rgb <1.1,1.0,0.86> }
+#for (X, -4, 4)
+  #for (Z, -4, 4)
+    #declare Shift = 0.22*mod(Z+4,2);
+    #declare C = mod(X + Z + 8, 3);
+    box { <-0.18,0,-0.18>, <0.18,0.025,0.18> translate <X*0.42+Shift,0,Z*0.38>
+      pigment { color rgb <0.28+0.12*C,0.32+0.08*mod(C+1,3),0.38+0.08*mod(C+2,3)> }
+      finish { specular 0.18 roughness 0.04 } }
+  #end
+#end
+sphere { <0,0.32,0>, 0.32 pigment { color rgb <0.88,0.24,0.18> } finish { specular 0.55 } }
+`,
+  },
+  {
+    name: 'sourced-object-pattern',
+    title: 'Object pattern bands (CC-BY-SA sample adaptation)',
+    category: 'texturing',
+    tags: ['object-pattern', 'warp', 'radiosity', 'sample'],
+    description: 'Object-pattern logic cuts colored bands through a simple sculpture',
+    author: 'Christoph Hormann',
+    sourceUrl: officialSceneUrl('advanced/object_pattern.pov'),
+    license: 'CC-BY-SA-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's advanced/object_pattern.pov sample by Christoph Hormann.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <3.1,2.1,-4.8> look_at <0,0.65,0> angle 36 }
+light_source { <-4,5,-4> color rgb <1.1,1.0,0.82> area_light x*2, y*2, 3, 3 adaptive 1 }
+plane { y, 0 pigment { color rgb <0.035,0.038,0.045> } finish { reflection { 0.04,0.16 } specular 0.25 } }
+#declare Cutter = union { sphere { <0,0.75,0>, 0.5 } cylinder { <-0.5,0.75,0>, <0.5,0.75,0>, 0.25 } }
+union {
+  sphere { <0,0.75,0>, 0.72 }
+  torus { 0.72, 0.09 translate y*0.75 }
+  pigment { object { Cutter color rgb <0.86,0.22,0.16>, color rgb <0.12,0.56,0.88> } warp { cylindrical orientation y } }
+  finish { specular 0.62 roughness 0.015 reflection 0.06 }
+}
+`,
+  },
+  {
+    name: 'sourced-whiltile',
+    title: 'While-loop tile floor (CC-BY-SA sample adaptation)',
+    category: 'generative',
+    tags: ['while-loop', 'tile', 'procedural', 'sample'],
+    description: 'Nested loops build a patterned tile floor from repeated geometry',
+    author: 'Eduard Schwan / Dan Farmer',
+    sourceUrl: officialSceneUrl('advanced/whiltile.pov'),
+    license: 'CC-BY-SA-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's advanced/whiltile.pov sample by Eduard Schwan and Dan Farmer.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <0,5.5,-6.8> look_at <0,0,0> angle 42 }
+light_source { <-3,6,-4> color rgb <1.1,1.0,0.82> }
+#declare X = -4;
+#while (X <= 4)
+  #declare Z = -4;
+  #while (Z <= 4)
+    box { <-0.45,0,-0.45>, <0.45,0.035,0.45> translate <X*0.46,0,Z*0.46>
+      pigment { color rgb <0.22+0.08*mod(X+Z+8,3),0.28+0.05*mod(X+8,2),0.38+0.07*mod(Z+8,3)> }
+      finish { specular 0.18 roughness 0.04 } }
+    #declare Z = Z + 1;
+  #end
+  #declare X = X + 1;
+#end
+sphere { <0,0.34,0>, 0.34 pigment { color rgb <0.9,0.76,0.28> } finish { specular 0.55 } }
+`,
+  },
+  {
+    name: 'sourced-float-math',
+    title: 'Float math axes (CC-BY-SA sample adaptation)',
+    category: 'generative',
+    tags: ['float', 'math', 'loop', 'axes', 'sample'],
+    description: 'Looped math plots bead markers along sine and cosine axes',
+    author: 'POV-Ray sample scene authors',
+    sourceUrl: officialSceneUrl('advanced/float5.pov'),
+    license: 'CC-BY-SA-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's advanced/float5.pov sample.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <0,2.6,-6.0> look_at <0,0.25,0> angle 38 }
+light_source { <-3,5,-4> color rgb 1.1 }
+plane { y, -0.75 pigment { color rgb <0.035,0.038,0.045> } finish { reflection { 0.04,0.16 } } }
+cylinder { <-2.2,0,0>, <2.2,0,0>, 0.018 pigment { color rgb <0.85,0.85,0.9> } }
+cylinder { <0,-0.55,0>, <0,1.35,0>, 0.018 pigment { color rgb <0.85,0.85,0.9> } }
+#declare I = -40;
+#while (I <= 40)
+  #declare X = I/18;
+  #declare Y = 0.55*sin(I/5);
+  sphere { <X,Y,0>, 0.045 pigment { color rgb <0.18,0.58+0.22*cos(I/8),0.92> } finish { specular 0.45 } }
+  #declare I = I + 1;
+#end
+`,
+  },
+  {
+    name: 'sourced-abyss-field',
+    title: 'Abyss field (CC-BY-SA sample adaptation)',
+    category: 'environment',
+    tags: ['abyss', 'field', 'atmosphere', 'terrain', 'sample'],
+    description: 'A minimal abyss landscape stages a tiny craft over a striped field',
+    author: 'Gilles Tran',
+    sourceUrl: officialSceneUrl('advanced/abyss.pov'),
+    license: 'CC-BY-SA-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's advanced/abyss.pov sample by Gilles Tran.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <0,1.2,-6.2> look_at <0,0.25,2.5> angle 46 }
+sky_sphere { pigment { gradient y color_map { [0 rgb <0.80,0.83,0.86>] [1 rgb <0.14,0.18,0.28>] } } }
+light_source { <-4,5,-3> color rgb <1.1,0.98,0.78> }
+fog { distance 9 color rgb <0.55,0.62,0.68> fog_offset 0.1 fog_alt 1.1 }
+plane { y, 0 pigment { gradient x color_map { [0 rgb <0.10,0.11,0.12>] [0.5 rgb <0.38,0.34,0.25>] [1 rgb <0.10,0.11,0.12>] } scale 0.42 } finish { diffuse 0.78 } }
+union {
+  sphere { <0,0.45,1.2>, 0.32 scale <1.6,0.32,0.55> }
+  cylinder { <-0.7,0.45,1.2>, <0.7,0.45,1.2>, 0.035 }
+  pigment { color rgb <0.72,0.76,0.72> } finish { specular 0.45 reflection 0.04 }
+}
+`,
+  },
 ];
