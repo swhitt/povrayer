@@ -1105,23 +1105,37 @@ try {
     null,
     { timeout: 5_000 }
   );
+  await page.waitForFunction(
+    () => {
+      const d = window.__liveDraftProbe();
+      return !d.pending && !d.inFlight;
+    },
+    null,
+    { timeout: 5_000 }
+  );
   assert.equal(await browserExpanded(), 'false', 'selecting an option closes the panel');
   assert.deepEqual(
     await page.evaluate(() => ({
+      mode: document.body.dataset.mode,
       frames: document.getElementById('frames').value,
       fps: document.getElementById('fps').value,
       quality: document.getElementById('quality').value,
       focused: document.activeElement?.id,
       label: document.getElementById('example-trigger-text').textContent,
+      draftPending: window.__liveDraftProbe().pending,
+      draftInFlight: window.__liveDraftProbe().inFlight,
     })),
     {
+      mode: 'still',
       frames: '24',
       fps: '24',
       quality: '3',
       focused: 'example-trigger',
       label: 'Orbit (two moons, clock-driven)',
+      draftPending: false,
+      draftInFlight: false,
     },
-    'an animated example autofills frames/fps, quality, focus, and trigger label'
+    'an animated example prepares animation settings without selecting animate or drafting'
   );
 
   // Loading a STILL example must leave dialed-in frames/fps untouched (the
@@ -2836,16 +2850,16 @@ try {
   await page.waitForFunction(() => window.__liveDraftProbe().inFlight, null, { timeout: 60_000 });
   await page.click('#live-toggle'); // OFF mid-flight -> draftCtl?.abort() actually aborts
   assert.equal(await ariaPressed('live-toggle'), 'false', 'live toggles OFF again, mid-draft');
-  // The footer was sitting in the 'draft' state ('live draft · …'), so toggling
-  // off neutralizes it to 'live off' (idle) rather than leaving the now-frozen
-  // preview announced as live.
+  // The footer was sitting in the 'draft' state, so toggling off neutralizes it
+  // to an idle auto-preview-off label rather than leaving the now-frozen preview
+  // announced as active.
   assert.deepEqual(
     await page.evaluate(() => {
       const s = document.getElementById('status');
       return { text: s.textContent, state: s.dataset.state };
     }),
-    { text: 'live off', state: 'idle' },
-    'toggling live off from a draft footer must read "live off"'
+    { text: 'auto preview off', state: 'idle' },
+    'toggling auto preview off from a draft footer must read clearly'
   );
   await waitIdle();
 
@@ -2873,14 +2887,14 @@ try {
     'false',
     'stopping a live draft flips the live-draft toggle off (aria-pressed false)'
   );
-  // The footer neutralizes from the 'live draft · …' line to 'live off' (idle).
+  // The footer neutralizes from the draft line to auto-preview-off (idle).
   assert.deepEqual(
     await page.evaluate(() => {
       const s = document.getElementById('status');
       return { text: s.textContent, state: s.dataset.state };
     }),
-    { text: 'live off', state: 'idle' },
-    'stopping a live draft reads "live off"'
+    { text: 'auto preview off', state: 'idle' },
+    'stopping a live draft reads as auto preview off'
   );
   // No re-fire: live is off, so the draft's backstop scheduleDraft early-returns.
   // Wait for idle, then prove nothing is pending/in flight and Stop hid.
@@ -3215,6 +3229,25 @@ try {
   );
   assert.equal(new URL(exampleCopied).hash, '', 'a pristine example copy carries no scene hash');
 
+  await plBootGoto('?example=orbit-moons');
+  await page.waitForFunction(
+    () => document.getElementById('example-trigger').dataset.name === 'orbit-moons',
+    null,
+    { timeout: 10_000 }
+  );
+  await page.waitForTimeout(600);
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      mode: document.body.dataset.mode,
+      frames: document.getElementById('frames').value,
+      fps: document.getElementById('fps').value,
+      pending: window.__liveDraftProbe().pending,
+      inFlight: window.__liveDraftProbe().inFlight,
+    })),
+    { mode: 'still', frames: '24', fps: '24', pending: false, inFlight: false },
+    'animated ?example links prepare frames/fps but wait for explicit Render'
+  );
+
   // --- Case 4: an animate-mode permalink hydrates mode + player fps. ----------
   const animPayload = await encodeState({
     source: '#version 3.8;\n// HYDRATED animate\nbox {}',
@@ -3308,9 +3341,14 @@ try {
     ed.dispatchEvent(new Event('input'));
   });
   await page.waitForTimeout(600);
-  assert.deepEqual(
-    await page.evaluate(() => ({ search: location.search, hash: location.hash })),
-    { search: '?pl=7', hash: '' },
+  const cleanEditUrl = await page.evaluate(() => ({
+    search: location.search,
+    hash: location.hash,
+  }));
+  assert.match(cleanEditUrl.search, /^\?pl=\d+$/, 'the test boot query may remain');
+  assert.equal(
+    cleanEditUrl.hash,
+    '',
     'ordinary editing leaves the visible URL free of scene payloads'
   );
 

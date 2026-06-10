@@ -416,12 +416,23 @@ function setTriggerLabel(name) {
 // Animated examples ship a suggested frame count + fps; prefill the animate
 // inputs so the intended loop runs without guessing. Still examples leave the
 // inputs untouched, so a frames/fps the user dialed in survives loading other
-// still scenes. setFps keeps the inline player's cadence in sync.
-function applyExampleClock(record) {
+// still scenes. After boot, setFps keeps the inline player's cadence in sync;
+// during ?example= boot the player does not exist yet and syncs from the input
+// once it is constructed.
+function applyExampleClock(record, { syncPlayer = true } = {}) {
   if (!record.animated) return; // still scenes: leave the inputs alone
   framesInput.value = String(record.frames);
   fpsInput.value = String(record.fps);
-  player.setFps(record.fps);
+  if (syncPlayer) player.setFps(record.fps);
+}
+
+function shouldAutoDraftExample(record) {
+  return !record.animated && record.renderTier !== 'heavy';
+}
+
+function canAutoDraftCurrentScene() {
+  const record = getExampleRecord(selectedExample);
+  return !record || shouldAutoDraftExample(record);
 }
 
 function applyExampleRenderDefaults(record) {
@@ -641,7 +652,7 @@ function applyUrlParams() {
     selectedExample = exampleName;
     editor.value = record.source;
     lastLoadedSource = record.source;
-    applyExampleClock(record);
+    applyExampleClock(record, { syncPlayer: false });
     applyExampleRenderDefaults(record);
     setTriggerLabel(exampleName);
   }
@@ -667,7 +678,7 @@ function selectExample(name) {
   applyExampleClock(record); // BEFORE scheduleDraft
   applyExampleRenderDefaults(record);
   setTriggerLabel(name); // trigger text + data-name + re-mark loaded option
-  reflectSceneReplaced();
+  reflectSceneReplaced({ autoDraft: shouldAutoDraftExample(record) });
 }
 
 function sceneIsDirty() {
@@ -1585,13 +1596,15 @@ function restoreScene() {
 // Direct keystrokes go through the input handler, which runs the same set; this
 // is the path for the cases that assign editor.value (no input event fires, so
 // the panel would otherwise show the previous scene's params).
-function reflectSceneReplaced() {
+/** @param {{ autoDraft?: boolean }} [opts] */
+function reflectSceneReplaced({ autoDraft = true } = {}) {
   renderGutter();
   paintHighlight();
   buildSliders();
   updateSceneActions();
   scheduleSave();
-  scheduleDraft();
+  if (autoDraft) scheduleDraft();
+  else liveDraftController.cancel();
 }
 
 function resetSceneToExample() {
@@ -2787,6 +2800,10 @@ const liveDraftController = createLiveDraftController({
   liveDraftController.probe;
 
 function scheduleDraft() {
+  if (!canAutoDraftCurrentScene()) {
+    liveDraftController.cancel();
+    return;
+  }
   liveDraftController.schedule();
 }
 
@@ -3264,13 +3281,16 @@ liveToggle.addEventListener('click', () => {
   setLiveTogglePressed(liveDraft);
   scheduleSave();
   if (liveDraft) {
+    if (status.dataset.state === 'idle' && status.textContent === 'auto preview off') {
+      syncStatusToPlate();
+    }
     scheduleDraft();
   } else {
     liveDraftController.cancel();
     // Drop the "draft preview · …" label so the now-frozen, editable preview isn't
     // still announced as live. Only when the footer is actually showing a draft
     // line (don't clobber a real render's done/error payoff).
-    if (status.dataset.state === 'draft') setStatus('live off', 'idle');
+    if (status.dataset.state === 'draft') setStatus('auto preview off', 'idle');
   }
 });
 // Seed the player fps from the (restored) input and route the plate for the
@@ -3408,14 +3428,19 @@ async function loadGistScene(raw) {
   startRender();
 }
 
+function scheduleInitialDraft() {
+  const record = getExampleRecord(selectedExample);
+  if (record && editor.value === lastLoadedSource && !shouldAutoDraftExample(record)) return;
+  scheduleDraft();
+}
+
 // Deep-link precedence on load: a #<permalink> hash wins over ?gist, which wins
 // over ?example / the already-applied saved/default scene. The permalink decode
 // is async and tolerant (decodeState returns null on garbage); a null falls
 // through to the gist/example/cold-load path so a junk hash never strands the
-// page. Without the final scheduleDraft a cold page load sits on the empty-state
-// hint until the first keystroke, which reads as "live is broken" (it isn't);
-// scheduleDraft() self-guards to still-mode + liveDraft, so animate or a live-off
-// preference render nothing.
+// page. Without the final scheduleInitialDraft a cheap still cold page load sits
+// on the empty-state hint until the first keystroke, which reads as "live is
+// broken" (it isn't). Animated/heavy pristine examples wait for explicit Render.
 const permalinkPayload = location.hash.slice(1);
 const gistParam = new URLSearchParams(location.search).get('gist');
 if (permalinkPayload) {
@@ -3431,13 +3456,13 @@ if (permalinkPayload) {
     } else if (gistParam) {
       loadGistScene(gistParam);
     } else {
-      scheduleDraft();
+      scheduleInitialDraft();
     }
   });
 } else if (gistParam) {
   loadGistScene(gistParam);
 } else {
-  scheduleDraft();
+  scheduleInitialDraft();
 }
 
 renderBtn.addEventListener('click', startRender);
@@ -3520,7 +3545,7 @@ stopBtn.addEventListener('click', () => {
     // The stop button is only visible mid-draft, so the footer is in the
     // 'draft' state here; drop the "draft preview · …" label so the now-frozen,
     // editable preview isn't still announced as live.
-    setStatus('live off', 'idle');
+    setStatus('auto preview off', 'idle');
   }
 });
 
