@@ -394,11 +394,22 @@ label {
   color: var(--error);
 }
 
-/* Live-draft preview status: calm and accent-free (dim; the busy-pulse ::after
-   never triggers since it keys on data-state='busy'). Distinct from 'done'
-   (--text) so a draft never masquerades as the full-quality result. */
+/* Draft-preview status: calm and accent-free. It is a held, low-res preview,
+   not the full render payoff, so it reads like a secondary chip. */
 #status[data-state='draft'] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: var(--dim);
+}
+
+#status[data-state='draft']::before {
+  content: '';
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--border-strong);
+  background: var(--border);
 }
 
 /* Pulsing trailing ellipsis: alive is distinguishable from hung. The busy
@@ -1664,16 +1675,22 @@ body.ui[data-mode='animate'] .still-only {
   color: var(--text);
 }
 
-/* live-draft is a persistent PREFERENCE, not one side of the still/animate
-   mutex, and it defaults on: with the inverted fill the toolbar opened showing
-   two bright slabs of equal weight. The on-state here is the quiet tier (bright
-   border + bold text on transparent), leaving the solid invert to mean "the
-   selected mode segment" alone. */
+/* Auto preview is a persistent preference, not a mode segment. Keep the main
+   button quiet and put the state in a tiny on/off chip, so the control is
+   explicit without competing with still/animate or Render. */
+#live-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 112px;
+  justify-content: space-between;
+  padding: 0 6px 0 9px;
+}
+
 #live-toggle[aria-pressed='true'] {
   background: transparent;
-  border-color: var(--text);
+  border-color: var(--border-strong);
   color: var(--text);
-  font-weight: 700;
 }
 
 /* The transparent on-state keeps the dark bg, so the gold focus ring stays
@@ -1682,13 +1699,36 @@ body.ui[data-mode='animate'] .still-only {
   outline-color: var(--accent);
 }
 
-/* The generic button:hover invert would flash the exact bright slab the quiet
-   on-state avoids (reading as "about to flip OFF" at full mode-segment weight).
-   The row-tint grey keeps hover feedback in the quiet tier. */
-#live-toggle[aria-pressed='true']:hover:not(:disabled) {
+#live-toggle:hover:not(:disabled) {
   background: var(--border);
   border-color: var(--text);
   color: var(--text);
+}
+
+.live-toggle-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.4em;
+  height: 17px;
+  padding: 0 5px;
+  border: 1px solid var(--border-strong);
+  color: var(--dim);
+  font-size: var(--fs-chrome);
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+#live-toggle[aria-pressed='true'] .live-toggle-state {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
+}
+
+#live-toggle[aria-pressed='false'] .live-toggle-state {
+  background: transparent;
+  border-color: var(--border-strong);
+  color: var(--dim);
 }
 
 /* The player canvas is the animate-mode hero, drawn into the same #output-plate
@@ -2602,26 +2642,36 @@ kbd {
   min-height: 0;
   overflow: auto;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-auto-rows: auto;
   align-content: start;
+  align-items: start;
   gap: 10px;
-  padding-right: 2px;
+  padding: 0 2px 12px 0;
+  overscroll-behavior: contain;
 }
 
 .gallery-card {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 7px;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 8px;
+  height: auto;
+  min-height: 96px;
+  align-content: start;
+  align-items: start;
   padding: 8px;
   text-align: left;
   color: inherit;
   background: var(--bg);
   border-color: var(--border);
+  overflow: hidden;
 }
 
 .gallery-card:hover,
 .gallery-card:focus-visible {
+  background: var(--bg);
   border-color: var(--border-strong);
+  color: inherit;
 }
 
 .gallery-card[data-loaded='true'] {
@@ -2629,23 +2679,40 @@ kbd {
 }
 
 .gallery-card img {
+  display: block;
   width: 100%;
-  aspect-ratio: 4 / 3;
+  height: 72px;
   object-fit: cover;
   border: 1px solid var(--border);
   background: var(--mat) 0 0 / 16px 16px;
 }
 
+.gallery-card > span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  align-content: start;
+  overflow: hidden;
+}
+
 .gallery-title {
-  display: block;
+  display: -webkit-box;
+  overflow: hidden;
   color: var(--text);
+  line-height: 1.3;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .gallery-meta,
 .gallery-license {
-  display: block;
+  display: -webkit-box;
+  overflow: hidden;
   color: var(--dim);
   font-size: var(--fs-chrome);
+  line-height: 1.3;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .gallery-empty {
@@ -2666,5 +2733,9 @@ kbd {
 
   #gallery-search {
     grid-column: 1 / -1;
+  }
+
+  #gallery-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

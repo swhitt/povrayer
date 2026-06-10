@@ -2497,8 +2497,8 @@ try {
   );
   assert.match(
     await page.evaluate(() => document.getElementById('status').textContent),
-    /live draft · 320×240/,
-    'the draft status reads the downscaled dims in a muted state'
+    /draft preview · 320×240/,
+    'the draft preview status reads the downscaled dims in a muted state'
   );
   assert.equal(
     await page.evaluate(() => document.getElementById('download-btn').hidden),
@@ -2549,8 +2549,8 @@ try {
   );
   assert.match(
     await page.evaluate(() => document.getElementById('status').textContent),
-    /live draft · error/,
-    'a draft error sets a muted draft-error status'
+    /draft preview · error/,
+    'a draft error sets a muted preview-error status'
   );
   // A draft error is a POLITE live region (role swapped to status), so a screen
   // reader isn't interrupted on every keystroke; the box also carries .draft.
@@ -3020,17 +3020,13 @@ try {
   assert.match(pinnedBar.search, /(^|[?&])gist=abc1\b/, 'an unmodified gist stays pinned to ?gist');
   assert.equal(pinnedBar.hash, '', 'a pinned gist carries no #hash');
 
-  // Editing the gist scene unpins: the URL drops ?gist and switches to a
-  // self-contained #hash (the content no longer matches the gist).
+  // Editing the gist scene unpins: the URL drops ?gist but does not ambiently
+  // mint a self-contained #hash. Copy Link is the explicit hash action.
   await page.fill('#editor', GIST_POV + '\n// edited away from the gist\n');
-  await page.waitForFunction(
-    () => location.hash.length > 1 && !/gist=/.test(location.search),
-    null,
-    { timeout: 5_000 }
-  );
+  await page.waitForFunction(() => !/gist=/.test(location.search), null, { timeout: 5_000 });
   const unpinned = await page.evaluate(() => ({ search: location.search, hash: location.hash }));
   assert.equal(/gist=/.test(unpinned.search), false, 'editing a pinned gist drops ?gist');
-  assert.ok(unpinned.hash.length > 1, 'editing a pinned gist switches to a #hash permalink');
+  assert.equal(unpinned.hash, '', 'editing a pinned gist leaves the hash clean');
 
   // Leniency: a `user/id` and a full gist URL both resolve to the same id, so
   // they hit the same success path (the gist .pov lands in the editor).
@@ -3193,7 +3189,33 @@ try {
   assert.equal(await bodyMode(), 'still', 'permalink hydrates still mode');
   assert.equal(await aria('mode-still'), 'true', 'still toggle reflects pressed');
 
-  // --- Case 3: an animate-mode permalink hydrates mode + player fps. ----------
+  // --- Case 3: pristine catalog examples use short ?example links. ------------
+  await plBootGoto('?example=sourced-wineglass&width=333&height=222&q=5&mode=still');
+  await page.waitForFunction(
+    () => document.getElementById('example-trigger').dataset.name === 'sourced-wineglass',
+    null,
+    { timeout: 10_000 }
+  );
+  assert.match(
+    await editorValue(),
+    /wineglass\.pov/i,
+    'the ?example route hydrates the catalog source'
+  );
+  assert.equal(await ctlValue('width'), '333', 'the ?example route carries render params');
+  assert.equal(await ctlValue('height'), '222', 'the ?example route carries height');
+  await page.click('#copy-link-btn');
+  await page.waitForFunction(() => window.__permalinkProbe().label === 'Copied', null, {
+    timeout: 10_000,
+  });
+  const exampleCopied = await page.evaluate(() => navigator.clipboard.readText());
+  assert.match(
+    exampleCopied,
+    /[?&]example=sourced-wineglass\b/,
+    'pristine examples copy as ?example'
+  );
+  assert.equal(new URL(exampleCopied).hash, '', 'a pristine example copy carries no scene hash');
+
+  // --- Case 4: an animate-mode permalink hydrates mode + player fps. ----------
   const animPayload = await encodeState({
     source: '#version 3.8;\n// HYDRATED animate\nbox {}',
     width: '256',
@@ -3222,14 +3244,14 @@ try {
     'no live draft schedules in an animate permalink'
   );
 
-  // --- Case 4: a garbage hash WITH ?gist falls through to the gist load. ------
+  // --- Case 5: a garbage hash WITH ?gist falls through to the gist load. ------
   await plBootGoto('?gist=abc123', '#%%%not-base64%%%');
   await page.waitForFunction((v) => document.getElementById('editor').value === v, PL_GIST, {
     timeout: 10_000,
   });
   assert.match(await editorValue(), /FROM GIST/, 'a junk hash falls through to the gist load');
 
-  // --- Case 5: out-of-range select values in the payload are ignored. ---------
+  // --- Case 6: out-of-range select values in the payload are ignored. ---------
   const bogusSelects = await encodeState({
     source: '#version 3.8;\n// bogus selects\nbox {}',
     width: '512',
@@ -3258,7 +3280,7 @@ try {
     'an out-of-range antialias keeps the default option (guard false arm)'
   );
 
-  // --- Case 6: a garbage hash with NO gist cold-loads the restored scene. -----
+  // --- Case 7: a garbage hash with NO gist cold-loads the restored scene. -----
   await plBootGoto('', '#zzzz');
   await page.waitForFunction((v) => document.getElementById('editor').value === v, PL_FALLBACK, {
     timeout: 10_000,
@@ -3271,10 +3293,9 @@ try {
     }
   );
 
-  // --- Case 7: the address-bar #hash stays live without Copy Link. ------------
-  // A cold load leaves the hash clean; editing the scene auto-syncs a decodable
-  // permalink into the hash (debounced), so a shared/bookmarked URL always
-  // matches the screen.
+  // --- Case 8: the address bar stays clean until Copy Link. -------------------
+  // A cold load leaves the hash clean; editing a scene persists local state but
+  // does not keep rewriting the visible URL with a full scene payload.
   await plBootGoto('');
   assert.equal(
     await page.evaluate(() => location.hash),
@@ -3286,21 +3307,17 @@ try {
     ed.value = '#version 3.8;\n// LIVE SYNC scene\nsphere { 0, 2 }';
     ed.dispatchEvent(new Event('input'));
   });
-  await page.waitForFunction(() => location.hash.length > 1, null, { timeout: 10_000 });
-  const liveDecoded = await page.evaluate(async () => {
-    const { decodeState } = await import('./permalink.js');
-    return decodeState(location.hash.slice(1));
-  });
-  assert.match(
-    liveDecoded.source,
-    /LIVE SYNC scene/,
-    'the auto-synced hash round-trips the edited scene (no Copy Link needed)'
+  await page.waitForTimeout(600);
+  assert.deepEqual(
+    await page.evaluate(() => ({ search: location.search, hash: location.hash })),
+    { search: '?pl=7', hash: '' },
+    'ordinary editing leaves the visible URL free of scene payloads'
   );
 
   // ===========================================================================
   // URL query params (?width=...&q=...&mode=...): seed the controls on load.
-  // Valid values land on the controls (the live #hash above still wins on top);
-  // unknown select values are ignored, keeping the default option.
+  // Valid values land on the controls; unknown select values are ignored,
+  // keeping the default option.
   // ===========================================================================
   await plBootGoto(
     '?width=1024&height=768&threads=4&frames=30&fps=20&quality=5&antialias=0.3&flags=%2BAM2&mode=animate'

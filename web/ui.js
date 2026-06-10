@@ -102,6 +102,7 @@ const historyCount = document.getElementById('history-count');
 const historyList = document.getElementById('history-list');
 const gutter = document.getElementById('gutter');
 const liveToggle = document.getElementById('live-toggle');
+const liveToggleState = /** @type {HTMLElement} */ (liveToggle.querySelector('.live-toggle-state'));
 const widthInput = /** @type {HTMLInputElement} */ (document.getElementById('width'));
 const heightInput = /** @type {HTMLInputElement} */ (document.getElementById('height'));
 const qualitySelect = /** @type {HTMLSelectElement} */ (document.getElementById('quality'));
@@ -505,41 +506,82 @@ function captureState() {
   });
 }
 
-// When a ?gist=<id> scene is loaded, that short gist URL stays the shareable
-// permalink (in the address bar and what Copy Link copies) until the scene text
-// is edited. gistId is the loaded id; gistSource is its pristine text. The pin
-// breaks the moment editor.value diverges from gistSource (see syncPermalinkHash).
+// When a ?gist=<id> scene is loaded, that short gist URL stays shareable until
+// the scene text is edited. gistId is the loaded id; gistSource is its pristine
+// text. The pin breaks the moment editor.value diverges from gistSource.
 /** @type {string | null} */
 let gistId = null;
 /** @type {string | null} */
 let gistSource = null;
 
-// Keep the address-bar permalink live so a shared or bookmarked URL always
-// matches the current scene + settings. Driven off the same debounce as
-// scheduleSave (re-encode once the user pauses, not per keystroke), and uses
-// replaceState rather than assigning location.hash so an edit never pushes a
-// back-stack entry. encodeState never throws for a well-formed state.
-async function syncPermalinkHash() {
-  // While an unmodified ?gist scene is showing, the short gist URL IS the
-  // shareable permalink, so keep it in the bar instead of burying it under a
-  // compressed hash. The first edit that diverges from the gist text unpins and
-  // falls through to the live hash below (which also drops ?gist).
+function baseSceneUrl() {
+  const url = new URL(location.href);
+  url.search = '';
+  url.hash = '';
+  return url;
+}
+
+function appendShareParams(url) {
+  const controls = readControls();
+  for (const f of CONTROL_FIELDS) {
+    const value = controls[f.key];
+    if (value !== '') url.searchParams.set(f.key, value);
+  }
+  url.searchParams.set('mode', mode);
+}
+
+function pinnedGistUrl() {
   if (gistId !== null) {
     if (editor.value === gistSource) {
-      const pinned = new URL(location.href);
-      pinned.search = '';
+      const pinned = baseSceneUrl();
       pinned.searchParams.set('gist', gistId);
-      pinned.hash = '';
-      history.replaceState(null, '', pinned);
-      return;
+      return pinned;
     }
     gistId = null;
     gistSource = null;
   }
-  const payload = await encodeState(captureState());
+  return null;
+}
+
+function selectedExampleIsPristine() {
+  return editor.value === lastLoadedSource && getExample(selectedExample) === lastLoadedSource;
+}
+
+function exampleShareUrl() {
+  if (!selectedExampleIsPristine()) return null;
+  const url = baseSceneUrl();
+  url.searchParams.set('example', selectedExample);
+  appendShareParams(url);
+  return url;
+}
+
+// Keep the visible URL honest without making every edit a self-contained scene
+// blob. Normal editing clears stale hash/example/gist URLs; explicit Copy Link
+// creates the long hash when it is actually needed.
+function syncAddressUrl() {
+  const pinned = pinnedGistUrl();
+  if (pinned) {
+    history.replaceState(null, '', pinned);
+    return;
+  }
   const url = new URL(location.href);
-  url.search = ''; // the hash is self-contained; drop ?gist / any stray query
-  url.hash = payload;
+  if (!url.hash && !url.searchParams.has('gist') && !url.searchParams.has('example')) return;
+  history.replaceState(null, '', baseSceneUrl());
+}
+
+async function shareUrlForCurrentState() {
+  const pinned = pinnedGistUrl();
+  if (pinned) return pinned;
+
+  const exUrl = exampleShareUrl();
+  if (exUrl) return exUrl;
+
+  const url = baseSceneUrl();
+  url.hash = await encodeState(captureState());
+  return url;
+}
+
+function replaceAddress(url) {
   history.replaceState(null, '', url);
 }
 
@@ -548,7 +590,7 @@ function scheduleSave() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveState();
-    syncPermalinkHash();
+    syncAddressUrl();
   }, 300);
 }
 window.addEventListener('pagehide', () => {
@@ -585,13 +627,24 @@ let lastLoadedSource = '';
   }
 }
 
-// URL query params (e.g. ?width=1200&q=11&mode=animate) seed the controls on
-// load, OVERRIDING the saved/default values. Read-only: the live shareable link
-// is the #hash permalink, which hydrates AFTER this runs and so wins. Combines
-// with ?gist (the gist scene rendered at these settings). The numeric clamps
-// live in url-params.js; quality/antialias are matched here against the real
-// <select> options so an out-of-range value is ignored, not forced.
+// URL query params (e.g. ?example=glass&width=1200&q=11&mode=animate) seed the
+// catalog scene and controls on load, OVERRIDING the saved/default values. A
+// #hash permalink hydrates AFTER this runs and so wins. Combines with ?gist
+// (the gist scene rendered at these settings). The numeric clamps live in
+// url-params.js; quality/antialias are matched here against the real <select>
+// options so an out-of-range value is ignored, not forced.
 function applyUrlParams() {
+  const params = new URLSearchParams(location.search);
+  const exampleName = params.get('example');
+  if (exampleName && hasExample(exampleName)) {
+    const record = getExampleRecord(exampleName);
+    selectedExample = exampleName;
+    editor.value = record.source;
+    lastLoadedSource = record.source;
+    applyExampleClock(record);
+    applyExampleRenderDefaults(record);
+    setTriggerLabel(exampleName);
+  }
   const p = parseRenderParams(location.search);
   applyControls(p, coerceParam);
   if (p.mode === 'still' || p.mode === 'animate') mode = p.mode;
@@ -1995,7 +2048,7 @@ function setBusyStatus(text) {
 
 // The spinner mirrors "a render is actually in flight". An explicit render holds
 // data-state 'busy' for its whole duration; a live draft holds 'draft', but that
-// state also describes a *settled* draft (the resting "live draft · WxH" line),
+// state also describes a *settled* draft (the resting "draft preview · WxH" line),
 // so the draft case keys on the in-flight controller, not the state. Once both
 // clear, the spinner hides. The prominent #stop-btn rides the SAME signal (its
 // click handler near the bottom stops whatever is in flight), so the spinner and
@@ -2682,6 +2735,10 @@ function draftOptions() {
   };
 }
 
+function draftStatus(dims) {
+  return `draft preview · ${dims}`;
+}
+
 const liveDraftController = createLiveDraftController({
   enabled: () => mode === 'still' && liveDraft && crossOriginIsolated,
   readSource: () => editor.value,
@@ -2692,7 +2749,7 @@ const liveDraftController = createLiveDraftController({
   renderDraft: (source, options, signal) => renderScene(source, { ...options, signal }),
   onStart: (_source, opts) => {
     const dims = `${opts.width}×${opts.height}`;
-    setStatus(`live draft · ${dims}`, 'draft');
+    setStatus(draftStatus(dims), 'draft');
   },
   onSuccess: (_source, result, opts) => {
     const dims = `${opts.width}×${opts.height}`;
@@ -2705,7 +2762,7 @@ const liveDraftController = createLiveDraftController({
     // a width edit mid-draft lands), keeping the plate footprint stable.
     showImage(result.blobUrl, `live draft, ${sceneName()}, ${dims}`, readRenderOptions().width);
     downloadBtn.hidden = true; // the preview is low-res, not a downloadable full render
-    setStatus(`live draft · ${dims}`, 'draft');
+    setStatus(draftStatus(dims), 'draft');
   },
   onError: (_source, err) => {
     // Non-destructive: keep the last good image (no #output.src change, no
@@ -2717,7 +2774,7 @@ const liveDraftController = createLiveDraftController({
     errorBox.textContent = formatError(err);
     errorBox.classList.add('draft');
     errorBox.hidden = false;
-    setStatus('live draft · error', 'draft');
+    setStatus('draft preview · error', 'draft');
   },
   onSettled: syncSpinner,
   startFullRender: () => startRender(),
@@ -3030,7 +3087,7 @@ function setMode(next) {
   statsList.hidden = true;
   applyMode();
   // Re-derive the footer so it agrees with the new plate. Without this #status
-  // keeps the prior mode's text (a "live draft · WxH" line lingering in animate
+  // keeps the prior mode's text (a "draft preview · WxH" line lingering in animate
   // where drafts are suppressed, or an animate "done … · N frames" line over a
   // single still). A still-mode draft, if it fires below, overrides this.
   syncStatusToPlate();
@@ -3192,19 +3249,25 @@ applySplit(); // reflect the restored (or default) split
 // Undo a scene replacement: put the stashed (pre-replace) scene back.
 restoreBtn.addEventListener('click', restoreScene);
 
+function setLiveTogglePressed(on) {
+  liveToggle.setAttribute('aria-pressed', String(on));
+  liveToggle.setAttribute('aria-label', `Auto preview ${on ? 'on' : 'off'}`);
+  liveToggleState.textContent = on ? 'on' : 'off';
+}
+
 // Live-draft toggle: reflect the restored state, then flip + persist on click.
 // Turning it on schedules a draft; turning it off cancels any pending/in-flight
 // draft (no accent: it's the quiet grey .toggle-btn invert).
-liveToggle.setAttribute('aria-pressed', String(liveDraft));
+setLiveTogglePressed(liveDraft);
 liveToggle.addEventListener('click', () => {
   liveDraft = !liveDraft;
-  liveToggle.setAttribute('aria-pressed', String(liveDraft));
+  setLiveTogglePressed(liveDraft);
   scheduleSave();
   if (liveDraft) {
     scheduleDraft();
   } else {
     liveDraftController.cancel();
-    // Drop the "live draft · …" label so the now-frozen, editable preview isn't
+    // Drop the "draft preview · …" label so the now-frozen, editable preview isn't
     // still announced as live. Only when the footer is actually showing a draft
     // line (don't clobber a real render's done/error payoff).
     if (status.dataset.state === 'draft') setStatus('live off', 'idle');
@@ -3333,8 +3396,8 @@ async function loadGistScene(raw) {
   // (not just a live-draft preview). A ?gist link is a "show me this scene" deep
   // link, so the recipient should land on the finished image. We PIN the gist as
   // the permalink (gistId/gistSource): ?gist stays in the bar as the shareable
-  // URL until the scene is edited, at which point syncPermalinkHash unpins to a
-  // self-contained #hash. startRender() supersedes any in-flight draft and
+  // URL until the scene is edited, at which point syncAddressUrl clears the stale
+  // gist query. startRender() supersedes any in-flight draft and
   // self-guards on busy / non-isolated, so it is safe to fire right after.
   gistId = id;
   gistSource = source;
@@ -3346,15 +3409,13 @@ async function loadGistScene(raw) {
 }
 
 // Deep-link precedence on load: a #<permalink> hash wins over ?gist, which wins
-// over the already-applied saved/default scene. The permalink decode is async
-// and tolerant (decodeState returns null on garbage); a null falls through to
-// the gist/cold-load path so a junk hash never strands the page. Without the
-// final scheduleDraft a cold page load sits on the empty-state hint until the
-// first keystroke, which reads as "live is broken" (it isn't); scheduleDraft()
-// self-guards to still-mode + liveDraft, so animate or a live-off preference
-// render nothing. Both a hash and a successful ?gist are LEFT in the bar (the
-// hash is self-contained; ?gist is the short shareable permalink until the scene
-// is edited), so a reload of either reproduces the shared scene.
+// over ?example / the already-applied saved/default scene. The permalink decode
+// is async and tolerant (decodeState returns null on garbage); a null falls
+// through to the gist/example/cold-load path so a junk hash never strands the
+// page. Without the final scheduleDraft a cold page load sits on the empty-state
+// hint until the first keystroke, which reads as "live is broken" (it isn't);
+// scheduleDraft() self-guards to still-mode + liveDraft, so animate or a live-off
+// preference render nothing.
 const permalinkPayload = location.hash.slice(1);
 const gistParam = new URLSearchParams(location.search).get('gist');
 if (permalinkPayload) {
@@ -3383,11 +3444,10 @@ renderBtn.addEventListener('click', startRender);
 cancelBtn.addEventListener('click', () => abortCtl?.abort());
 
 // Copy the current scene's shareable URL to the clipboard and flash the button
-// label. The address bar is already kept live by syncPermalinkHash (debounced on
-// every change); Copy Link is the explicit "give it to me now" action and routes
-// through the same sync, so it copies the canonical URL (the short ?gist link
-// while an unmodified gist is pinned, otherwise a fresh self-contained #hash).
-// On a clipboard rejection the bar still updated, so the URL stays selectable.
+// label. Copy Link is the explicit "give it to me now" action: pinned gists copy
+// as ?gist=, pristine catalog examples copy as ?example= plus render params, and
+// custom/edited scenes copy as a self-contained compressed #hash. On clipboard
+// rejection the bar still updates, so the URL stays selectable.
 let copyLabelTimer = null;
 /** @param {string} label */
 function flashCopyLabel(label) {
@@ -3398,14 +3458,10 @@ function flashCopyLabel(label) {
   }, 1200);
 }
 async function copyPermalink() {
-  // Make the address bar exact first: the pinned ?gist URL when an unmodified
-  // gist is showing, otherwise a freshly-encoded #hash. Then copy whatever it
-  // now reads (syncPermalinkHash re-encodes from live state, so the copied link
-  // is exact even between debounce ticks, and the bar matches regardless of the
-  // clipboard outcome).
-  await syncPermalinkHash();
+  const url = await shareUrlForCurrentState();
+  replaceAddress(url);
   try {
-    await navigator.clipboard.writeText(location.href);
+    await navigator.clipboard.writeText(url.href);
     flashCopyLabel('Copied');
   } catch {
     /* c8 ignore next 2 -- clipboard.writeText rejects only on a denied permission / insecure context the COOP/COEP secure-context test page can't reach */
@@ -3458,11 +3514,11 @@ stopBtn.addEventListener('click', () => {
     abortCtl.abort();
   } else if (liveDraftController.isDrafting()) {
     liveDraft = false;
-    liveToggle.setAttribute('aria-pressed', 'false');
+    setLiveTogglePressed(false);
     liveDraftController.cancel();
     scheduleSave();
     // The stop button is only visible mid-draft, so the footer is in the
-    // 'draft' state here; drop the "live draft · …" label so the now-frozen,
+    // 'draft' state here; drop the "draft preview · …" label so the now-frozen,
     // editable preview isn't still announced as live.
     setStatus('live off', 'idle');
   }
@@ -3515,7 +3571,7 @@ function downloadScene() {
   clearTimeout(saveTimer);
   saveTimer = null;
   saveState();
-  syncPermalinkHash();
+  syncAddressUrl();
   const url = URL.createObjectURL(new Blob([editor.value], { type: 'text/plain' }));
   triggerDownload(url, 'scene.pov');
   setTimeout(() => URL.revokeObjectURL(url), 10000);
