@@ -68,6 +68,7 @@
     "web/permalink.js",
     "web/url-params.js",
     "web/examples.js",
+    "web/examples-sourced.js",
     "src/cli.mjs",
     "test/**/*.mjs",
     "tools/**/*.mjs"

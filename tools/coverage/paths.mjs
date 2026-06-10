@@ -42,6 +42,7 @@ const FILES = [
   { path: 'src/cli.mjs' },
   { path: 'test/browser/serve.mjs' },
   { path: 'web/examples.js', browser: true },
+  { path: 'web/examples-sourced.js', browser: true },
   { path: 'web/highlight.js', browser: true },
   { path: 'web/sdl-strip.js', browser: true },
   { path: 'web/complete.js', browser: true },
