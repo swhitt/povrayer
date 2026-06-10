@@ -230,13 +230,14 @@ select {
 
 /* Field polish, applied app-wide so every input/select reads as one family.
    Selects shed the OS-native dropdown chrome (rounded, platform-specific) for a
-   flat square field with our own dim chevron, matching the optical-bench look.
-   The chevron is a dim (--dim #7a8493) stroke so it stays greyscale, never accent. */
+   flat square field with our own chevron, matching the optical-bench look. The
+   chevron stroke is the --dim (#98a1ab) label grey, hardcoded because a data-URI
+   can't read a CSS var, so it stays greyscale and matches the field's dim label. */
 select {
   appearance: none;
   -webkit-appearance: none;
   padding-right: 26px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%237a8493' stroke-width='1.5'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2398a1ab' stroke-width='1.5'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 9px center;
 }

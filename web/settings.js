@@ -77,7 +77,7 @@ export function coerceParam(field, value, isAllowed) {
  * From a decoded permalink (our own encoder, so mostly trusted): selects are
  * re-checked against the options (an old link may name a dropped one), and the
  * flags field normalizes a missing value to '' (links predating the field).
- * Everything else is taken verbatim.
+ * Everything else, including the int ranges the encoder already wrote, is verbatim.
  * @param {ControlField} field
  * @param {*} value
  * @param {(v: string) => boolean} isAllowed

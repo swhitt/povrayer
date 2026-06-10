@@ -48,6 +48,7 @@
     "web/sliders.js",
     "web/settings.js",
     "web/sdl-validate.js",
+    "web/permalink.js",
     "web/url-params.js",
     "web/flags.js",
     "web/stats.js",
