@@ -21,6 +21,7 @@ import { encodeApng } from './apng.js';
 import { buildPool, complete, applyCompletion, signatureText } from './complete.js';
 import { classifyAsset, assetSnippet, safeName, uniqueName } from './assets.js';
 import { parseDeclaredNumbers, numberTokenAt, scrubStep, formatScrubbed } from './sliders.js';
+import { CONTROL_FIELDS, coerceSaved, coerceParam, coerceHydrate } from './settings.js';
 
 const isoWarning = document.getElementById('iso-warning');
 if (crossOriginIsolated) {
@@ -267,24 +268,50 @@ function readSavedState() {
   }
 }
 
+// The settings.js control fields wired to their DOM elements. readControls
+// snapshots them for persistence; applyControls writes a foreign value set back
+// through a per-source coercion, so the validation lives in ONE schema instead of
+// drifting across the save / capture / restore / URL-param / hydrate call sites.
+const controlEl = {
+  width: widthInput,
+  height: heightInput,
+  quality: qualitySelect,
+  antialias: antialiasSelect,
+  threads: threadsInput,
+  flags: flagsInput,
+  frames: framesInput,
+  fps: fpsInput,
+};
+
+// Snapshot every control's current value, keyed by field, for persistence.
+function readControls() {
+  /** @type {Record<string, string>} */
+  const values = {};
+  for (const f of CONTROL_FIELDS) values[f.key] = controlEl[f.key].value;
+  return values;
+}
+
+// Write a foreign value set (keyed by field) into the controls through `coerce`,
+// which returns the string to write or null to leave a control untouched.
+// selectAllows is the live <option> membership check the select coercions need.
+function applyControls(source, coerce) {
+  for (const f of CONTROL_FIELDS) {
+    const next = coerce(f, source[f.key], (v) => selectAllows(controlEl[f.key], v));
+    if (next !== null) controlEl[f.key].value = next;
+  }
+}
+
 function saveState() {
   try {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
         source: editor.value,
-        width: widthInput.value,
-        height: heightInput.value,
-        quality: qualitySelect.value,
-        antialias: antialiasSelect.value,
-        threads: threadsInput.value,
-        flags: flagsInput.value,
+        ...readControls(),
         example: selectedExample,
         mode,
         liveDraft,
         advancedOpen: advanced.open,
-        frames: framesInput.value,
-        fps: fpsInput.value,
       })
     );
   } catch {
@@ -298,18 +325,11 @@ function saveState() {
 // their live-draft preference.
 /** @returns {import('./permalink.js').PermalinkState} */
 function captureState() {
-  return {
+  return /** @type {import('./permalink.js').PermalinkState} */ ({
     source: editor.value,
-    width: widthInput.value,
-    height: heightInput.value,
-    quality: qualitySelect.value,
-    antialias: antialiasSelect.value,
-    threads: threadsInput.value,
-    flags: flagsInput.value,
+    ...readControls(),
     mode,
-    frames: framesInput.value,
-    fps: fpsInput.value,
-  };
+  });
 }
 
 // When a ?gist=<id> scene is loaded, that short gist URL stays the shareable
@@ -379,27 +399,10 @@ let lastLoadedSource = '';
   lastLoadedSource = getExample(example) ?? '';
   editor.value = saved && typeof saved.source === 'string' ? saved.source : lastLoadedSource;
   if (saved) {
-    if (typeof saved.width === 'string' && saved.width) widthInput.value = saved.width;
-    if (typeof saved.height === 'string' && saved.height) heightInput.value = saved.height;
-    if (typeof saved.quality === 'string' && selectAllows(qualitySelect, saved.quality)) {
-      qualitySelect.value = saved.quality;
-    }
-    if (typeof saved.antialias === 'string' && selectAllows(antialiasSelect, saved.antialias)) {
-      antialiasSelect.value = saved.antialias;
-    }
-    if (typeof saved.threads === 'string') threadsInput.value = saved.threads;
-    if (typeof saved.flags === 'string') flagsInput.value = saved.flags;
+    applyControls(saved, coerceSaved);
     if (typeof saved.liveDraft === 'boolean') liveDraft = saved.liveDraft;
     if (typeof saved.advancedOpen === 'boolean') advanced.open = saved.advancedOpen;
     if (saved.mode === 'still' || saved.mode === 'animate') mode = saved.mode;
-    const savedFrames = parseInt(saved.frames, 10);
-    if (Number.isInteger(savedFrames) && savedFrames >= 1 && savedFrames <= 240) {
-      framesInput.value = String(savedFrames);
-    }
-    const savedFps = parseInt(saved.fps, 10);
-    if (Number.isInteger(savedFps) && savedFps >= 1 && savedFps <= 60) {
-      fpsInput.value = String(savedFps);
-    }
   }
 }
 
@@ -411,18 +414,7 @@ let lastLoadedSource = '';
 // <select> options so an out-of-range value is ignored, not forced.
 function applyUrlParams() {
   const p = parseRenderParams(location.search);
-  if (p.width !== undefined) widthInput.value = p.width;
-  if (p.height !== undefined) heightInput.value = p.height;
-  if (p.threads !== undefined) threadsInput.value = p.threads;
-  if (p.frames !== undefined) framesInput.value = p.frames;
-  if (p.fps !== undefined) fpsInput.value = p.fps;
-  if (p.flags !== undefined) flagsInput.value = p.flags;
-  if (p.quality !== undefined && selectAllows(qualitySelect, p.quality)) {
-    qualitySelect.value = p.quality;
-  }
-  if (p.antialias !== undefined && selectAllows(antialiasSelect, p.antialias)) {
-    antialiasSelect.value = p.antialias;
-  }
+  applyControls(p, coerceParam);
   if (p.mode === 'still' || p.mode === 'animate') mode = p.mode;
 }
 applyUrlParams();
@@ -2588,22 +2580,10 @@ applyMode();
 /** @param {import('./permalink.js').PermalinkState} state */
 function hydrateFromState(state) {
   editor.value = state.source;
-  widthInput.value = state.width;
-  heightInput.value = state.height;
-  // Only adopt a select value the markup actually offers; an out-of-range
-  // payload leaves the current option (matches the saved-state restore guard).
-  if (selectAllows(qualitySelect, state.quality)) {
-    qualitySelect.value = state.quality;
-  }
-  if (selectAllows(antialiasSelect, state.antialias)) {
-    antialiasSelect.value = state.antialias;
-  }
-  threadsInput.value = state.threads;
-  // flags is optional on PermalinkState (older links predate the field); a
-  // non-string payload clears the field rather than writing junk into it.
-  flagsInput.value = typeof state.flags === 'string' ? state.flags : '';
-  framesInput.value = state.frames;
-  fpsInput.value = state.fps;
+  // Same control schema as save/restore. coerceHydrate trusts the decoded values
+  // but still checks selects against the live options (an old link may name a
+  // dropped one) and defaults a missing flags string to '' (links predate it).
+  applyControls(state, coerceHydrate);
   player.setFps(Number(fpsInput.value));
   // setMode() no-ops when next === current and would skip applyMode(); set the
   // var + applyMode() directly so the plate/toggles always reflect the payload.
