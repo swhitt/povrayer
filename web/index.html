@@ -81,7 +81,10 @@
                  <pre>: the parser strips a leading "\n" that is the first child
                  of a <pre>, which would misalign a scene whose first line is
                  blank. <code> is exempt from that rule. -->
-            <pre id="editor-highlight" aria-hidden="true"><code id="editor-code"></code></pre>
+            <pre
+              id="editor-highlight"
+              aria-hidden="true"
+            ><div id="error-line" hidden></div><code id="editor-code"></code></pre>
             <textarea
               id="editor"
               wrap="off"

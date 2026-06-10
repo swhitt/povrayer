@@ -789,6 +789,28 @@ body.ui main > * {
   will-change: transform; /* compositor layer: the scroll-sync translate is GPU-only */
 }
 
+/* The error-line marker: a full-width red-tinted band behind the colored text at
+   the line a failed render blamed. It lives inside the clipping #editor-highlight
+   and ui.js translates it with the editor scroll, so it tracks the line. The faint
+   tint stays under the syntax colors; the 2px --error edge is the strong cue. */
+#error-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: rgba(255, 107, 94, 0.12);
+  border-left: 2px solid var(--error);
+  pointer-events: none;
+}
+
+#error-line[hidden] {
+  display: none;
+}
+
+/* When the error box carries a line reference, it's a click-to-jump affordance. */
+#error.has-line {
+  cursor: pointer;
+}
+
 /* Token colors: only the language vocabulary lights up. Punctuation, operators,
    vectors (< >), and the user's own #declare/#macro names stay --text so dense
    scenes don't turn garish. */

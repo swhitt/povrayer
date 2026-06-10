@@ -98,6 +98,7 @@ const status = document.getElementById('status');
 const statusSpinner = document.getElementById('status-spinner');
 const stopBtn = /** @type {HTMLButtonElement} */ (document.getElementById('stop-btn'));
 const errorBox = document.getElementById('error');
+const errorLineEl = document.getElementById('error-line');
 const output = /** @type {HTMLImageElement} */ (document.getElementById('output'));
 const downloadBtn = /** @type {HTMLAnchorElement} */ (document.getElementById('download-btn'));
 const log = document.getElementById('log');
@@ -708,12 +709,14 @@ function paintHighlight() {
 function syncEditorScroll() {
   gutter.scrollTop = editor.scrollTop;
   editorCode.style.transform = `translate(${-editor.scrollLeft}px, ${-editor.scrollTop}px)`;
+  positionErrorLine(); // keep the error band aligned with its line as the editor scrolls
   // Keep an open completion popup glued to the caret as the textarea scrolls.
   if (isCompleteOpen()) positionComplete();
 }
 editor.addEventListener('scroll', syncEditorScroll);
 editor.addEventListener('input', () => {
   restoreNote.hidden = true; // a fresh edit supersedes the restore-a-replaced-scene offer
+  clearErrorLine(); // the edit may well fix the error; drop the stale marker
   renderGutter();
   paintHighlight();
   refreshComplete(false);
@@ -1668,16 +1671,48 @@ window.addEventListener('resize', updateZoomLabel);
 
 // ---- error -> editor line jump ----
 
+function editorLineHeight() {
+  return parseFloat(getComputedStyle(editor).lineHeight) || 19;
+}
+
 function selectEditorLine(n) {
   const lines = editor.value.split('\n');
   if (!(n >= 1 && n <= lines.length)) return;
   let start = 0;
   for (let i = 0; i < n - 1; i++) start += lines[i].length + 1;
   editor.setSelectionRange(start, start + lines[n - 1].length);
-  const lineHeight = parseFloat(getComputedStyle(editor).lineHeight) || 19;
-  editor.scrollTop = Math.max(0, (n - 3) * lineHeight);
+  editor.scrollTop = Math.max(0, (n - 3) * editorLineHeight());
   syncEditorScroll();
 }
+
+// A persistent red band on the line a failed render blamed (the auto-jump only
+// sets an invisible textarea selection). Translated with the editor scroll by
+// positionErrorLine so it tracks the line; cleared on the next edit or render.
+let errorLineNo = 0;
+
+function markErrorLine(n) {
+  errorLineNo = n;
+  const lh = editorLineHeight();
+  errorLineEl.style.top = `${8 + (n - 1) * lh}px`; // 8px = the editor's top padding
+  errorLineEl.style.height = `${lh}px`;
+  errorLineEl.hidden = false;
+  errorBox.classList.add('has-line'); // the error box becomes a jump-to-line affordance
+  positionErrorLine();
+}
+
+function clearErrorLine() {
+  errorLineEl.hidden = true;
+  errorLineNo = 0;
+  errorBox.classList.remove('has-line');
+}
+
+function positionErrorLine() {
+  errorLineEl.style.transform = `translateY(${-editor.scrollTop}px)`;
+}
+
+// Re-jump to the blamed line when the error box is clicked (selectEditorLine
+// no-ops when there's no line, so the click is harmless without one).
+errorBox.addEventListener('click', () => selectEditorLine(errorLineNo));
 
 // ---- render ----
 
@@ -1916,6 +1951,7 @@ async function startRender() {
   resetLog();
   errorBox.hidden = true;
   errorBox.textContent = '';
+  clearErrorLine();
   output.classList.add('stale');
   downloadBtn.classList.add('stale');
   statsList.classList.add('stale');
@@ -2007,7 +2043,10 @@ async function startRender() {
       errorBox.hidden = false;
       errorBox.scrollIntoView({ block: 'nearest' });
       const lineMatch = /^line (\d+)\b/.exec(message);
-      if (lineMatch) selectEditorLine(Number(lineMatch[1]));
+      if (lineMatch) {
+        markErrorLine(Number(lineMatch[1]));
+        selectEditorLine(Number(lineMatch[1]));
+      }
       logSummary.textContent =
         err instanceof PovrayError
           ? summaryWithCount(`render log · exit ${err.exitCode}`)
@@ -2066,6 +2105,7 @@ async function runAnimateRender() {
   resetLog();
   errorBox.hidden = true;
   errorBox.textContent = '';
+  clearErrorLine();
   progressStart();
   setStatus(engineSeen ? 'rendering… parsing' : 'rendering… loading engine', 'busy');
 
@@ -2133,7 +2173,10 @@ async function runAnimateRender() {
       errorBox.hidden = false;
       errorBox.scrollIntoView({ block: 'nearest' });
       const lineMatch = /^line (\d+)\b/.exec(message);
-      if (lineMatch) selectEditorLine(Number(lineMatch[1]));
+      if (lineMatch) {
+        markErrorLine(Number(lineMatch[1]));
+        selectEditorLine(Number(lineMatch[1]));
+      }
       logSummary.textContent =
         err instanceof PovrayError
           ? summaryWithCount(`render log · exit ${err.exitCode}`)

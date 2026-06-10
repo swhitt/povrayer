@@ -1269,6 +1269,27 @@ try {
     { role: 'alert', draft: false },
     'an explicit render error must read as a role=alert, non-draft box'
   );
+  // The blamed line gets a persistent marker (the auto-jump's textarea selection
+  // is invisible), and the error box becomes a click-to-jump affordance.
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      marker: !document.getElementById('error-line').hidden,
+      hasLine: document.getElementById('error').classList.contains('has-line'),
+    })),
+    { marker: true, hasLine: true },
+    'a parse error marks the blamed line and flags the box as jump-to-line'
+  );
+  // Move the caret away, then a click on the error box re-jumps to the line.
+  await page.evaluate(() => document.getElementById('editor').setSelectionRange(0, 0));
+  await page.click('#error');
+  assert.equal(
+    await page.evaluate(() => {
+      const ed = document.getElementById('editor');
+      return ed.value.slice(0, ed.selectionStart).split('\n').length;
+    }),
+    3,
+    'clicking the error box re-jumps the caret to the blamed line (line 3)'
+  );
 
   // --- status throttle: immediate path (stepped clock forces now - last >= 1s)
   await page.fill('#editor', VALID_SCENE);
