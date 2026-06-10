@@ -3950,6 +3950,310 @@ try {
   );
 
   // ===========================================================================
+  // Power-user keyboard batch: the editor line ops (Ctrl/Cmd+/ comment toggle,
+  // Alt+arrow line move / number step / Alt+Shift duplicate) and the document
+  // shortcuts (Ctrl/Cmd+S scene download, Ctrl/Cmd+K example browser, the ?
+  // shortcuts overlay), plus the w/h swap button, the find no-match arm, the
+  // one-shot final-quality render, and the animate hint's NaN-frames fallback.
+  // Everything below runs on ONE page (no reloads): the scene-download blob's
+  // 10s revoke grace has to elapse in-page, asserted at the end of the batch.
+  // ===========================================================================
+  await seedReload(JSON.stringify({ source: 'keyboard batch', liveDraft: false }));
+
+  const selRange = () =>
+    page.evaluate(() => {
+      const e = document.getElementById('editor');
+      return [e.selectionStart, e.selectionEnd];
+    });
+
+  // -- Ctrl/Cmd+S: download the scene as scene.pov -----------------------------
+  // Stubbed anchor click (the export-pipeline idiom) captures the filename;
+  // createObjectURL/revokeObjectURL wrappers capture the text/plain blob URL so
+  // the revoke-after-grace can be asserted later without a blind sleep.
+  await page.evaluate(() => {
+    window.__dl = [];
+    HTMLAnchorElement.prototype.click = function () {
+      window.__dl.push(this.download);
+    };
+    window.__sceneUrls = [];
+    window.__revoked = [];
+    const origCreate = URL.createObjectURL.bind(URL);
+    URL.createObjectURL = (b) => {
+      const u = origCreate(b);
+      if (b instanceof Blob && b.type === 'text/plain') window.__sceneUrls.push(u);
+      return u;
+    };
+    const origRevoke = URL.revokeObjectURL.bind(URL);
+    URL.revokeObjectURL = (u) => {
+      window.__revoked.push(u);
+      origRevoke(u);
+    };
+  });
+  const DOWNLOAD_SCENE = '// downloaded scene\nsphere { 0, 1 }';
+  await setEditor(DOWNLOAD_SCENE, 0, 0);
+  await page.keyboard.press('Control+s');
+  assert.deepEqual(
+    await page.evaluate(() => window.__dl),
+    ['scene.pov'],
+    'Ctrl+S downloads the scene as scene.pov'
+  );
+  assert.equal(
+    await page.evaluate(() => fetch(window.__sceneUrls[0]).then((r) => r.text())),
+    DOWNLOAD_SCENE,
+    'the downloaded blob carries the editor text'
+  );
+  // setEditor never fired input, so only downloadScene's saveState flush can
+  // have put this text into the saved blob.
+  assert.equal(
+    await page.evaluate(() => JSON.parse(localStorage.getItem('povrayer.ui.v1')).source),
+    DOWNLOAD_SCENE,
+    'Ctrl+S flushes the debounced save before building the download'
+  );
+
+  // -- Ctrl/Cmd+/ comment toggle ------------------------------------------------
+  // Single line, caret only: comment, caret shifted by the marker (preserve arm).
+  await setEditor('alpha\nbeta', 2, 2);
+  await page.keyboard.press('Control+/');
+  assert.equal(await editorValue(), '// alpha\nbeta', 'Ctrl+/ comments the caret line');
+  assert.deepEqual(await selRange(), [5, 5], 'the caret shifts by the inserted marker');
+  // Same toggle via Cmd (the metaKey arm), now uncommenting.
+  await page.keyboard.press('Meta+/');
+  assert.equal(await editorValue(), 'alpha\nbeta', 'Cmd+/ uncomments an all-commented block');
+  assert.deepEqual(await selRange(), [2, 2], 'the caret shifts back with the removed marker');
+
+  // Mixed multi-line block with a blank line: comments EVERY non-blank line
+  // (idempotent over a mixed region), the blank line gains no marker, and the
+  // block stays selected (the select arm).
+  await setEditor('// one\n\ntwo', 0, 11);
+  await page.keyboard.press('Control+/');
+  assert.equal(
+    await editorValue(),
+    '// // one\n\n// two',
+    'a mixed selection comments every non-blank line, skipping the blank'
+  );
+  assert.deepEqual(await selRange(), [0, 17], 'the multi-line edit keeps the block selected');
+  // Now every non-blank line is commented, so the toggle uncomments back.
+  await page.keyboard.press('Control+/');
+  assert.equal(
+    await editorValue(),
+    '// one\n\ntwo',
+    'toggling again uncomments back to the mixed original'
+  );
+  assert.deepEqual(await selRange(), [0, 11], 'the uncommented block stays selected');
+
+  // An all-blank block produces no edit (toggleLineComment returns false). The
+  // selection also ends on a newline, so selectedLineRange excludes that line.
+  await setEditor('a\n\n\nb', 2, 3);
+  await page.keyboard.press('Control+/');
+  assert.equal(await editorValue(), 'a\n\n\nb', 'Ctrl+/ over blank lines only is a no-op');
+
+  // -- Alt+ArrowUp/Down: move lines ----------------------------------------------
+  await setEditor('one\ntwo\nthree', 1, 1);
+  await page.keyboard.press('Alt+ArrowUp');
+  assert.equal(await editorValue(), 'one\ntwo\nthree', 'Alt+Up on the first line is a no-op');
+  await setEditor('one\ntwo\nthree', 12, 12);
+  await page.keyboard.press('Alt+ArrowDown');
+  assert.equal(await editorValue(), 'one\ntwo\nthree', 'Alt+Down on the last line is a no-op');
+
+  await setEditor('one\ntwo\nthree', 5, 5);
+  await page.keyboard.press('Alt+ArrowUp');
+  assert.equal(await editorValue(), 'two\none\nthree', 'Alt+Up swaps the line with the one above');
+  assert.deepEqual(await selRange(), [1, 1], 'the caret rides the moved line up');
+  // Down with a further line below (the indexOf-found arm)...
+  await page.keyboard.press('Alt+ArrowDown');
+  assert.equal(await editorValue(), 'one\ntwo\nthree', 'Alt+Down swaps back down');
+  assert.deepEqual(await selRange(), [5, 5], 'the caret rides the moved line down');
+  // ...and down onto the unterminated last line (the indexOf -1 arm).
+  await page.keyboard.press('Alt+ArrowDown');
+  assert.equal(await editorValue(), 'one\nthree\ntwo', 'Alt+Down swaps with the final line');
+  assert.deepEqual(await selRange(), [11, 11], 'the caret lands on the now-last line');
+
+  // -- Alt+Shift+ArrowUp/Down: duplicate lines -----------------------------------
+  await setEditor('dup me\nkeep', 2, 2);
+  await page.keyboard.press('Alt+Shift+ArrowUp');
+  assert.equal(await editorValue(), 'dup me\ndup me\nkeep', 'Alt+Shift+Up duplicates the line');
+  assert.deepEqual(await selRange(), [2, 2], 'duplicating up keeps the caret on the upper copy');
+  await page.keyboard.press('Alt+Shift+ArrowDown');
+  assert.equal(
+    await editorValue(),
+    'dup me\ndup me\ndup me\nkeep',
+    'Alt+Shift+Down duplicates again'
+  );
+  assert.deepEqual(await selRange(), [9, 9], 'duplicating down moves the caret to the lower copy');
+
+  // -- Alt+arrows on a number literal: keyboard scrubbing -------------------------
+  // A collapsed caret inside a literal steps it (magnitude-aware step, here
+  // 0.01) and leaves the literal selected...
+  await setEditor('radius 2.5 end', 8, 8);
+  await page.keyboard.press('Alt+ArrowUp');
+  assert.equal(await editorValue(), 'radius 2.51 end', 'Alt+Up steps the literal under the caret');
+  assert.deepEqual(await selRange(), [7, 11], 'the stepped literal is left selected');
+  // ...so a held/repeated press keeps stepping (the exact-token-selection arm);
+  // Shift makes it a 10x step, and ArrowDown steps the value down.
+  await page.keyboard.press('Alt+Shift+ArrowDown');
+  assert.equal(await editorValue(), 'radius 2.41 end', 'Alt+Shift+Down re-steps the selection 10x');
+  assert.deepEqual(await selRange(), [7, 11], 'the re-stepped literal stays selected');
+  // A selection that is NOT exactly the literal means line ops, not stepping.
+  await setEditor('num 123\nlast', 4, 5);
+  await page.keyboard.press('Alt+ArrowDown');
+  assert.equal(
+    await editorValue(),
+    'last\nnum 123',
+    'a partial selection inside a literal falls through to the line move'
+  );
+  assert.deepEqual(await selRange(), [9, 10], 'the partial selection rides the moved line');
+
+  // -- ? shortcuts overlay ---------------------------------------------------------
+  const shortcutsState = () =>
+    page.evaluate(() => ({
+      hidden: document.getElementById('shortcuts').hidden,
+      focused: document.activeElement && document.activeElement.id,
+    }));
+  // Inside a text field ? must stay a character (isTextField).
+  await setEditor('', 0, 0);
+  await page.keyboard.press('?');
+  assert.equal(await editorValue(), '?', '? typed in the editor stays a character');
+  assert.equal((await shortcutsState()).hidden, true, '? in a text field never opens the overlay');
+  // From a non-typing target it opens the panel and hands it focus.
+  await page.evaluate(() => document.getElementById('editor').blur());
+  await page.keyboard.press('?');
+  assert.deepEqual(
+    await shortcutsState(),
+    { hidden: false, focused: 'shortcuts' },
+    '? opens the shortcuts overlay and focuses the panel'
+  );
+  // ? again (focus on the panel, not a field) toggles it closed.
+  await page.keyboard.press('?');
+  assert.equal((await shortcutsState()).hidden, true, '? toggles the overlay closed');
+  // The footer kbd hint opens it too; Esc closes with focus back on the hint.
+  await page.click('#shortcuts-hint');
+  assert.deepEqual(
+    await shortcutsState(),
+    { hidden: false, focused: 'shortcuts' },
+    'the footer hint click opens the overlay'
+  );
+  await page.keyboard.press('Escape');
+  assert.deepEqual(
+    await shortcutsState(),
+    { hidden: true, focused: 'shortcuts-hint' },
+    'Esc closes the overlay and restores focus to the opener'
+  );
+
+  // -- Ctrl/Cmd+K example browser ---------------------------------------------------
+  // Guard: while the shortcuts overlay is up, Ctrl+K leaves the screen alone.
+  await page.click('#shortcuts-hint');
+  await page.keyboard.press('Control+k');
+  assert.equal(await browserExpanded(), 'false', 'Ctrl+K is ignored under the shortcuts overlay');
+  assert.equal((await shortcutsState()).hidden, false, 'the overlay survives the swallowed chord');
+  await page.keyboard.press('Escape');
+  // Guard: an open completion popup owns the keyboard. (This page is a fresh
+  // load, so wait for the include manifest before relying on a T_Sto match.)
+  await page.waitForFunction(
+    () => document.getElementById('editor').hasAttribute('data-complete-ready'),
+    null,
+    { timeout: 15_000 }
+  );
+  await openCompleteAt('union { T_Sto');
+  assert.equal((await cmp()).hidden, false, 'the completion popup is open for the guard check');
+  await page.keyboard.press('Control+k');
+  assert.equal(await browserExpanded(), 'false', 'Ctrl+K is ignored while completion is open');
+  await page.keyboard.press('Escape'); // dismiss the popup
+  // With nothing else open, Ctrl+K opens the example browser on the search box.
+  await page.keyboard.press('Control+k');
+  assert.equal(await browserExpanded(), 'true', 'Ctrl+K opens the example browser');
+  assert.equal(
+    await page.evaluate(() => document.activeElement.id),
+    'example-search',
+    'Ctrl+K hands focus to the example search'
+  );
+  // Ctrl+K while it is already open is ignored (re-opening would reset state).
+  await page.keyboard.type('die');
+  await page.keyboard.press('Control+k');
+  assert.equal(await browserExpanded(), 'true', 'a second Ctrl+K leaves the open browser alone');
+  assert.equal(
+    await page.evaluate(() => document.getElementById('example-search').value),
+    'die',
+    'the swallowed re-open preserves the typed filter'
+  );
+  await page.keyboard.press('Escape'); // close the browser
+
+  // -- Shift+Ctrl/Cmd+Enter: one-shot final-quality override -------------------------
+  // The armed render runs at quality 9 + antialias 0.05 (visible in the download
+  // name) without touching the persisted control values.
+  await typeScene(VALID_SCENE);
+  await page.fill('#width', '64');
+  await page.fill('#height', '48');
+  await selAdvanced('#antialias', 'off');
+  await page.keyboard.press('Shift+Control+Enter');
+  await waitState('done');
+  assert.match(
+    await page.evaluate(() => document.getElementById('download-btn').getAttribute('download')),
+    /^render-64x48-q9-a005\.png$/,
+    'the final-quality chord renders at q9 + aa 0.05'
+  );
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      quality: document.getElementById('quality').value,
+      antialias: document.getElementById('antialias').value,
+    })),
+    { quality: '', antialias: 'off' },
+    'the one-shot override leaves the persisted controls untouched'
+  );
+
+  // -- the w/h swap button -----------------------------------------------------------
+  await page.fill('#width', '320');
+  await page.fill('#height', '100');
+  await page.click('#swap-size');
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      width: document.getElementById('width').value,
+      height: document.getElementById('height').value,
+      aspect: document.querySelector('#output-plate .hint').style.aspectRatio,
+    })),
+    { width: '100', height: '320', aspect: '100 / 320' },
+    'the swap button exchanges w/h and re-aspects the empty-state plate'
+  );
+
+  // -- find: a query with no matches ---------------------------------------------------
+  await setEditor('nothing to see here', 0, 0);
+  await page.keyboard.press('Control+f');
+  await page.keyboard.type('zebra');
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      hidden: document.getElementById('find-bar').hidden,
+      count: document.getElementById('find-count').textContent,
+    })),
+    { hidden: false, count: '0/0' },
+    'a no-match query reads 0/0 with the bar still open'
+  );
+  await page.keyboard.press('Escape');
+
+  // -- animate empty-plate hint: unparsable frames falls back to 24 ---------------------
+  await page.click('#mode-animate');
+  await page.evaluate(() => {
+    const f = document.getElementById('frames');
+    f.value = '';
+    f.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  assert.equal(
+    await page.evaluate(() => document.querySelector('#output-plate .hint').textContent),
+    'Render to ray-trace 24 frames of this scene.',
+    'an empty frames input quotes the 24-frame default in the animate hint'
+  );
+  await page.click('#mode-still');
+
+  // The scene-download blob from the Ctrl+S at the top of this batch is revoked
+  // after a 10s grace; everything since has been eating that grace, so this
+  // bounded wait is the remainder at most.
+  await page.waitForFunction(
+    () =>
+      window.__sceneUrls.length > 0 &&
+      window.__sceneUrls.every((u) => window.__revoked.includes(u)),
+    null,
+    { timeout: 15_000 }
+  );
+
+  // ===========================================================================
   // Mobile UX (coarse pointer): the iPhone fixes. A separate context emulates a
   // touch, mobile-viewport, coarse-pointer device so the @media (pointer:coarse)
   // editor/example rules actually apply (the default desktop page is fine-
