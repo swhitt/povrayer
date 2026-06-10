@@ -62,6 +62,10 @@
     >
       <div class="source-head">
         <span class="source-title">scene source</span>
+        <!-- Graduation link: repl.js encodes the assembled scene + settings into
+             the editor's #hash permalink on click; the bare href is only the
+             middle-click/copy fallback. Hidden while the scene is empty. -->
+        <a id="open-in-editor" class="linkish" href="./index.html" hidden>open in editor</a>
         <button id="source-close" type="button" aria-label="close source panel">×</button>
       </div>
       <pre class="source-pre"><code id="source-code"></code></pre>

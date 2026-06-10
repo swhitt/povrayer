@@ -1376,6 +1376,15 @@ body.ui main > * {
   animation: none;
 }
 
+/* Full-height specimen stage: the pane is a flex column so the plate (the
+   hero surface) absorbs the column's spare height and the meta-row/stats/log
+   pin to the pane's bottom edge. In one-column mode the pane is content-
+   height, so the rule is inert there. */
+#output-pane {
+  display: flex;
+  flex-direction: column;
+}
+
 /* The plate: the one shadow and the one textured background in the app. */
 #output-plate {
   background: var(--mat) 0 0 / 16px 16px;
@@ -1383,24 +1392,38 @@ body.ui main > * {
   padding: 12px;
   box-shadow: 6px 6px 0 rgb(0 0 0 / 0.55);
   margin-bottom: 16px; /* clears the shadow */
-  overflow: auto; /* 1:1 zoom scrolls inside the plate */
+  overflow: auto; /* 1:1/4x zoom scrolls inside the plate */
+  /* flex-basis auto + no shrink floor the plate at its content height, so an
+     opening render log or stats row never squeezes the hero (the page grows
+     instead, exactly as it would without the stage). */
+  flex: 1 0 auto;
+  /* The plate is itself a flex column so the hero's auto margins center it on
+     BOTH axes; unlike place-items: center, auto margins collapse to 0 when a
+     zoomed image overflows the scrolling plate, keeping the top-left corner
+     reachable at scroll origin. */
+  display: flex;
+  flex-direction: column;
 }
 
 #output {
   display: block;
   max-width: 100%;
   height: auto;
-  margin: 0 auto;
-  cursor: zoom-in; /* pointer shortcut to the fit/1:1 toggle button */
+  margin: auto; /* optical center of the stage; collapses to 0 on overflow */
+  flex: none; /* never flex-squeezed: fit scaling is max-width's job alone */
+  cursor: zoom-in; /* pointer shortcut to the fit/1:1/4x cycle button */
 }
 
 /* Empty state: an aspect-ratio box (JS overrides from the w/h inputs) with
-   one centered dim sentence on the mat. */
+   one centered dim sentence on the mat. width 100% + auto margins center the
+   box vertically on the full-height stage like the rendered image. */
 #output-plate .hint {
   display: grid;
   place-items: center;
   aspect-ratio: 4 / 3;
-  margin: 0;
+  width: 100%;
+  margin: auto;
+  flex: none;
   padding: 16px;
   color: var(--dim);
   text-align: center;
@@ -1408,6 +1431,39 @@ body.ui main > * {
 
 #output-plate:has(img:not([hidden])) .hint {
   display: none;
+}
+
+/* The editor page's zoom cycle is fit -> 1:1 -> 4x -> fit, so at 1:1 the next
+   click goes further IN; the shared .zoom-1x zoom-out cursor only tells the
+   truth at the 4x step. (The REPL has no cycle and keeps the shared rule.) */
+#output.zoom-1x {
+  cursor: zoom-in;
+}
+
+#output.zoom-4x {
+  cursor: zoom-out;
+}
+
+/* While a zoom step is engaged the plate caps at one viewport so the PLATE
+   (not the page) is the scroll container on both axes: the click-anchor and
+   the drag-pan write plate.scrollLeft/scrollTop, which need real overflow to
+   act on. Unzoomed, the full-height stage rule above is back in charge. */
+#output-plate:has(#output.zoom-1x) {
+  max-height: 100dvh;
+}
+
+/* Drag-to-pan affordance: the plate is the scroll container, so it shows grab
+   while a zoomed image can be panned, and grabbing (also beating the image's
+   zoom cursor) only while a drag is actually moving it. The grabbing arm
+   repeats the :has() so it outweighs the grab rule above (a pan only ever
+   runs while a zoom step is engaged, so the selectors describe one state). */
+#output-plate:has(#output.zoom-1x) {
+  cursor: grab;
+}
+
+#output-plate.panning:has(#output.zoom-1x),
+#output-plate.panning #output {
+  cursor: grabbing;
 }
 
 /* Download anchor + fit/1:1 zoom toggle. */
@@ -1556,7 +1612,8 @@ body.ui[data-mode='animate'] .still-only {
   display: block;
   max-width: 100%;
   height: auto;
-  margin: 0 auto;
+  margin: auto; /* both-axis optical center on the full-height stage */
+  flex: none;
 }
 
 #player-controls {

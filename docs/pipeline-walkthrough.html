@@ -1,0 +1,1553 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>povrayer: boot &amp; render pipeline walkthrough</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3CradialGradient id='g' cx='.33' cy='.28' r='.75'%3E%3Cstop offset='0' stop-color='%23fff'/%3E%3Cstop offset='.38' stop-color='%23ffd23f'/%3E%3Cstop offset='.78' stop-color='%2315151a'/%3E%3C/radialGradient%3E%3Ccircle cx='8' cy='8' r='8' fill='url(%23g)'/%3E%3C/svg%3E"
+    />
+    <style>
+      :root {
+        --bg: #101015;
+        --bg2: #15151a;
+        --panel: #1c1c24;
+        --panel2: #232330;
+        --line: #2e2e3c;
+        --ink: #e9e9f0;
+        --dim: #a3a3b4;
+        --faint: #6f6f82;
+        --accent: #ffd23f;
+        --accent2: #ff9e3f;
+        --blue: #6fb7ff;
+        --green: #6fe0a8;
+        --pink: #ff79c6;
+        --purple: #b794ff;
+        --red: #ff6b6b;
+        --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+        --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;
+        --r: 12px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+        scroll-padding-top: 72px;
+      }
+      body {
+        margin: 0;
+        background:
+          radial-gradient(900px 500px at 80% -5%, rgba(255, 210, 63, 0.1), transparent 60%),
+          radial-gradient(700px 500px at -5% 20%, rgba(111, 183, 255, 0.08), transparent 55%),
+          var(--bg);
+        color: var(--ink);
+        font-family: var(--sans);
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+      }
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      code,
+      .mono {
+        font-family: var(--mono);
+      }
+      code:not(pre code) {
+        background: #00000055;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        padding: 0.05em 0.4em;
+        font-size: 0.86em;
+        color: var(--accent);
+        white-space: nowrap;
+      }
+
+      /* ---- top nav ---- */
+      nav.top {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        display: flex;
+        gap: 4px;
+        align-items: center;
+        flex-wrap: wrap;
+        padding: 10px 22px;
+        background: rgba(16, 16, 21, 0.82);
+        backdrop-filter: blur(12px);
+        border-bottom: 1px solid var(--line);
+      }
+      nav.top .brand {
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        margin-right: auto;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font-size: 1.02rem;
+      }
+      .orb {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 33% 28%, #fff 0%, var(--accent) 38%, #15151a 82%);
+        box-shadow: 0 0 16px rgba(255, 210, 63, 0.55);
+        display: inline-block;
+      }
+      .brand .ac {
+        color: var(--accent);
+      }
+      nav.top a.pill {
+        font-size: 0.8rem;
+        color: var(--dim);
+        padding: 5px 11px;
+        border-radius: 999px;
+        border: 1px solid transparent;
+        white-space: nowrap;
+      }
+      nav.top a.pill:hover {
+        color: var(--ink);
+        text-decoration: none;
+        background: var(--panel);
+      }
+      nav.top a.pill.active {
+        color: var(--bg);
+        background: var(--accent);
+        border-color: var(--accent);
+        font-weight: 700;
+      }
+
+      /* ---- layout ---- */
+      .wrap {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 0 22px 120px;
+      }
+      header.hero {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 64px 22px 26px;
+      }
+      .kicker {
+        font-family: var(--mono);
+        font-size: 0.74rem;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--accent);
+        margin: 0 0 14px;
+      }
+      header.hero h1 {
+        font-size: clamp(2rem, 5vw, 3.3rem);
+        line-height: 1.05;
+        letter-spacing: -0.03em;
+        margin: 0 0 16px;
+        font-weight: 850;
+      }
+      header.hero p.lede {
+        font-size: 1.12rem;
+        color: var(--dim);
+        max-width: 68ch;
+        margin: 0 0 8px;
+      }
+      .meta-line {
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        color: var(--faint);
+        margin-top: 22px;
+      }
+
+      section.act {
+        padding-top: 64px;
+      }
+      .act-head {
+        display: flex;
+        align-items: baseline;
+        gap: 14px;
+        margin-bottom: 6px;
+        flex-wrap: wrap;
+      }
+      .act-no {
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        font-weight: 700;
+        color: var(--bg);
+        background: var(--accent);
+        border-radius: 6px;
+        padding: 3px 9px;
+        letter-spacing: 0.04em;
+      }
+      h2 {
+        font-size: clamp(1.45rem, 3vw, 2rem);
+        letter-spacing: -0.02em;
+        margin: 0;
+        font-weight: 800;
+      }
+      .sub {
+        color: var(--dim);
+        margin: 8px 0 26px;
+        max-width: 74ch;
+      }
+      h3 {
+        font-size: 1.12rem;
+        margin: 34px 0 10px;
+        letter-spacing: -0.01em;
+      }
+      p {
+        max-width: 78ch;
+      }
+      .dim {
+        color: var(--dim);
+      }
+
+      .card {
+        background: linear-gradient(180deg, var(--panel), var(--bg2));
+        border: 1px solid var(--line);
+        border-radius: var(--r);
+        padding: 22px 24px;
+        margin: 18px 0;
+      }
+      .card.tight {
+        padding: 16px 18px;
+      }
+
+      .note {
+        border-left: 3px solid var(--accent);
+        background: rgba(255, 210, 63, 0.06);
+        border-radius: 0 10px 10px 0;
+        padding: 12px 16px;
+        margin: 18px 0;
+        font-size: 0.95rem;
+      }
+      .note.blue {
+        border-color: var(--blue);
+        background: rgba(111, 183, 255, 0.07);
+      }
+      .note.red {
+        border-color: var(--red);
+        background: rgba(255, 107, 107, 0.07);
+      }
+      .note b {
+        color: var(--ink);
+      }
+
+      pre {
+        background: #0c0c11;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 14px 16px;
+        overflow-x: auto;
+        font-family: var(--mono);
+        font-size: 0.83rem;
+        line-height: 1.65;
+        margin: 14px 0;
+      }
+      pre .c {
+        color: var(--faint);
+      } /* comment */
+      pre .k {
+        color: var(--pink);
+      } /* keyword */
+      pre .s {
+        color: var(--green);
+      } /* string */
+      pre .f {
+        color: var(--blue);
+      } /* function/ident */
+      pre .n {
+        color: var(--accent);
+      } /* number/flag */
+      pre .t {
+        color: var(--purple);
+      } /* type */
+
+      .fileref {
+        font-family: var(--mono);
+        font-size: 0.74rem;
+        color: var(--faint);
+        display: inline-block;
+        margin-top: 2px;
+      }
+
+      /* ---- tables ---- */
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 16px 0;
+        font-size: 0.88rem;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 9px 12px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+      th {
+        color: var(--faint);
+        font-weight: 600;
+        font-size: 0.74rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      td.mono,
+      th.mono {
+        font-family: var(--mono);
+        font-size: 0.8rem;
+      }
+      td .tag {
+        color: var(--accent);
+      }
+      tr:last-child td {
+        border-bottom: none;
+      }
+
+      /* ---- step list ---- */
+      ol.steps {
+        counter-reset: s;
+        list-style: none;
+        padding: 0;
+        margin: 18px 0;
+      }
+      ol.steps > li {
+        counter-increment: s;
+        position: relative;
+        padding: 2px 0 22px 52px;
+        border-left: 2px solid var(--line);
+        margin-left: 16px;
+      }
+      ol.steps > li:last-child {
+        border-left-color: transparent;
+        padding-bottom: 0;
+      }
+      ol.steps > li::before {
+        content: counter(s);
+        position: absolute;
+        left: -17px;
+        top: -2px;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: var(--panel2);
+        border: 2px solid var(--accent);
+        color: var(--accent);
+        font-family: var(--mono);
+        font-weight: 700;
+        font-size: 0.85rem;
+        display: grid;
+        place-items: center;
+      }
+      ol.steps > li .st-title {
+        font-weight: 700;
+        color: var(--ink);
+      }
+      ol.steps > li .st-body {
+        color: var(--dim);
+        font-size: 0.93rem;
+        margin-top: 3px;
+      }
+
+      /* ---- waterfall ---- */
+      .replay {
+        font-family: var(--mono);
+        font-size: 0.74rem;
+        color: var(--accent);
+        background: transparent;
+        border: 1px solid var(--accent);
+        border-radius: 999px;
+        padding: 4px 13px;
+        cursor: pointer;
+        transition: 0.15s;
+      }
+      .replay:hover {
+        background: var(--accent);
+        color: var(--bg);
+      }
+      .waterfall {
+        margin: 8px 0 4px;
+      }
+      .wf-row {
+        display: grid;
+        grid-template-columns: 215px 1fr;
+        gap: 12px;
+        align-items: center;
+        padding: 4px 0;
+      }
+      .wf-label {
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        color: var(--dim);
+        text-align: right;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .wf-label .tag {
+        color: var(--faint);
+        font-size: 0.68rem;
+      }
+      .wf-track {
+        position: relative;
+        height: 22px;
+        background: #00000033;
+        border-radius: 5px;
+        overflow: hidden;
+      }
+      .wf-bar {
+        position: absolute;
+        top: 3px;
+        height: 16px;
+        border-radius: 4px;
+        background: linear-gradient(90deg, var(--accent2), var(--accent));
+        transform: scaleX(0);
+        transform-origin: left;
+        opacity: 0;
+      }
+      .wf-bar.blue {
+        background: linear-gradient(90deg, #3a7bd5, var(--blue));
+      }
+      .wf-bar.green {
+        background: linear-gradient(90deg, #2e9e6b, var(--green));
+      }
+      .wf-bar.purple {
+        background: linear-gradient(90deg, #7d54d1, var(--purple));
+      }
+      .wf-bar.reload {
+        background: repeating-linear-gradient(
+          45deg,
+          var(--red),
+          var(--red) 6px,
+          #c44 6px,
+          #c44 12px
+        );
+      }
+      .playing .wf-bar {
+        animation: grow 0.5s ease forwards;
+        animation-delay: var(--d);
+      }
+      @keyframes grow {
+        from {
+          transform: scaleX(0);
+          opacity: 0;
+        }
+        to {
+          transform: scaleX(1);
+          opacity: 1;
+        }
+      }
+      .wf-tip {
+        font-family: var(--mono);
+        font-size: 0.7rem;
+        color: var(--faint);
+        padding-left: 227px;
+        margin-top: 6px;
+      }
+
+      /* ---- stack diagram ---- */
+      .stack {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin: 18px 0;
+      }
+      .layer {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 13px 16px;
+        background: var(--panel);
+        display: flex;
+        gap: 14px;
+        align-items: center;
+      }
+      .layer .lyr-ic {
+        font-family: var(--mono);
+        font-size: 1.1rem;
+        width: 30px;
+        text-align: center;
+      }
+      .layer .lyr-t {
+        font-weight: 700;
+      }
+      .layer .lyr-d {
+        color: var(--dim);
+        font-size: 0.86rem;
+      }
+      .layer.js {
+        border-left: 3px solid var(--accent);
+      }
+      .layer.glue {
+        border-left: 3px solid var(--blue);
+      }
+      .layer.wasm {
+        border-left: 3px solid var(--purple);
+      }
+      .layer.worker {
+        border-left: 3px solid var(--green);
+      }
+      .arrow-down {
+        text-align: center;
+        color: var(--faint);
+        font-size: 0.9rem;
+        line-height: 0.4;
+      }
+
+      /* ---- pipeline (act 3) ---- */
+      .pipe {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: stretch;
+        margin: 20px 0;
+      }
+      .pnode {
+        flex: 1 1 150px;
+        min-width: 140px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 12px 13px;
+        position: relative;
+      }
+      .pnode .pn-k {
+        font-family: var(--mono);
+        font-size: 0.68rem;
+        color: var(--accent);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      .pnode .pn-t {
+        font-weight: 700;
+        font-size: 0.92rem;
+        margin: 3px 0;
+      }
+      .pnode .pn-d {
+        color: var(--dim);
+        font-size: 0.8rem;
+      }
+      .pnode.io {
+        border-color: var(--blue);
+      }
+      .pnode.io .pn-k {
+        color: var(--blue);
+      }
+      .pnode.wa {
+        border-color: var(--purple);
+      }
+      .pnode.wa .pn-k {
+        color: var(--purple);
+      }
+
+      .twocol {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+      @media (max-width: 760px) {
+        .twocol {
+          grid-template-columns: 1fr;
+        }
+        .wf-row {
+          grid-template-columns: 130px 1fr;
+        }
+        .wf-tip {
+          padding-left: 142px;
+        }
+        .wf-label {
+          font-size: 0.68rem;
+        }
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        margin: 10px 0;
+      }
+      .chip {
+        font-family: var(--mono);
+        font-size: 0.74rem;
+        background: var(--panel2);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 4px 9px;
+        color: var(--dim);
+      }
+      .chip b {
+        color: var(--accent);
+        font-weight: 600;
+      }
+      hr.div {
+        border: none;
+        border-top: 1px solid var(--line);
+        margin: 40px 0;
+      }
+      .foot {
+        color: var(--faint);
+        font-size: 0.82rem;
+        text-align: center;
+        padding-top: 30px;
+      }
+      .legend {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        font-size: 0.76rem;
+        color: var(--dim);
+        margin: 6px 0 14px;
+      }
+      .legend span {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .sw {
+        width: 11px;
+        height: 11px;
+        border-radius: 3px;
+        display: inline-block;
+      }
+    </style>
+  </head>
+  <body>
+    <nav class="top">
+      <span class="brand"><span class="orb"></span><span class="ac">pov</span>rayer</span>
+      <a class="pill" href="#overview">overview</a>
+      <a class="pill" href="#act1">1 · pages load</a>
+      <a class="pill" href="#emscripten">emscripten</a>
+      <a class="pill" href="#act2">2 · wasm boot</a>
+      <a class="pill" href="#act3">3 · editor ↔ wasm</a>
+      <a class="pill" href="#reference">reference</a>
+    </nav>
+
+    <header class="hero">
+      <p class="kicker">how it actually loads &amp; runs</p>
+      <h1>From a cold GitHub&nbsp;Pages hit to ray-traced pixels in your tab</h1>
+      <p class="lede">
+        Every request, every header, every worker, and every byte that crosses the
+        JS&nbsp;↔&nbsp;wasm boundary, start to finish. POV-Ray 3.8 is a 30-year-old C++ ray tracer;
+        this is the machinery that makes it run, multi-threaded, inside a static page with no
+        server.
+      </p>
+      <p class="meta-line">
+        live at swhitt.github.io/povrayer/ · static files only · no backend · ~3.9&nbsp;MB wasm
+      </p>
+    </header>
+
+    <div class="wrap">
+      <!-- ================= OVERVIEW ================= -->
+      <section class="act" id="overview">
+        <div class="act-head">
+          <span class="act-no">TL;DR</span>
+          <h2>The whole thing in one breath</h2>
+        </div>
+        <p class="sub">
+          Five moves. The hard part isn't ray tracing. It's that a wasm ray tracer needs real
+          threads, real threads need <code>SharedArrayBuffer</code>, and that needs HTTP headers a
+          static host won't send. Everything in Act&nbsp;1 exists to win that fight.
+        </p>
+
+        <div class="stack">
+          <div class="layer js">
+            <span class="lyr-ic">🌐</span>
+            <div>
+              <div class="lyr-t">1 · Browser GETs the page from GitHub Pages</div>
+              <div class="lyr-d">
+                Static <code>index.html</code> + a flat pile of JS/wasm assets. No server logic,
+                ever.
+              </div>
+            </div>
+          </div>
+          <div class="arrow-down">▼</div>
+          <div class="layer glue">
+            <span class="lyr-ic">🔒</span>
+            <div>
+              <div class="lyr-t">2 · A service worker forges the isolation headers</div>
+              <div class="lyr-d">
+                Pages can't set COOP/COEP, so <code>coi-serviceworker.js</code> intercepts every
+                fetch and stamps them. First visit reloads once.
+              </div>
+            </div>
+          </div>
+          <div class="arrow-down">▼</div>
+          <div class="layer wasm">
+            <span class="lyr-ic">⚙️</span>
+            <div>
+              <div class="lyr-t">3 · The wasm engine boots, lazily, on first render</div>
+              <div class="lyr-d">
+                An Emscripten module: <code>povray.mjs</code> glue + <code>povray.wasm</code> + a
+                pool of pthread Web Workers over shared memory.
+              </div>
+            </div>
+          </div>
+          <div class="arrow-down">▼</div>
+          <div class="layer js">
+            <span class="lyr-ic">⌨️</span>
+            <div>
+              <div class="lyr-t">4 · Editor text becomes a file in the wasm filesystem</div>
+              <div class="lyr-d">
+                Your SDL is written to <code>/work/scene.pov</code> in MEMFS; POV-Ray's
+                <code>main()</code> runs on it with CLI argv.
+              </div>
+            </div>
+          </div>
+          <div class="arrow-down">▼</div>
+          <div class="layer worker">
+            <span class="lyr-ic">🖼️</span>
+            <div>
+              <div class="lyr-t">5 · The output PNG is copied out and shown</div>
+              <div class="lyr-d">
+                <code>/work/out.png</code> → fresh <code>Uint8Array</code> → <code>Blob</code> →
+                object URL → <code>&lt;img&gt;</code>. Instance torn down. Repeat.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="note blue">
+          <b>The one architectural fact that explains everything else:</b> POV-Ray uses pthreads for
+          multi-core rendering. In wasm, a pthread <em>is</em> a Web Worker sharing one
+          <code>WebAssembly.Memory({ shared: true })</code>. A shared memory buffer is only handed
+          to JS when the page is <b>cross-origin isolated</b>, which requires two response headers
+          GitHub Pages flatly refuses to send. Act&nbsp;1 is the workaround.
+        </div>
+      </section>
+
+      <hr class="div" />
+
+      <!-- ================= ACT 1 ================= -->
+      <section class="act" id="act1">
+        <div class="act-head">
+          <span class="act-no">ACT 1</span>
+          <h2>Opening the page on GitHub Pages</h2>
+        </div>
+        <p class="sub">
+          What gets requested, in what order, and the header sleight-of-hand that turns a
+          header-less static host into a cross-origin-isolated context.
+        </p>
+
+        <h3>The deploy layout: everything is flat</h3>
+        <p>
+          CI builds the wasm in Docker, then the Pages job copies <code>dist/*</code> and
+          <code>web/*</code> into one directory and publishes it under the <code>/povrayer/</code>
+          subpath. Flat on purpose: every URL in the page is relative (<code>./ui.js</code>,
+          <code>./index.js</code>, <code>./povray.wasm</code>), so the wrapper's
+          <code>./index.js</code> resolves right next to <code>povray.mjs</code> and the editor
+          scripts.
+        </p>
+        <pre><span class="c"># .github/workflows/pages.yml, gated on a green CI run</span>
+mkdir -p _site
+cp -R dist/* _site/   <span class="c"># index.js, povray.mjs, povray.wasm (the engine)</span>
+cp -R web/*  _site/   <span class="c"># index.html, ui.js, coi-serviceworker.js, styles...</span></pre>
+        <p class="fileref">.github/workflows/pages.yml:46</p>
+
+        <h3>The request waterfall (cold cache)</h3>
+        <div class="legend">
+          <span><span class="sw" style="background: var(--accent)"></span> document / script</span>
+          <span><span class="sw" style="background: var(--blue)"></span> service worker</span>
+          <span><span class="sw" style="background: var(--green)"></span> ES-module graph</span>
+          <span><span class="sw" style="background: var(--purple)"></span> wasm engine (lazy)</span>
+          <span><span class="sw" style="background: var(--red)"></span> forced reload</span>
+        </div>
+        <div class="card tight">
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 10px;
+            "
+          >
+            <strong style="font-size: 0.9rem">First-ever visit</strong>
+            <button class="replay" data-target="wf1">▸ replay</button>
+          </div>
+          <div class="waterfall" id="wf1">
+            <div class="wf-row">
+              <div class="wf-label">GET <b>/povrayer/</b> <span class="tag">html</span></div>
+              <div class="wf-track">
+                <div class="wf-bar" style="left: 0%; width: 14%; --d: 0s"></div>
+              </div>
+            </div>
+            <div class="wf-row">
+              <div class="wf-label">coi-serviceworker.js <span class="tag">blocking</span></div>
+              <div class="wf-track">
+                <div class="wf-bar blue" style="left: 14%; width: 10%; --d: 0.25s"></div>
+              </div>
+            </div>
+            <div class="wf-row">
+              <div class="wf-label">register + install SW <span class="tag">sw</span></div>
+              <div class="wf-track">
+                <div class="wf-bar blue" style="left: 24%; width: 16%; --d: 0.5s"></div>
+              </div>
+            </div>
+            <div class="wf-row">
+              <div class="wf-label">↻ self-reload <span class="tag">once</span></div>
+              <div class="wf-track">
+                <div class="wf-bar reload" style="left: 40%; width: 8%; --d: 0.85s"></div>
+              </div>
+            </div>
+            <div class="wf-row">
+              <div class="wf-label">
+                GET <b>/povrayer/</b> again <span class="tag">isolated ✓</span>
+              </div>
+              <div class="wf-track">
+                <div class="wf-bar" style="left: 48%; width: 13%; --d: 1.15s"></div>
+              </div>
+            </div>
+            <div class="wf-row">
+              <div class="wf-label">styles.css <span class="tag">css</span></div>
+              <div class="wf-track">
+                <div class="wf-bar" style="left: 61%; width: 9%; --d: 1.4s"></div>
+              </div>
+            </div>
+            <div class="wf-row">
+              <div class="wf-label">ui.js <span class="tag">module</span></div>
+              <div class="wf-track">
+                <div class="wf-bar green" style="left: 61%; width: 11%; --d: 1.45s"></div>
+              </div>
+            </div>
+            <div class="wf-row">
+              <div class="wf-label">
+                render-client, examples, highlight… <span class="tag">imports</span>
+              </div>
+              <div class="wf-track">
+                <div class="wf-bar green" style="left: 72%; width: 16%; --d: 1.7s"></div>
+              </div>
+            </div>
+            <div class="wf-row">
+              <div class="wf-label">
+                povray.mjs + povray.wasm <span class="tag">on 1st render</span>
+              </div>
+              <div class="wf-track">
+                <div class="wf-bar purple" style="left: 88%; width: 12%; --d: 2.05s"></div>
+              </div>
+            </div>
+          </div>
+          <div class="wf-tip">
+            ▸ the engine (purple) does <em>not</em> load at startup. It's dynamically imported the
+            first time you render.
+          </div>
+        </div>
+        <p class="dim" style="font-size: 0.9rem">
+          On every later visit the service worker is already installed, so there's no reload step.
+          The first <code>/povrayer/</code> response is already isolated and the page is interactive
+          immediately.
+        </p>
+
+        <h3>Why the service worker exists at all</h3>
+        <p>
+          To hand JS a <code>SharedArrayBuffer</code>, a browser demands the page be
+          <b>cross-origin isolated</b>, which means the top document was served with:
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th class="mono">Response header</th>
+              <th>Value</th>
+              <th>Why</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono">Cross-Origin-Opener-Policy</td>
+              <td class="mono tag">same-origin</td>
+              <td>
+                Severs the window from cross-origin openers (no shared browsing-context group).
+              </td>
+            </tr>
+            <tr>
+              <td class="mono">Cross-Origin-Embedder-Policy</td>
+              <td class="mono tag">require-corp</td>
+              <td>
+                Every subresource must opt in to being embedded. Together with COOP this flips
+                <code>crossOriginIsolated → true</code>.
+              </td>
+            </tr>
+            <tr>
+              <td class="mono">Cross-Origin-Resource-Policy</td>
+              <td class="mono tag">cross-origin</td>
+              <td>Stamped on every subresource so <code>require-corp</code> accepts them.</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          GitHub Pages lets you set zero custom headers. The fix is a classic: a service worker that
+          re-fetches every response and rewrites the headers locally before they reach the page.
+          It's loaded <b>synchronously in <code>&lt;head&gt;</code>, before anything else</b>, so it
+          controls the page as early as possible.
+        </p>
+        <pre><span class="c">// coi-serviceworker.js: the fetch handler, per response</span>
+newHeaders.set(<span class="s">"Cross-Origin-Embedder-Policy"</span>, <span class="s">"require-corp"</span>);
+newHeaders.set(<span class="s">"Cross-Origin-Resource-Policy"</span>, <span class="s">"cross-origin"</span>);
+newHeaders.set(<span class="s">"Cross-Origin-Opener-Policy"</span>,   <span class="s">"same-origin"</span>);
+<span class="k">return new</span> <span class="f">Response</span>(response.body, { <span class="c">/* ...with newHeaders */</span> });</pre>
+        <p class="fileref">web/coi-serviceworker.js:43</p>
+
+        <div class="note">
+          <b>Local patch worth knowing:</b> upstream coi-serviceworker sends
+          <code>COEP: credentialless</code> on non-Chromium browsers. Safari (desktop + iOS) doesn't
+          support <code>credentialless</code>, so the page would never isolate and the engine would
+          never start. This fork forces <code>require-corp</code> everywhere (safe here because
+          every asset is same-origin and the SW also stamps <code>CORP: cross-origin</code>).
+        </div>
+
+        <h3>The first-visit reload dance</h3>
+        <p>
+          A freshly-installed SW doesn't control the page that installed it. So on a cold visit the
+          page loads <em>without</em> the headers, notices it isn't isolated, and reloads once so
+          the now-active SW can intercept. The page itself double-checks and shows a banner if it's
+          still not isolated:
+        </p>
+        <pre><span class="k">if</span> (<span class="f">crossOriginIsolated</span>) {
+  sessionStorage.<span class="f">removeItem</span>(<span class="s">'coi-retry'</span>);   <span class="c">// good, engine can run</span>
+} <span class="k">else</span> {
+  isoWarning.hidden = <span class="k">false</span>;                <span class="c">// "SharedArrayBuffer unavailable…"</span>
+  <span class="c">// reload as soon as the SW takes control; sessionStorage guards an infinite loop</span>
+  <span class="k">if</span> (navigator.serviceWorker?.controller) <span class="f">coiRetry</span>();
+  <span class="k">else</span> navigator.serviceWorker?.<span class="f">addEventListener</span>(<span class="s">'controllerchange'</span>, coiRetry);
+}</pre>
+        <p class="fileref">web/ui.js:19</p>
+      </section>
+
+      <hr class="div" />
+
+      <!-- ================= EMSCRIPTEN PRIMER ================= -->
+      <section class="act" id="emscripten">
+        <div class="act-head">
+          <span class="act-no">PRIMER</span>
+          <h2>How Emscripten works (the general picture)</h2>
+        </div>
+        <p class="sub">
+          Before Act 2 makes sense, here's what Emscripten actually produces and how a C++
+          <code>main()</code> ends up callable from JavaScript. If you know this cold, skip to
+          Act&nbsp;2.
+        </p>
+
+        <h3>It's a compiler toolchain, not a runtime</h3>
+        <p>
+          Emscripten is LLVM/Clang with a wasm backend plus a pile of JS &ldquo;glue.&rdquo; You
+          point it at C/C++ (here: the POV-Ray 3.8 source) and it emits three kinds of output:
+        </p>
+        <div class="stack">
+          <div class="layer wasm">
+            <span class="lyr-ic">📦</span>
+            <div>
+              <div class="lyr-t"><code>povray.wasm</code>, the compiled binary</div>
+              <div class="lyr-d">
+                POV-Ray's C++ translated to WebAssembly instructions. ~3.9&nbsp;MB. Pure
+                computation: it can't touch the DOM, the network, or files on its own.
+              </div>
+            </div>
+          </div>
+          <div class="layer glue">
+            <span class="lyr-ic">🔌</span>
+            <div>
+              <div class="lyr-t"><code>povray.mjs</code>, the JS glue / loader</div>
+              <div class="lyr-d">
+                Fetches &amp; instantiates the wasm, wires up imports, emulates a libc/OS (files,
+                time, stdout), manages the pthread worker pool. The part you actually call.
+              </div>
+            </div>
+          </div>
+          <div class="layer worker">
+            <span class="lyr-ic">🧵</span>
+            <div>
+              <div class="lyr-t">Worker glue (here: the same <code>.mjs</code>, re-imported)</div>
+              <div class="lyr-d">
+                Each pthread is a Web Worker running the same module in a special "I am a pthread"
+                mode, sharing one memory with the main instance.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <h3>The bridge: linear memory + an imports/exports table</h3>
+        <p>
+          A wasm module has one big <code>ArrayBuffer</code> of <b>linear memory</b> and a list of
+          functions it <b>exports</b> (callable from JS) and <b>imports</b> (JS functions it calls
+          out to). C pointers are just integer offsets into that buffer. So when JS wants to give
+          the program a string, it writes the bytes into linear memory and passes the offset; when
+          the program prints, it calls an imported JS function with a pointer + length that JS reads
+          back out. Emscripten generates both sides of every one of those calls.
+        </p>
+        <div class="chips">
+          <span class="chip"
+            ><b>exports</b> → <code>callMain</code>, <code>malloc</code>, FS helpers…</span
+          >
+          <span class="chip"
+            ><b>imports</b> → <code>print</code>, <code>printErr</code>, syscalls,
+            <code>now()</code></span
+          >
+          <span class="chip"
+            ><b>memory</b> → one shared <code>ArrayBuffer</code>, pointers = offsets</span
+          >
+        </div>
+
+        <h3>Faking an operating system in the browser</h3>
+        <p>
+          POV-Ray is a command-line program. It opens files, reads argv, writes a PNG, prints
+          progress. None of that exists in a tab, so Emscripten emulates it:
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>POV-Ray expects…</th>
+              <th>Emscripten provides…</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono">a filesystem (<code>fopen</code>, <code>fread</code>)</td>
+              <td>
+                <b>MEMFS</b>, an in-memory virtual FS.
+                <code>FS.writeFile("/work/scene.pov", …)</code> from JS makes a "file" the C code
+                can open as if it were on disk.
+              </td>
+            </tr>
+            <tr>
+              <td class="mono">argc / argv</td>
+              <td>
+                <code>callMain(["+I/work/scene.pov", "+W512", …])</code>: JS hands the CLI args
+                straight to <code>main()</code>.
+              </td>
+            </tr>
+            <tr>
+              <td class="mono">stdout / stderr</td>
+              <td>
+                Imported <code>print</code> / <code>printErr</code> callbacks. Every line POV-Ray
+                writes surfaces as a JS string.
+              </td>
+            </tr>
+            <tr>
+              <td class="mono">exit(code)</td>
+              <td>
+                An <code>onExit(code)</code> callback. With <code>EXIT_RUNTIME</code> the whole
+                instance tears down cleanly when <code>main()</code> returns.
+              </td>
+            </tr>
+            <tr>
+              <td class="mono">threads (pthreads)</td>
+              <td>
+                Web Workers + one <code>shared: true</code> memory. <code>pthread_create</code> →
+                spin up / reuse a worker.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>Threads are the whole reason this is hard</h3>
+        <p>
+          Native pthreads share one address space. Emscripten reproduces that by giving every worker
+          the <em>same</em> <code>WebAssembly.Memory</code> instance, but JS only allows a memory's
+          backing buffer to be shared across workers when it's a <code>SharedArrayBuffer</code>,
+          which (full circle) only exists under cross-origin isolation. That's the thread that ties
+          Act&nbsp;1 to everything below.
+        </p>
+        <div class="note blue">
+          <b>Two Emscripten flags this build leans on:</b><br />
+          <code>PROXY_TO_PTHREAD</code>: <code>main()</code> runs on a worker, not the page thread,
+          so the UI never freezes during a multi-second trace. <code>callMain()</code> returns
+          immediately; completion arrives via <code>onExit</code>.<br />
+          <code>EXIT_RUNTIME=1</code>: when <code>main()</code> returns the runtime is fully torn
+          down (memory, workers, MEMFS gone). The wrapper uses this to get a pristine instance per
+          render instead of reusing dirty state.
+        </div>
+
+        <h3>The lifecycle, generically</h3>
+        <ol class="steps">
+          <li>
+            <div class="st-title">Instantiate</div>
+            <div class="st-body">
+              <code>WebAssembly.instantiate(bytes, imports)</code> compiles the binary and links it
+              to the JS-provided imports + memory. Emscripten wraps this in a factory function the
+              glue exports.
+            </div>
+          </li>
+          <li>
+            <div class="st-title">Set up the environment</div>
+            <div class="st-body">
+              MEMFS mounted, argv prepared, stdout hooks attached, the pthread worker pool
+              pre-warmed.
+            </div>
+          </li>
+          <li>
+            <div class="st-title">Stage inputs</div>
+            <div class="st-body">
+              JS writes files into MEMFS and assembles the argv array, the program's whole view of
+              the "outside world."
+            </div>
+          </li>
+          <li>
+            <div class="st-title">Run</div>
+            <div class="st-body">
+              <code>callMain(argv)</code> invokes the exported <code>main()</code>. Work fans out
+              across worker threads over shared memory.
+            </div>
+          </li>
+          <li>
+            <div class="st-title">Collect &amp; tear down</div>
+            <div class="st-body">
+              JS reads output files back out of MEMFS, then the runtime exits. Outputs must be
+              <em>copied</em> out, because the memory is about to vanish.
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <hr class="div" />
+
+      <!-- ================= ACT 2 ================= -->
+      <section class="act" id="act2">
+        <div class="act-head">
+          <span class="act-no">ACT 2</span>
+          <h2>Booting the wasm wrapper</h2>
+        </div>
+        <p class="sub">
+          How povrayer's thin TypeScript wrapper turns that generic Emscripten module into a clean
+          <code>render(source, opts) → PNG bytes</code> promise, and why it's loaded so late.
+        </p>
+
+        <h3>Exactly one module touches wasm</h3>
+        <p>
+          The page code never imports the engine directly. <code>render-client.js</code> is the
+          single chokepoint; it imports <code>./index.js</code> (the built wrapper), which is the
+          only thing that knows <code>povray.mjs</code> exists. Everything funnels through one
+          <code>busy</code> flag so a still render and an animation can never run at once.
+        </p>
+        <pre><span class="c">// web/render-client.js: the only wasm import in the app</span>
+<span class="k">import</span> { render, renderAnimation, PovrayError } <span class="k">from</span> <span class="s">'./index.js'</span>;</pre>
+        <p class="fileref">web/render-client.js:9</p>
+
+        <h3>Lazy, cached factory: fresh instance per render</h3>
+        <p>
+          The 3.9&nbsp;MB wasm isn't fetched until your first render. The wrapper dynamically
+          imports
+          <code>povray.mjs</code> once and caches the <em>factory</em> (which holds the compiled
+          bytes), but spins up a brand-new <em>instance</em> for every render.
+          <code>EXIT_RUNTIME</code> makes that cheap and clean: FS, memory, and worker state never
+          leak between renders.
+        </p>
+        <pre><span class="k">function</span> <span class="f">loadFactory</span>() {
+  <span class="k">if</span> (!factoryPromise) {
+    factoryPromise = <span class="k">import</span>(<span class="s">"./povray.mjs"</span>).<span class="f">then</span>((m) => m.default);
+  }
+  <span class="k">return</span> factoryPromise;   <span class="c">// compiled wasm cached; ~100-300ms per instance is noise vs a multi-second trace</span>
+}</pre>
+        <p class="fileref">wrapper/src/index.ts:97</p>
+
+        <h3>What <code>povray.mjs</code> does the instant it's imported</h3>
+        <ol class="steps">
+          <li>
+            <div class="st-title">Sniff the environment</div>
+            <div class="st-body">
+              Same file runs in Node and the browser. It checks <code>globalThis.window</code> /
+              <code>WorkerGlobalScope</code> to decide between <code>worker_threads</code> and Web
+              <code>Worker</code>, and whether <em>it</em> is the main thread or a pthread (<code
+                >name === "em-pthread"</code
+              >).
+            </div>
+          </li>
+          <li>
+            <div class="st-title">Locate the binary relative to itself</div>
+            <div class="st-body">
+              <code>new URL("povray.wasm", import.meta.url)</code>, resolved next to the glue, which
+              is why the flat deploy layout matters.
+            </div>
+          </li>
+          <li>
+            <div class="st-title">Allocate shared memory</div>
+            <div class="st-body">
+              <code>new WebAssembly.Memory({ initial, maximum: 32768, shared: true })</code>: a
+              2&nbsp;GB shared ceiling (32768 × 64&nbsp;KB pages). <code>shared:true</code> is the
+              payoff for all of Act&nbsp;1.
+            </div>
+          </li>
+          <li>
+            <div class="st-title">Compile &amp; instantiate</div>
+            <div class="st-body">
+              <code>WebAssembly.instantiate</code> links the binary to that memory and the JS
+              imports (print, syscalls, …).
+            </div>
+          </li>
+          <li>
+            <div class="st-title">Spawn the pthread pool</div>
+            <div class="st-body">
+              One Web Worker per render thread, each re-importing the same module in pthread mode
+              over the shared memory.
+            </div>
+          </li>
+        </ol>
+
+        <pre><span class="c">// the pthread worker spawn, straight out of the emscripten glue</span>
+worker = <span class="k">new</span> <span class="f">Worker</span>(
+  <span class="k">new</span> <span class="f">URL</span>(<span class="s">"povray.mjs"</span>, import.meta.url),
+  { type: <span class="s">"module"</span>, workerData: <span class="s">"em-pthread"</span>, name: <span class="s">"em-pthread"</span> }
+);</pre>
+
+        <div class="note red">
+          <b>Never run this through a bundler.</b> The worker is spawned via
+          <code>new URL("povray.mjs", import.meta.url)</code> and ignores Emscripten's
+          <code>locateFile</code> hook (emscripten&nbsp;#22508). <code>povray.mjs</code> and
+          <code>povray.wasm</code> must be served as opaque static assets exactly where the glue
+          expects them. Bundle or rename them and the threads silently fail to spawn.
+        </div>
+
+        <h3>Thread count</h3>
+        <p>
+          Threads default to <code>navigator.hardwareConcurrency</code> clamped to 1&ndash;32,
+          overridable in the UI. It becomes POV-Ray's <code>+WT</code> flag. More workers, more
+          cores chewing the shared framebuffer.
+        </p>
+        <p class="fileref">wrapper/src/index.ts:116</p>
+      </section>
+
+      <hr class="div" />
+
+      <!-- ================= ACT 3 ================= -->
+      <section class="act" id="act3">
+        <div class="act-head">
+          <span class="act-no">ACT 3</span>
+          <h2>Editor ↔ wasm, keystroke to pixel</h2>
+        </div>
+        <p class="sub">
+          The live loop. What happens between you typing a <code>}</code> and a fresh frame
+          appearing: the debounce, the coalescing, the MEMFS handoff, and the careful copy on the
+          way out.
+        </p>
+
+        <h3>One funnel for "the text changed"</h3>
+        <p>
+          Every edit (native typing, Tab-indent, or a parameter slider rewriting the source) flows
+          through a single function so highlight, gutter, persistence, the param panel, and the live
+          draft stay in lockstep:
+        </p>
+        <pre><span class="k">function</span> <span class="f">applyEditorContentChange</span>() {
+  <span class="f">renderGutter</span>();
+  <span class="f">paintHighlight</span>();      <span class="c">// syntax layer behind the transparent textarea</span>
+  <span class="f">scheduleSave</span>();         <span class="c">// debounced localStorage</span>
+  <span class="f">scheduleDraft</span>();        <span class="c">// debounced low-res auto-render  ←  the wasm path</span>
+  <span class="f">scheduleParams</span>();       <span class="c">// re-scan #declare sliders</span>
+}
+editor.<span class="f">addEventListener</span>(<span class="s">'input'</span>, applyEditorContentChange);</pre>
+        <p class="fileref">web/ui.js:714</p>
+
+        <h3>The adaptive debounce (so it doesn't melt your laptop)</h3>
+        <p>
+          Live draft doesn't render on every keystroke. It waits, and the wait
+          <b>scales with how long the last draft took</b>: a heavy scene backs off, a trivial one
+          fires near the floor.
+        </p>
+        <div class="chips">
+          <span class="chip">floor <b>250&nbsp;ms</b></span>
+          <span class="chip">ceiling <b>2000&nbsp;ms</b></span>
+          <span class="chip">delay ≈ <b>lastDraftMs × 0.75</b></span>
+          <span class="chip">draft res capped to <b>320&nbsp;px</b> longest edge</span>
+          <span class="chip">antialias <b>off</b> for drafts</span>
+        </div>
+        <p>
+          When the timer fires it re-reads the <em>newest</em> text (so a burst of keystrokes
+          collapses to a single render of the final text), checks the scene looks syntactically
+          settled, and bails if it isn't isolated or the engine is busy. A newer edit mid-render
+          <code>abort()</code>s the in-flight draft and supersedes it.
+        </p>
+        <p class="fileref">web/ui.js:1144 (constants) · :1197 (fireDraft) · :1215 (runDraft)</p>
+
+        <h3>The handoff into wasm</h3>
+        <p>
+          Whether it's a live draft or an explicit <kbd>Ctrl/Cmd+Enter</kbd>, the source lands in
+          the wrapper's <code>render()</code>, which stages it into MEMFS and runs POV-Ray's
+          <code>main()</code> over a fixed argv:
+        </p>
+        <div class="pipe">
+          <div class="pnode io">
+            <div class="pn-k">JS → MEMFS</div>
+            <div class="pn-t">stage the scene</div>
+            <div class="pn-d">
+              <code>FS.mkdir("/work")</code>; <code>FS.writeFile("/work/scene.pov", source)</code>
+            </div>
+          </div>
+          <div class="pnode">
+            <div class="pn-k">build argv</div>
+            <div class="pn-t">CLI flags</div>
+            <div class="pn-d">
+              <code>+I…scene.pov +O…out.png +FN +W +H +WT</code> (+ Q / A / animation)
+            </div>
+          </div>
+          <div class="pnode wa">
+            <div class="pn-k">wasm</div>
+            <div class="pn-t">callMain(argv)</div>
+            <div class="pn-d">
+              runs on a pthread (<code>PROXY_TO_PTHREAD</code>); returns immediately
+            </div>
+          </div>
+          <div class="pnode wa">
+            <div class="pn-k">workers</div>
+            <div class="pn-t">trace</div>
+            <div class="pn-d">N pthreads chew the framebuffer in shared memory</div>
+          </div>
+          <div class="pnode">
+            <div class="pn-k">stdout</div>
+            <div class="pn-t">progress</div>
+            <div class="pn-d">
+              <code>print/printErr</code> → log lines + <code>Rendered…(43%)</code>
+            </div>
+          </div>
+          <div class="pnode io">
+            <div class="pn-k">MEMFS → JS</div>
+            <div class="pn-t">collect</div>
+            <div class="pn-d">
+              <code>onExit(0)</code> → <code>Uint8Array.from(FS.readFile("/work/out.png"))</code>
+            </div>
+          </div>
+        </div>
+
+        <pre><span class="c">// wrapper/src/index.ts: the argv assembled for every still render</span>
+<span class="k">const</span> argv = [
+  <span class="s">"+I/work/scene.pov"</span>, <span class="s">"+O/work/out.png"</span>, <span class="s">"+FN"</span>, <span class="c">/* PNG */</span>
+  <span class="s">"-D"</span>, <span class="s">"-P"</span>,                <span class="c">// no display, no pause</span>
+  <span class="n">`+W${width}`</span>, <span class="n">`+H${height}`</span>, <span class="n">`+WT${threads}`</span>,
+];
+<span class="c">// + quality (+Q), antialias (-A / +A0.1), animation (+KFI/+KFF/+KI/+KF), include path</span>
+instance.<span class="f">callMain</span>(argv);
+<span class="k">const</span> exitCode = <span class="k">await</span> exited;   <span class="c">// resolves in onExit</span></pre>
+        <p class="fileref">wrapper/src/index.ts:308</p>
+
+        <h3>Getting the pixels back out, carefully</h3>
+        <p>
+          The output is copied into a <em>fresh, non-shared</em> buffer before the instance dies.
+          This is the single most important rule in the wrapper:
+        </p>
+        <div class="note red">
+          <b>Never hand callers a view into wasm memory.</b> With
+          <code>ALLOW_MEMORY_GROWTH</code> on a shared memory, the underlying buffer is
+          <em>replaced</em> when it grows, so any cached <code>HEAPU8</code> view would suddenly
+          read garbage. The wrapper never touches the heap directly: <code>FS.writeFile</code> /
+          <code>FS.readFile</code> plus an explicit <code>Uint8Array.from(...)</code> copy are the
+          only data paths in and out.
+        </div>
+        <p>
+          From there <code>render-client.js</code> wraps the bytes in a <code>Blob</code>, mints an
+          object URL, and the UI swaps it into <code>&lt;img id="output"&gt;</code>. A draft success
+          is the only thing that swaps the image; a draft <em>error</em> keeps the last good frame
+          and whispers the message inline (a polite live region, not an alert on every keystroke).
+        </p>
+
+        <h3>Cancel = terminate the threads</h3>
+        <p>
+          Hit Stop / Esc and the <code>AbortController</code> fires
+          <code>PThread.terminateAllThreads()</code>. Violent by design: the instance is thrown away
+          after every render anyway, so killing it mid-trace is safe; the next render starts from a
+          fresh one and rejects the current promise with an <code>AbortError</code>.
+        </p>
+
+        <div class="twocol">
+          <div class="card tight">
+            <strong style="font-size: 0.9rem">Live draft</strong>
+            <p class="dim" style="font-size: 0.86rem; margin: 8px 0 0">
+              Auto-fires on idle. ≤320&nbsp;px, AA off, no progress bar, no log. Superseded by newer
+              text. Keeps the last good image on error.
+            </p>
+          </div>
+          <div class="card tight">
+            <strong style="font-size: 0.9rem">Explicit render</strong>
+            <p class="dim" style="font-size: 0.86rem; margin: 8px 0 0">
+              <kbd>Ctrl/Cmd+Enter</kbd> or the button. Full res + AA, drives the progress bar &amp;
+              log, and always wins: it aborts a running draft first (<code>pendingFull</code>).
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <hr class="div" />
+
+      <!-- ================= REFERENCE ================= -->
+      <section class="act" id="reference">
+        <div class="act-head">
+          <span class="act-no">REF</span>
+          <h2>Reference</h2>
+        </div>
+
+        <h3>Every file that ships, and what it does</h3>
+        <table>
+          <thead>
+            <tr>
+              <th class="mono">file</th>
+              <th>from</th>
+              <th>role</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono">index.html</td>
+              <td>web/</td>
+              <td>
+                Entry document. Loads the SW (blocking, in head) + ui.js (module, end of body).
+              </td>
+            </tr>
+            <tr>
+              <td class="mono">coi-serviceworker.js</td>
+              <td>web/</td>
+              <td>Forges COOP/COEP/CORP headers so the page becomes cross-origin isolated.</td>
+            </tr>
+            <tr>
+              <td class="mono">styles.css</td>
+              <td>web/</td>
+              <td>All UI styling.</td>
+            </tr>
+            <tr>
+              <td class="mono">ui.js</td>
+              <td>web/</td>
+              <td>
+                Page controller: editor, controls, debounced draft loop, output pane. No exports.
+              </td>
+            </tr>
+            <tr>
+              <td class="mono">render-client.js</td>
+              <td>web/</td>
+              <td>
+                The only wasm importer. <code>busy</code> singleton, progress normalization, error
+                formatting.
+              </td>
+            </tr>
+            <tr>
+              <td class="mono">
+                examples / highlight / sdl-validate / permalink / declare-sliders.js
+              </td>
+              <td>web/</td>
+              <td>
+                ui.js's import graph: scene library, syntax coloring, settle-check, share links,
+                param sliders.
+              </td>
+            </tr>
+            <tr>
+              <td class="mono">index.js</td>
+              <td>dist/</td>
+              <td>
+                Built wrapper (<code>render</code> / <code>renderAnimation</code>). Dynamically
+                imports the engine.
+              </td>
+            </tr>
+            <tr>
+              <td class="mono">povray.mjs</td>
+              <td>dist/</td>
+              <td>
+                Emscripten glue: env sniff, wasm instantiate, MEMFS, pthread pool. Also the worker
+                body.
+              </td>
+            </tr>
+            <tr>
+              <td class="mono">povray.wasm</td>
+              <td>dist/</td>
+              <td>POV-Ray 3.8 compiled to WebAssembly (~3.9&nbsp;MB). The actual ray tracer.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>The argv POV-Ray actually receives</h3>
+        <table>
+          <thead>
+            <tr>
+              <th class="mono">flag</th>
+              <th>meaning</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono tag">+I/work/scene.pov</td>
+              <td>Input file (your editor text, staged in MEMFS)</td>
+            </tr>
+            <tr>
+              <td class="mono tag">+O/work/out.png +FN</td>
+              <td>Output path + PNG format</td>
+            </tr>
+            <tr>
+              <td class="mono tag">-D -P</td>
+              <td>No display window, no "press a key" pause</td>
+            </tr>
+            <tr>
+              <td class="mono tag">+W… +H…</td>
+              <td>Width / height in pixels</td>
+            </tr>
+            <tr>
+              <td class="mono tag">+WT…</td>
+              <td>Worker thread count (the pthread pool size)</td>
+            </tr>
+            <tr>
+              <td class="mono tag">+Q… -A / +A0.1</td>
+              <td>Quality; antialias off or threshold</td>
+            </tr>
+            <tr>
+              <td class="mono tag">+KFI1 +KFF{n} +KI{0} +KF{1}</td>
+              <td>Animation only: frame range + clock sweep (<code>renderAnimation</code>)</td>
+            </tr>
+            <tr>
+              <td class="mono tag">+L…/include</td>
+              <td>POV-Ray standard include path</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>The cross-origin-isolation chain, one more time</h3>
+        <pre>
+COOP: same-origin  +  COEP: require-corp
+        └─► crossOriginIsolated === true
+                └─► SharedArrayBuffer available
+                        └─► WebAssembly.Memory({ shared: true })
+                                └─► pthreads (Web Workers) share one address space
+                                        └─► POV-Ray renders multi-threaded
+                                                └─► tasty pixels 🎨</pre
+        >
+      </section>
+
+      <p class="foot">
+        Generated walkthrough · reflects the source as of this branch · open the live app at
+        <a href="https://swhitt.github.io/povrayer/">swhitt.github.io/povrayer</a>
+      </p>
+    </div>
+
+    <script>
+      // Replay buttons: re-trigger the waterfall CSS animation by toggling the .playing class.
+      function play(el) {
+        el.classList.remove('playing');
+        void el.offsetWidth; // force reflow so the animation restarts
+        el.classList.add('playing');
+      }
+      document.querySelectorAll('.replay').forEach((btn) => {
+        const target = document.getElementById(btn.dataset.target);
+        btn.addEventListener('click', () => play(target));
+      });
+
+      // Auto-play each waterfall once when it scrolls into view.
+      const io = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((e) => {
+            if (e.isIntersecting) {
+              play(e.target);
+              io.unobserve(e.target);
+            }
+          });
+        },
+        { threshold: 0.4 }
+      );
+      document.querySelectorAll('.waterfall').forEach((w) => io.observe(w));
+
+      // Active-section highlight in the top nav.
+      const links = [...document.querySelectorAll('nav.top a.pill')];
+      const byId = new Map(links.map((a) => [a.getAttribute('href').slice(1), a]));
+      const navIo = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((e) => {
+            if (e.isIntersecting) {
+              links.forEach((l) => l.classList.remove('active'));
+              byId.get(e.target.id)?.classList.add('active');
+            }
+          });
+        },
+        { rootMargin: '-45% 0px -50% 0px' }
+      );
+      document.querySelectorAll('section.act').forEach((s) => navIo.observe(s));
+    </script>
+  </body>
+</html>

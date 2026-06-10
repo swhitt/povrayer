@@ -11,35 +11,19 @@ import {
 import { EXAMPLES, getExample } from './examples.js';
 import { highlight } from './highlight.js';
 import { stripCommentsAndStrings } from './sdl-strip.js';
+import { assembleReplScene } from './repl-scene.js';
+import { encodeState } from './permalink.js';
+import { buildPool, complete, applyCompletion, tokenAt } from './complete.js';
 import {
   pickWebmMime,
   triggerDownload,
   downloadPngFrames,
   recordCanvasWebm,
 } from './anim-export.js';
+import { ensureCrossOriginIsolation } from './coi.js';
 
 const isoWarning = document.getElementById('iso-warning');
-if (crossOriginIsolated) {
-  sessionStorage.removeItem('coi-retry');
-  /* c8 ignore start -- COI service-worker fallback: the test harness is always cross-origin isolated, and the SW controllerchange/reload race is non-deterministic */
-} else {
-  isoWarning.hidden = false;
-  // coi-serviceworker first-visit race: on a fast load the SW can install,
-  // activate, and claim() the page before the script's reload branches run,
-  // leaving the page controlled but not isolated and never self-reloading.
-  // A controlled page does get the injected headers on its next load, so
-  // reload as soon as the SW takes (or already has) control; the
-  // sessionStorage guard stops a loop when isolation fails for some other
-  // reason.
-  const coiRetry = () => {
-    if (sessionStorage.getItem('coi-retry')) return;
-    sessionStorage.setItem('coi-retry', '1');
-    location.reload();
-  };
-  if (navigator.serviceWorker?.controller) coiRetry();
-  else navigator.serviceWorker?.addEventListener('controllerchange', coiRetry);
-}
-/* c8 ignore stop -- closes the ignore block opened above */
+ensureCrossOriginIsolation({ warningEl: isoWarning });
 
 const scrollback = document.getElementById('scrollback');
 const form = document.getElementById('input-form');
@@ -53,6 +37,7 @@ const sourceToggle = document.getElementById('source-toggle');
 const sourcePanel = document.getElementById('repl-source');
 const sourceCode = document.getElementById('source-code');
 const sourceClose = document.getElementById('source-close');
+const editorLink = document.getElementById('open-in-editor');
 
 // --- state -----------------------------------------------------------------
 
@@ -84,7 +69,6 @@ const STORAGE_KEY = 'povrayer.repl.v1';
 // `#include "colors.inc"`, so `color Red` would fail with an undeclared
 // identifier. The suggested first-contact snippet has to render as-is.
 const TRY_LINE = 'sphere { <0,1,0>, 1 pigment { color rgb <1,0,0> } }';
-const GREETING = `type POV-Ray scene code, get an image · try: ${TRY_LINE} · :example for scenes, :help for commands`;
 
 const entries = []; // [{ id, source }], order = scene order; ids increase from 1
 let history = []; // submitted raw inputs (commands included), newest last
@@ -175,69 +159,31 @@ function loadState() {
 
 // --- scene assembly ----------------------------------------------------------
 
-// Each scaffold line is injected only when its keyword test fails against the
-// accumulated source (word-boundary regex; false positives in string literals
-// are an accepted v1 tradeoff), so a user-supplied camera never collides with
-// the default one (POV-Ray errors on duplicate cameras).
-/** @type {Array<[RegExp, string]>} */
-const SCAFFOLD = [
-  [/\bglobal_settings\b/, 'global_settings { assumed_gamma 1.0 }'],
-  [/\bcamera\b/, 'camera { location <0, 2, -5> look_at <0, 0.5, 0> }'],
-  [/\blight_source\b/, 'light_source { <5, 10, -5> color rgb 1 }'],
-  [/\bbackground\b/, 'background { color rgb <0.15, 0.15, 0.18> }'],
-];
-
-// #version is NOT scaffold-conditional: POV-Ray fatals when a scene's first
-// #version appears after any other statement, so injected scaffold lines above
-// an entry that declares its own #version would break it (every standalone
-// example does). A leading #version makes any later in-entry #version a legal
-// mid-scene version change, so the assembled scene ALWAYS starts with one.
-const VERSION_LINE = '#version 3.8;';
-
-// Line spans of each entry within the last assembled scene (1-based,
-// inclusive), so error line numbers can be mapped back to "entry N, line M".
-let lastSpans = [];
+// Last renderer/editor handoff assembly. Kept in the DOM module so the pure
+// assembler has no hidden mutable state, while errors still map against the
+// exact attempted scene even after a failed entry has been rolled back.
+let lastAssembly = assembleReplScene(entries);
 
 function assembleScene() {
-  const body = entries.map((e) => e.source).join('\n');
-  // Comments + strings must not satisfy a scaffold test: "// fix camera later"
-  // (or a "camera" inside a string) would otherwise suppress the camera scaffold
-  // and silently render black from POV-Ray's fallback origin camera, so the
-  // keyword probes run against a comment/string-stripped copy. The shared
-  // stripper nests block comments (a flat regex couldn't).
-  const probe = stripCommentsAndStrings(body);
-  const injected = SCAFFOLD.filter(([re]) => !re.test(probe)).map(([, line]) => line);
-  const preamble = [VERSION_LINE, ...injected];
-  // Span math mirrors the string assembly below: preamble lines, one blank
-  // separator, then the entries joined by single newlines.
-  let line = preamble.length + 2;
-  lastSpans = entries.map((e) => {
-    const n = e.source.split('\n').length;
-    const span = { start: line, end: line + n - 1 };
-    line += n;
-    return span;
-  });
-  return preamble.join('\n') + '\n\n' + body;
+  lastAssembly = assembleReplScene(entries);
+  return lastAssembly.source;
 }
 
-function mapAssembledLine(n) {
-  for (let i = 0; i < lastSpans.length; i++) {
-    if (n >= lastSpans[i].start && n <= lastSpans[i].end) {
-      return { entry: i + 1, line: n - lastSpans[i].start + 1 };
-    }
-  }
-  /* c8 ignore next -- POV-Ray reports error lines inside the offending entry; the scaffold is always valid and never the error site, so an assembled line never maps outside the entry spans */
-  return null; // scaffold or out of range
+function formatAssembledLine(n) {
+  const loc = lastAssembly.mapLine(n);
+  return loc ? `line ${n} (entry ${loc.entry}, line ${loc.line})` : `line ${n}`;
 }
 
 // Mirror the assembled scene into the slide-out panel, but only while it's open
 // (closed, this is a no-op so we never pay for highlight() on every entry
-// mutation with the panel parked off-screen). assembleScene() recomputes
-// lastSpans as a side effect, but lastSpans is read only by mapAssembledLine
-// during describeError, which always runs over the same entries BEFORE the
-// finally-refresh in the same render turn, so the re-derivation is idempotent.
+// mutation with the panel parked off-screen). assembleScene() refreshes
+// lastAssembly, but describeError runs over the attempted render assembly before
+// the finally-refresh derives the settled scene after rollback.
 function refreshSource() {
   if (!sourceOpen) return;
+  // An empty scene has nothing to graduate, so the editor handoff link hides
+  // alongside the placeholder text.
+  editorLink.hidden = !entries.length;
   if (entries.length) sourceCode.innerHTML = highlight(assembleScene());
   else sourceCode.textContent = 'scene empty · type scene code to begin';
 }
@@ -295,9 +241,38 @@ function appendBlock(cls, text) {
 
 // Failure/cancel replaces the pending figure with an error/info block in
 // place, so the busy signal and its outcome occupy the same spot.
-function replaceWithBlock(fig, cls, text) {
-  fig.replaceWith(makeBlock(cls, text));
+function replaceWithNode(fig, node) {
+  fig.replaceWith(node);
   scrollback.scrollTop = scrollback.scrollHeight;
+}
+
+function replaceWithBlock(fig, cls, text) {
+  replaceWithNode(fig, makeBlock(cls, text));
+}
+
+// The try-snippet as a one-click affordance (link-styled button; accent on
+// links is sanctioned): the click only fills + focuses the input, Enter stays
+// the user's, so the first render is still theirs.
+function makeTryButton() {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'linkish';
+  btn.textContent = TRY_LINE;
+  btn.addEventListener('click', () => {
+    setInputValue(TRY_LINE);
+    input.focus();
+  });
+  return btn;
+}
+
+function buildGreeting() {
+  const pre = makeBlock('info', '');
+  pre.append(
+    'type POV-Ray scene code, get an image · try: ',
+    makeTryButton(),
+    ' · :example for scenes, :help for commands'
+  );
+  return pre;
 }
 
 // Pending placeholder: the layout shift happens at submit time, sized
@@ -453,6 +428,26 @@ function handleRenderEvent(ev) {
   /* c8 ignore stop -- closes the ignore block opened above */
 }
 
+// --- SDL vocabulary (completion pool + include manifest) -----------------------
+
+// Keyword/builtin Tab completion works from first paint; the include library's
+// symbols (and the name -> include-file map the undeclared-identifier tip
+// reads) arrive when the manifest fetch lands. A slow or failed fetch costs
+// only those two affordances, never the REPL itself.
+let completePool = buildPool();
+/** @type {Map<string, string>} */
+let includeFileFor = new Map();
+fetch('./includes-manifest.json')
+  .then((r) => r.json())
+  .then((data) => {
+    completePool = buildPool(data.symbols);
+    includeFileFor = new Map(data.symbols.map((s) => [s.name, s.file]));
+    // Readiness signal for tests (mirrors the editor's data-complete-ready).
+    input.setAttribute('data-complete-ready', '');
+  })
+  /* c8 ignore next -- manifest fetch failure leaves keyword-only completion; the offline test harness always serves the file */
+  .catch(() => {});
+
 // --- error presentation --------------------------------------------------------
 
 // render-client's formatError is the single error voice; this layer only adds
@@ -461,15 +456,52 @@ function handleRenderEvent(ev) {
 // trailing `Render failed` trims are defensive no-ops once formatError drops
 // them itself.
 function describeError(err) {
-  const formatted = formatError(err);
+  const formatted = formatError(err, { mapLine: formatAssembledLine });
   let lines = formatted.split('\n');
   if (/^exit \d+$/.test(lines[0])) lines = lines.slice(1);
   while (lines.length && /^(Render failed\.?|\s*)$/.test(lines[lines.length - 1])) lines.pop();
   if (!lines.length) return formatted;
-  return lines.join('\n').replace(/^line (\d+)\b/m, (full, num) => {
-    const loc = mapAssembledLine(parseInt(num, 10));
-    return loc ? `line ${num} (entry ${loc.entry}, line ${loc.line})` : full;
+  return lines.join('\n');
+}
+
+// The fix for an "undeclared identifier" rollback is almost always one missing
+// #include: scan the failed entry's identifiers (comment/string-stripped, so a
+// name inside a string or comment never triggers) for one the shipped include
+// library declares whose file no surviving entry #includes yet. SDL keywords
+// can't false-positive (the manifest holds only library symbols); a #declare
+// shadowing a library name at worst yields an advisory tip.
+/**
+ * @param {string} source the rolled-back entry's raw text
+ * @returns {{ name: string, file: string } | null}
+ */
+function findMissingInclude(source) {
+  for (const [name] of stripCommentsAndStrings(source).matchAll(/\b[A-Za-z_]\w*/g)) {
+    const file = includeFileFor.get(name);
+    if (file && !entries.some((e) => e.source.includes(`#include "${file}"`))) {
+      return { name, file };
+    }
+  }
+  return null;
+}
+
+// The clickable half of the include tip: prepends the missing #include as
+// entry 1 (includes must precede first use) and re-renders. One-shot (disabled
+// after use); ignored while a render is in flight (renders are single-flight).
+function makeIncludeButton(file) {
+  const line = `#include "${file}"`;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'linkish';
+  btn.textContent = line;
+  btn.addEventListener('click', () => {
+    if (input.readOnly) return;
+    btn.disabled = true;
+    entries.unshift({ id: nextId++, source: line });
+    saveState();
+    appendBlock('info', `${line} added as entry 1`);
+    runRender();
   });
+  return btn;
 }
 
 // --- rendering ---------------------------------------------------------------
@@ -517,11 +549,21 @@ async function runRender({ rollback, echoNode, entrySource } = {}) {
       if (cancelled) {
         replaceWithBlock(fig, 'info', 'render cancelled, entry rolled back');
       } else {
-        let text = 'entry rolled back\n' + describeError(err);
+        const block = makeBlock('error', 'entry rolled back\n' + describeError(err));
         if (entrySource && !entrySource.includes('{')) {
-          text += `\ntip: input is POV-Ray scene code, not English. try: ${TRY_LINE}`;
+          block.append('\ntip: input is POV-Ray scene code, not English. try: ', makeTryButton());
+        } else if (entrySource && /undeclared identifier/i.test(block.textContent)) {
+          // The rollback already popped the entry, so the include scan runs
+          // against the surviving scene only.
+          const fix = findMissingInclude(entrySource);
+          if (fix) {
+            block.append(
+              `\ntip: '${fix.name}' ships in ${fix.file} · add an entry: `,
+              makeIncludeButton(fix.file)
+            );
+          }
         }
-        replaceWithBlock(fig, 'error', text);
+        replaceWithNode(fig, block);
       }
     } else {
       // describeError maps AbortError to 'render cancelled'.
@@ -848,6 +890,7 @@ const COMMANDS = [
     usage: ':anim N',
     desc: 'render the current scene as N frames and play them inline',
   },
+  { name: 'editor', usage: ':editor', desc: 'open the assembled scene in the full editor' },
   { name: 'size', usage: ':size WxH', desc: 'render size (each 8..2048)' },
   { name: 'q', usage: ':q N', desc: 'quality 0..11 (default 9)' },
   { name: 'aa', usage: ':aa [threshold|off]', desc: 'antialias (no arg = 0.3)' },
@@ -869,7 +912,7 @@ const HELP_KEYS = [
   ['Shift+Enter', 'insert a newline'],
   ['Esc / cancel', 'stop a render (fresh entries roll back)'],
   ['ArrowUp / ArrowDown', 'recall input history (typed text recalls by prefix)'],
-  ['Tab', 'complete :commands'],
+  ['Tab', 'complete :commands and scene words (an ambiguous Tab lists the matches)'],
   ['click an old entry', 'copy it back into the input'],
 ];
 
@@ -1198,6 +1241,11 @@ function dispatchCommand(text) {
       else runRender();
       break;
 
+    case 'editor':
+      if (!entries.length) appendBlock('error', 'scene empty, add something first');
+      else openInEditor();
+      break;
+
     case 'anim': {
       const n = parseIntStrict(arg);
       if (!Number.isInteger(n) || n < 1 || n > ANIM_FRAMES_MAX) {
@@ -1318,6 +1366,45 @@ function toggleSource(open) {
 sourceToggle.addEventListener('click', () => toggleSource(!sourceOpen));
 sourceClose.addEventListener('click', () => toggleSource(false));
 
+// PermalinkState for the editor handoff. The source is the ASSEMBLED scene
+// (scaffold included), so the editor renders the same image the REPL did.
+// Control fields use the editor's raw-string conventions (empty string =
+// control default); antialias false maps to 'off' (the editor select's option
+// value; '' would be dropped by its hydration). Out-of-menu :q / :aa values
+// degrade to the editor defaults via its tolerant select coercion. frames/fps
+// mirror the editor's own control defaults; the REPL has no animation
+// settings to carry.
+/** @returns {import('./permalink.js').PermalinkState} */
+function captureEditorState() {
+  return {
+    source: assembleScene(),
+    width: String(settings.width),
+    height: String(settings.height),
+    quality: settings.quality === undefined ? '' : String(settings.quality),
+    antialias: settings.antialias === false ? 'off' : aaLabel(),
+    threads: settings.threads === undefined ? '' : String(settings.threads),
+    flags: settings.args ?? '',
+    mode: 'still',
+    frames: '24',
+    fps: '12',
+  };
+}
+
+// Graduate the sketch to the full editor (sliders, animation export,
+// permalinks) through the same self-contained #hash payload the editor's
+// shareable links use; it hydrates from location.hash on load. encodeState
+// never throws for a well-formed state.
+async function openInEditor() {
+  location.href = './index.html#' + (await encodeState(captureEditorState()));
+}
+
+editorLink.addEventListener('click', (e) => {
+  // The static href is a bare ./index.html fallback (middle-click/copy still
+  // reach the editor); a normal click encodes the scene first, then navigates.
+  e.preventDefault();
+  openInEditor();
+});
+
 // Tap/click an echoed entry to copy it back into the input (the touch path to
 // history). Skipped while the user is selecting text to copy.
 scrollback.addEventListener('click', (e) => {
@@ -1373,6 +1460,49 @@ function completeCommand() {
   return true;
 }
 
+// Shell-style Tab completion for scene code (the non-:command arm). The lookup
+// runs against assembled-scene + input text, so the scene's own #declares and
+// #macros complete alongside the language vocabulary and the include library.
+// Bash semantics, no popup: a unique match inserts in place (macros gain call
+// parens, caret inside), several matches extend to the longest common prefix,
+// and a Tab that can make no progress prints the candidates into the
+// transcript like a shell. Prefix matches only (case-sensitive), so the
+// common-prefix math means what it says. Returns true when Tab was consumed;
+// with no token under the caret Tab falls through, so keyboard focus can
+// still leave the input.
+function completeSdl() {
+  if (input.readOnly) return false;
+  if (input.selectionStart !== input.selectionEnd) return false;
+  const scenePrefix = assembleScene() + '\n';
+  const text = scenePrefix + input.value;
+  const caret = scenePrefix.length + input.selectionStart;
+  const tok = tokenAt(text, caret);
+  if (!tok.word) return false;
+  const offer = complete(text, caret, completePool, { limit: Infinity });
+  const names = offer
+    ? offer.items.filter((c) => c.name.startsWith(tok.word)).map((c) => c.name)
+    : [];
+  if (!names.length) return true; // nothing to offer (bash would beep)
+  const from = tok.start - scenePrefix.length;
+  const to = tok.end - scenePrefix.length;
+  if (names.length === 1) {
+    const chosen = offer.items.find((c) => c.name === names[0]);
+    const r = applyCompletion(input.value, { from, to }, chosen);
+    input.value = r.text;
+    input.selectionStart = input.selectionEnd = r.caret;
+  } else {
+    const prefix = commonPrefix(names);
+    if (prefix.length > tok.word.length) {
+      input.value = input.value.slice(0, from) + prefix + input.value.slice(to);
+      input.selectionStart = input.selectionEnd = from + prefix.length;
+    } else {
+      appendBlock('info', [...new Set(names)].sort().join('  '));
+    }
+  }
+  autoGrow();
+  return true;
+}
+
 // Nearest history index in `dir` (-1 = older, +1 = newer) whose entry starts
 // with the active recall filter. Returns history.length when the walk runs
 // off the newest end (back at the draft) and -1 when nothing older matches.
@@ -1390,7 +1520,7 @@ input.addEventListener('keydown', (e) => {
     return;
   }
   if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
-    if (completeCommand()) e.preventDefault();
+    if (completeCommand() || completeSdl()) e.preventDefault();
     return;
   }
   if (e.key === 'ArrowUp' && caretOnFirstLine() && historyIndex > 0) {
@@ -1424,7 +1554,7 @@ document.addEventListener('keydown', (e) => {
 // --- boot ----------------------------------------------------------------------
 
 const restoredCount = loadState();
-appendBlock('info', GREETING);
+appendNode(buildGreeting());
 if (restoredCount) {
   appendBlock(
     'info',

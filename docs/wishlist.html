@@ -1,0 +1,1092 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>povrayer · community wishlist</title>
+    <style>
+      :root {
+        --bg: #0b0d10;
+        --panel: #14171c;
+        --panel-2: #181c22;
+        --border: #2a2f37;
+        --border-strong: #3a4049;
+        --text: #e6e9ee;
+        --dim: #98a1ab;
+        --accent: #ffd23f;
+        --accent-ink: #0b0d10;
+        --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--mono);
+        font-size: 14px;
+        line-height: 1.55;
+        -webkit-font-smoothing: antialiased;
+      }
+      .wrap {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 40px 20px 80px;
+      }
+      header.masthead {
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 22px;
+        margin-bottom: 26px;
+      }
+      .wordmark {
+        color: var(--accent);
+        font-weight: 700;
+        letter-spacing: 0.04em;
+      }
+      h1 {
+        font-size: 26px;
+        margin: 6px 0 4px;
+        letter-spacing: -0.01em;
+      }
+      .sub {
+        color: var(--dim);
+        margin: 0;
+        max-width: 70ch;
+      }
+      .stats {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 18px;
+      }
+      .stat {
+        border: 1px solid var(--border);
+        background: var(--panel);
+        padding: 8px 12px;
+        min-width: 92px;
+      }
+      .stat b {
+        display: block;
+        font-size: 20px;
+        color: var(--accent);
+        font-variant-numeric: tabular-nums;
+      }
+      .stat span {
+        color: var(--dim);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      h2 {
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: var(--dim);
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 8px;
+        margin: 40px 0 18px;
+      }
+      .legend {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+      .legend div {
+        border: 1px solid var(--border);
+        background: var(--panel);
+        padding: 7px 10px;
+        font-size: 12.5px;
+      }
+      .legend .who {
+        color: var(--accent);
+        font-weight: 700;
+      }
+      .legend .what {
+        color: var(--dim);
+      }
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 0 0 22px;
+      }
+      .chip {
+        border: 1px solid var(--border-strong);
+        background: transparent;
+        color: var(--dim);
+        font-family: var(--mono);
+        font-size: 12px;
+        padding: 5px 11px;
+        cursor: pointer;
+        text-transform: lowercase;
+        letter-spacing: 0.02em;
+      }
+      .chip:hover {
+        border-color: var(--text);
+        color: var(--text);
+      }
+      .chip.on {
+        background: var(--text);
+        border-color: var(--text);
+        color: var(--bg);
+      }
+      .chip.all.on {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--accent-ink);
+      }
+      .card {
+        display: grid;
+        grid-template-columns: 46px 1fr;
+        gap: 16px;
+        border: 1px solid var(--border);
+        background: var(--panel);
+        padding: 16px 18px;
+        margin-bottom: 10px;
+      }
+      .rank {
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--accent);
+        font-variant-numeric: tabular-nums;
+        text-align: right;
+        padding-top: 1px;
+      }
+      .card h3 {
+        margin: 0 0 5px;
+        font-size: 15.5px;
+        line-height: 1.35;
+      }
+      .card p {
+        margin: 0 0 11px;
+        color: var(--dim);
+      }
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 12px;
+      }
+      .demand {
+        display: inline-flex;
+        gap: 3px;
+        align-items: center;
+      }
+      .demand i {
+        width: 9px;
+        height: 9px;
+        background: var(--border-strong);
+        display: inline-block;
+      }
+      .demand i.f {
+        background: var(--accent);
+      }
+      .demand b {
+        color: var(--dim);
+        font-size: 11.5px;
+        margin-left: 5px;
+        font-weight: 400;
+        font-variant-numeric: tabular-nums;
+      }
+      .tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+      }
+      .tag {
+        font-size: 10.5px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--dim);
+        border: 1px solid var(--border-strong);
+        padding: 1px 6px;
+      }
+      .cat {
+        font-size: 10.5px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--accent-ink);
+        background: var(--dim);
+        padding: 2px 7px;
+        font-weight: 700;
+      }
+      .group {
+        border: 1px solid var(--border);
+        background: var(--panel);
+        margin-bottom: 12px;
+      }
+      .group > h4 {
+        margin: 0;
+        padding: 12px 16px;
+        font-size: 13px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        border-bottom: 1px solid var(--border);
+        color: var(--text);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .group > h4 small {
+        color: var(--dim);
+        font-weight: 400;
+        letter-spacing: 0.04em;
+      }
+      .group ul {
+        margin: 0;
+        padding: 6px 0;
+        list-style: none;
+      }
+      .group li {
+        padding: 9px 16px;
+        border-top: 1px solid var(--border);
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 4px 12px;
+        align-items: baseline;
+      }
+      .group li:first-child {
+        border-top: 0;
+      }
+      .group li b {
+        color: var(--text);
+        font-weight: 700;
+      }
+      .group li span.r {
+        color: var(--dim);
+        grid-column: 1 / -1;
+        font-size: 13px;
+      }
+      .group li span.by {
+        color: var(--accent);
+        font-size: 11px;
+        white-space: nowrap;
+      }
+      .hidden {
+        display: none !important;
+      }
+      footer {
+        margin-top: 44px;
+        padding-top: 18px;
+        border-top: 1px solid var(--border);
+        color: var(--dim);
+        font-size: 12.5px;
+      }
+      a {
+        color: var(--accent);
+      }
+      @media (max-width: 560px) {
+        .card {
+          grid-template-columns: 34px 1fr;
+          gap: 11px;
+          padding: 13px 13px;
+        }
+        .group li {
+          grid-template-columns: 1fr;
+        }
+        .group li span.by {
+          white-space: normal;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="masthead">
+        <div class="wordmark">povrayer</div>
+        <h1>Community Wishlist</h1>
+        <p class="sub">
+          Ten simulated user personas each brainstormed their top 10 wishes for povrayer, then the
+          100 ideas were de-duplicated, clustered, and ranked by how many personas independently
+          asked for each one. Nothing here is built yet; this is a prioritization map.
+        </p>
+        <div class="stats">
+          <div class="stat"><b>10</b><span>personas</span></div>
+          <div class="stat"><b>100</b><span>raw ideas</span></div>
+          <div class="stat"><b>17</b><span>consensus picks</span></div>
+          <div class="stat"><b>10</b><span>categories</span></div>
+        </div>
+      </header>
+
+      <h2>The panel</h2>
+      <div class="legend">
+        <div><span class="who">VET</span> <span class="what">· POV-Ray veteran</span></div>
+        <div><span class="who">GEN</span> <span class="what">· generative artist</span></div>
+        <div><span class="who">EDU</span> <span class="what">· graphics educator</span></div>
+        <div><span class="who">NEW</span> <span class="what">· total beginner</span></div>
+        <div><span class="who">MATH</span> <span class="what">· math-viz fan</span></div>
+        <div><span class="who">WEB</span> <span class="what">· web/WASM dev</span></div>
+        <div><span class="who">LOOK</span> <span class="what">· look-dev / lighting TD</span></div>
+        <div><span class="who">MOB</span> <span class="what">· mobile casual</span></div>
+        <div><span class="who">A11Y</span> <span class="what">· accessibility advocate</span></div>
+        <div><span class="who">OSS</span> <span class="what">· power-user / maintainer</span></div>
+      </div>
+
+      <h2>
+        Top consensus ideas
+        <small style="text-transform: none; letter-spacing: 0; font-weight: 400"></small>
+      </h2>
+      <div class="controls" id="filters">
+        <button class="chip all on" data-cat="all">all</button>
+        <button class="chip" data-cat="debugging">debugging</button>
+        <button class="chip" data-cat="feature">feature</button>
+        <button class="chip" data-cat="performance">performance</button>
+        <button class="chip" data-cat="editor">editor</button>
+        <button class="chip" data-cat="export">export</button>
+        <button class="chip" data-cat="sharing">sharing</button>
+        <button class="chip" data-cat="community">community</button>
+      </div>
+
+      <div id="cards">
+        <div class="card" data-cat="debugging">
+          <div class="rank">1</div>
+          <div>
+            <h3>Human-readable error overlay with jump-to-line</h3>
+            <p>
+              POV-Ray's raw parse/render errors are dense. Surface the first fatal error as a
+              plain-English summary ("missing comma after the color on line 12") with a gutter
+              squiggle and a click-to-jump. The single most-requested idea across the panel.
+            </p>
+            <div class="meta">
+              <span class="demand" data-n="5"></span>
+              <span class="cat">debugging</span>
+              <span class="tags"
+                ><span class="tag">VET</span><span class="tag">EDU</span><span class="tag">NEW</span
+                ><span class="tag">WEB</span><span class="tag">A11Y</span></span
+              >
+            </div>
+          </div>
+        </div>
+
+        <div class="card" data-cat="debugging">
+          <div class="rank">2</div>
+          <div>
+            <h3>A/B render compare (split / blink) + scene diff</h3>
+            <p>
+              Overlay two renders with a drag-divider or blink toggle, optionally paired with an SDL
+              text diff, so the visual effect of a parameter, material, or quality change is obvious
+              without flipping tabs.
+            </p>
+            <div class="meta">
+              <span class="demand" data-n="4"></span>
+              <span class="cat">debugging</span>
+              <span class="tags"
+                ><span class="tag">VET</span><span class="tag">GEN</span
+                ><span class="tag">LOOK</span><span class="tag">OSS</span></span
+              >
+            </div>
+          </div>
+        </div>
+
+        <div class="card" data-cat="feature">
+          <div class="rank">3</div>
+          <div>
+            <h3>Local scene history with named snapshots + thumbnails</h3>
+            <p>
+              Auto-checkpoint the editor and expose a visual timeline of past versions (tiny render
+              thumbnails), so a tab crash or an over-eager edit never loses "the version that looked
+              cool."
+            </p>
+            <div class="meta">
+              <span class="demand" data-n="4"></span>
+              <span class="cat">feature</span>
+              <span class="tags"
+                ><span class="tag">MATH</span><span class="tag">WEB</span
+                ><span class="tag">NEW</span><span class="tag">MOB</span></span
+              >
+            </div>
+          </div>
+        </div>
+
+        <div class="card" data-cat="performance">
+          <div class="rank">4</div>
+          <div>
+            <h3>Incremental / region re-render</h3>
+            <p>
+              When a slider scrub or small edit changes one object, re-trace only the dirty bounding
+              region (or a user-dragged rectangle) instead of the whole frame. Turns multi-second
+              previews into sub-second ones.
+            </p>
+            <div class="meta">
+              <span class="demand" data-n="4"></span>
+              <span class="cat">performance</span>
+              <span class="tags"
+                ><span class="tag">VET</span><span class="tag">GEN</span><span class="tag">WEB</span
+                ><span class="tag">LOOK</span></span
+              >
+            </div>
+          </div>
+        </div>
+
+        <div class="card" data-cat="feature">
+          <div class="rank">5</div>
+          <div>
+            <h3>Progressive tile / scanline render</h3>
+            <p>
+              Show the image building up tile-by-tile as the workers finish, not a spinner. Big
+              perceived-speed win, and it lets you abort early when the composition is obviously
+              wrong.
+            </p>
+            <div class="meta">
+              <span class="demand" data-n="3"></span>
+              <span class="cat">feature</span>
+              <span class="tags"
+                ><span class="tag">GEN</span><span class="tag">WEB</span
+                ><span class="tag">EDU</span></span
+              >
+            </div>
+          </div>
+        </div>
+
+        <div class="card" data-cat="export">
+          <div class="rank">6</div>
+          <div>
+            <h3>Self-describing PNG (scene + link baked into metadata)</h3>
+            <p>
+              Embed the full SDL source and the share URL in the PNG's tEXt/EXIF chunks. The image
+              becomes the share unit: drag it back into the app to re-open the exact scene. Three
+              personas converged on this.
+            </p>
+            <div class="meta">
+              <span class="demand" data-n="3"></span>
+              <span class="cat">export</span>
+              <span class="tags"
+                ><span class="tag">GEN</span><span class="tag">NEW</span
+                ><span class="tag">MOB</span></span
+              >
+            </div>
+          </div>
+        </div>
+
+        <div class="card" data-cat="editor">
+          <div class="rank">7</div>
+          <div>
+            <h3>Editor hover intelligence: peek-definition + keyword glossary</h3>
+            <p>
+              Hover a <code>#declare</code>'d identifier to see its definition (LSP-style), and
+              hover a keyword like <code>phong</code> or <code>area_light</code> for a two-sentence
+              plain-English explainer, so nobody tab-hops to the docs.
+            </p>
+            <div class="meta">
+              <span class="demand" data-n="3"></span>
+              <span class="cat">editor</span>
+              <span class="tags"
+                ><span class="tag">VET</span><span class="tag">EDU</span
+                ><span class="tag">NEW</span></span
+              >
+            </div>
+          </div>
+        </div>
+
+        <div class="card" data-cat="debugging">
+          <div class="rank">8</div>
+          <div>
+            <h3>Render stats / profiling panel</h3>
+            <p>
+              Expose the stats POV-Ray already emits (render-time breakdown, object/bounding counts,
+              photon map size) plus a per-object ray-cost heatmap and a pixel/luminance histogram,
+              so you know what to optimize.
+            </p>
+            <div class="meta">
+              <span class="demand" data-n="3"></span>
+              <span class="cat">debugging</span>
+              <span class="tags"
+                ><span class="tag">VET</span><span class="tag">GEN</span
+                ><span class="tag">MATH</span></span
+              >
+            </div>
+          </div>
+        </div>
+
+        <div class="card" data-cat="editor">
+          <div class="rank">9</div>
+          <div>
+            <h3>Insertable snippet / macro library + shape palette</h3>
+            <p>
+              A tagged stash of reusable blocks (CSG primitives, camera rigs, glass, noise macros)
+              you insert by name, plus a beginner-friendly clickable palette of shapes that drops in
+              working snippets.
+            </p>
+            <div class="meta">
+              <span class="demand" data-n="3"></span>
+              <span class="cat">editor</span>
+              <span class="tags"
+                ><span class="tag">GEN</span><span class="tag">NEW</span
+                ><span class="tag">OSS</span></span
+              >
+            </div>
+          </div>
+        </div>
+
+        <div class="card" data-cat="community">
+          <div class="rank">10</div>
+          <div>
+            <h3>Community gallery / remix showcase</h3>
+            <p>
+              A public wall of user renders, each with one-click "open in editor" so newcomers
+              always have something cool to tinker with. Doubles as an instructor's grading roster
+              and a contributor showcase.
+            </p>
+            <div class="meta">
+              <span class="demand" data-n="3"></span>
+              <span class="cat">community</span>
+              <span class="tags"
+                ><span class="tag">NEW</span><span class="tag">EDU</span
+                ><span class="tag">OSS</span></span
+              >
+            </div>
+          </div>
+        </div>
+
+        <div class="card" data-cat="feature">
+          <div class="rank">11</div>
+          <div>
+            <h3>Embeddable <code>&lt;povrayer-scene&gt;</code> web component</h3>
+            <p>
+              One script tag + a custom element (<code>src</code>, <code>width</code>,
+              <code>quality</code> attrs) renders a live scene inline on any site or docs page. The
+              "CodePen for ray tracing" play, and a natural growth loop.
+            </p>
+            <div class="meta">
+              <span class="demand" data-n="2"></span>
+              <span class="cat">feature</span>
+              <span class="tags"><span class="tag">WEB</span><span class="tag">OSS</span></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" data-cat="export">
+          <div class="rank">12</div>
+          <div>
+            <h3>Parameter sweep to contact sheet / batch ZIP</h3>
+            <p>
+              Pick a <code>#declare</code> scalar, set start/end/step, and batch-render a labelled
+              grid (or a numbered ZIP of frames) so you see the whole parameter space at once,
+              ffmpeg-ready.
+            </p>
+            <div class="meta">
+              <span class="demand" data-n="2"></span>
+              <span class="cat">export</span>
+              <span class="tags"><span class="tag">GEN</span><span class="tag">MATH</span></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" data-cat="feature">
+          <div class="rank">13</div>
+          <div>
+            <h3>Multi-file <code>.inc</code> workspace (tabs)</h3>
+            <p>
+              Create and edit several named include files in a tabbed workspace and
+              <code>#include</code> them, so big scenes split into reusable libraries without
+              flattening everything into one buffer.
+            </p>
+            <div class="meta">
+              <span class="demand" data-n="2"></span>
+              <span class="cat">feature</span>
+              <span class="tags"><span class="tag">VET</span><span class="tag">GEN</span></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" data-cat="feature">
+          <div class="rank">14</div>
+          <div>
+            <h3>Live material preview sphere</h3>
+            <p>
+              A small always-rendering reference shape (sphere/plane/cube) that shows the
+              texture/finish block under the cursor, so you iterate a material without paying for a
+              full-scene re-render.
+            </p>
+            <div class="meta">
+              <span class="demand" data-n="2"></span>
+              <span class="cat">feature</span>
+              <span class="tags"><span class="tag">VET</span><span class="tag">LOOK</span></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" data-cat="sharing">
+          <div class="rank">15</div>
+          <div>
+            <h3>Quality + aspect-ratio presets</h3>
+            <p>
+              One-tap draft / hq / print quality profiles (also addressable as a URL param for
+              embeds and CI), plus social aspect presets (1:1, 9:16, 4:5) so nobody does pixel math
+              before posting.
+            </p>
+            <div class="meta">
+              <span class="demand" data-n="2"></span>
+              <span class="cat">sharing</span>
+              <span class="tags"><span class="tag">OSS</span><span class="tag">MOB</span></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" data-cat="feature">
+          <div class="rank">16</div>
+          <div>
+            <h3>Seed control + randomize-sliders dice</h3>
+            <p>
+              Pin a random seed for reproducible variation, and a one-tap "dice" button that
+              randomizes every detected
+              <code>#declare</code> slider within its range. Great for happy accidents.
+            </p>
+            <div class="meta">
+              <span class="demand" data-n="2"></span>
+              <span class="cat">feature</span>
+              <span class="tags"><span class="tag">GEN</span><span class="tag">MOB</span></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" data-cat="editor">
+          <div class="rank">17</div>
+          <div>
+            <h3>Click-to-edit color picker</h3>
+            <p>
+              Click an <code>rgb &lt;0.8, 0.2, 0.1&gt;</code> triple to open a real color wheel that
+              writes the decimals back. A classic beginner brick-wall removed; only one persona
+              named it, but it is a perennial high-value ask.
+            </p>
+            <div class="meta">
+              <span class="demand" data-n="1"></span>
+              <span class="cat">editor</span>
+              <span class="tags"><span class="tag">NEW</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <h2>The long tail, by category</h2>
+      <p class="sub" style="margin-bottom: 18px">
+        Strong ideas that mostly came from a single specialist persona. These are where povrayer
+        could go deep for a specific audience rather than wide for everyone.
+      </p>
+
+      <div class="group" data-cat="performance">
+        <h4>Performance &amp; WASM engineering <small>WEB</small></h4>
+        <ul>
+          <li>
+            <b>WebGPU acceleration path</b><span class="by">WEB</span
+            ><span class="r"
+              >Offload BVH traversal + shading to a compute pipeline when
+              <code>navigator.gpu</code> exists; falls back to WASM threads. The biggest single
+              throughput multiplier in the browser.</span
+            >
+          </li>
+          <li>
+            <b>OPFS render cache + offline PWA</b><span class="by">WEB</span
+            ><span class="r"
+              >Persist finished renders keyed on a scene hash to the Origin Private File System;
+              reopening a scene skips the trace and the PWA works offline.</span
+            >
+          </li>
+          <li>
+            <b>Non-blocking export (WebCodecs / OffscreenCanvas)</b><span class="by">WEB</span
+            ><span class="r"
+              ><code>VideoEncoder</code> for far faster, smaller WebM/MP4, and move
+              compositing/encoding to an OffscreenCanvas worker so the tab never freezes.</span
+            >
+          </li>
+          <li>
+            <b>JS SDK (postMessage / npm)</b><span class="by">WEB</span
+            ><span class="r"
+              >A thin typed <code>render(sdl, opts): Promise&lt;ImageBitmap&gt;</code> wrapper so CI
+              and other SPAs can drive renders headlessly.</span
+            >
+          </li>
+        </ul>
+      </div>
+
+      <div class="group" data-cat="feature">
+        <h4>Look-dev &amp; materials <small>LOOK</small></h4>
+        <ul>
+          <li>
+            <b>HDRI / IBL environment browser</b><span class="by">LOOK</span
+            ><span class="r"
+              >Drag a lat-long EXR/HDR onto a mini sphere and swap lighting environments without
+              touching SDL.</span
+            >
+          </li>
+          <li>
+            <b>Lighting rig presets</b><span class="by">LOOK</span
+            ><span class="r"
+              >One-click 3-point studio, soft box, overcast dome, hard noon sun, each injecting
+              editable light blocks + a fitting background.</span
+            >
+          </li>
+          <li>
+            <b>Tone-mapping &amp; exposure (post)</b><span class="by">LOOK</span
+            ><span class="r"
+              >Non-destructive exposure EV, highlight rolloff, shadow lift applied to the buffer
+              before display, no re-render.</span
+            >
+          </li>
+          <li>
+            <b>Color management</b><span class="by">LOOK</span
+            ><span class="r"
+              >Explicit sRGB vs linear toggle, gamma override, and an output LUT (.cube) slot to
+              preview a P3/ACES look.</span
+            >
+          </li>
+          <li>
+            <b>Turntable orbit preset</b><span class="by">LOOK</span
+            ><span class="r"
+              >One-click 360-degree camera orbit around a selected object at N frames, straight to
+              GIF/APNG.</span
+            >
+          </li>
+          <li>
+            <b>Photometric area-light editor</b><span class="by">LOOK</span
+            ><span class="r"
+              >GUI for <code>area_light</code> size,
+              <code>fade_distance</code>/<code>fade_power</code>, photons, with a live falloff-curve
+              preview.</span
+            >
+          </li>
+          <li>
+            <b>Material library export / import</b><span class="by">LOOK</span
+            ><span class="r"
+              >Save a palette of texture/finish blocks as a shareable bundle that travels with the
+              scene link.</span
+            >
+          </li>
+        </ul>
+      </div>
+
+      <div class="group" data-cat="education">
+        <h4>Education &amp; visualization <small>EDU · MATH</small></h4>
+        <ul>
+          <li>
+            <b>Ray-path visualizer</b><span class="by">EDU</span
+            ><span class="r"
+              >A 2D overlay tracing camera, first-bounce, shadow, and reflected/refracted rays for a
+              clicked pixel, making light transport tactile.</span
+            >
+          </li>
+          <li>
+            <b>Render-stage accumulation</b><span class="by">EDU</span
+            ><span class="r"
+              >Toggle ambient, then +diffuse, +specular, +shadows, +reflections as separate images
+              so the lighting model is visible.</span
+            >
+          </li>
+          <li>
+            <b>Step-through renderer</b><span class="by">EDU</span
+            ><span class="r"
+              >Pause mid-frame and highlight the pixel/ray being computed, connecting the algorithm
+              to the output.</span
+            >
+          </li>
+          <li>
+            <b>Cross-section / clipping plane</b><span class="by">MATH</span
+            ><span class="r"
+              >Drag a depth handle to slice isosurfaces and reveal interior topology, with a 2D
+              contour view alongside.</span
+            >
+          </li>
+          <li>
+            <b>Assignment mode (locked scaffolding)</b><span class="by">EDU</span
+            ><span class="r"
+              >Publish a URL with read-only SDL regions and a <code>#TODO</code> students fill in,
+              keeping the exercise structure intact.</span
+            >
+          </li>
+          <li>
+            <b>Live classroom session</b><span class="by">EDU</span
+            ><span class="r"
+              >Instructor projects a URL; students watch the SDL + render update live, with a queue
+              to push their own fork to the screen.</span
+            >
+          </li>
+          <li>
+            <b>Lab worksheet export (PDF)</b><span class="by">EDU</span
+            ><span class="r"
+              >One-click PDF of the render + source + pre-embedded reflection questions.</span
+            >
+          </li>
+        </ul>
+      </div>
+
+      <div class="group" data-cat="editor">
+        <h4>Math visualization <small>MATH</small></h4>
+        <ul>
+          <li>
+            <b>LaTeX / MathJax to isosurface</b><span class="by">MATH</span
+            ><span class="r"
+              >Type a formula in math notation and transpile it to an
+              <code>isosurface { function { ... } }</code>, no manual translation.</span
+            >
+          </li>
+          <li>
+            <b>Implicit-surface template gallery</b><span class="by">MATH</span
+            ><span class="r"
+              >Named classics (Barth sextic, Togliatti quintic, Cayley cubic) preloaded with exposed
+              parameter sliders.</span
+            >
+          </li>
+          <li>
+            <b>Isosurface threshold scrubber</b><span class="by">MATH</span
+            ><span class="r"
+              >A real-time slider bound to the active isosurface's <code>threshold</code>, so
+              level-set sweeps feel like sculpting.</span
+            >
+          </li>
+          <li>
+            <b>Function plotter shorthand</b><span class="by">MATH</span
+            ><span class="r"
+              >Typing <code>z = sin(x)*cos(y)</code> generates the full surface SDL, hiding the
+              boilerplate.</span
+            >
+          </li>
+          <li>
+            <b>Gradient / function pigment builder</b><span class="by">MATH</span
+            ><span class="r">Map a scalar field to a color ramp via a GUI with live swatches.</span>
+          </li>
+          <li>
+            <b>Julia / bifurcation param-map grid</b><span class="by">MATH</span
+            ><span class="r"
+              >Render a thumbnail grid across two fractal parameters; click an interesting cell into
+              a full render.</span
+            >
+          </li>
+        </ul>
+      </div>
+
+      <div class="group" data-cat="feature">
+        <h4>Accessibility &amp; inclusion <small>A11Y</small></h4>
+        <ul>
+          <li>
+            <b>Render-status live region</b><span class="by">A11Y</span
+            ><span class="r"
+              >An <code>aria-live</code> region announcing "rendering 42%" and "render complete,
+              640x480" so non-sighted users know the image is ready.</span
+            >
+          </li>
+          <li>
+            <b>Canvas as <code>role="img"</code> + reachable download</b><span class="by">A11Y</span
+            ><span class="r"
+              >A dynamic label summarizing scene/size/time, plus a Tab-reachable Download PNG so
+              keyboard users can retrieve output.</span
+            >
+          </li>
+          <li>
+            <b>Enforced focus-visible rings</b><span class="by">A11Y</span
+            ><span class="r"
+              >A 2px, 3:1-contrast outline on every focusable control (sliders, disclosures, REPL,
+              drop zones) per WCAG 2.4.11.</span
+            >
+          </li>
+          <li>
+            <b>Color-blind-safe error cues</b><span class="by">A11Y</span
+            ><span class="r"
+              >Pair red highlights with an icon + text label so problems are not signalled by hue
+              alone.</span
+            >
+          </li>
+          <li>
+            <b>Slider keyboard precision</b><span class="by">A11Y</span
+            ><span class="r"
+              >Shift+arrow for x10 jumps and a linked numeric input to hit exact values without
+              hundreds of keystrokes.</span
+            >
+          </li>
+          <li>
+            <b>Reduced-motion-safe playback</b><span class="by">A11Y</span
+            ><span class="r"
+              >Default animate mode to paused/step under <code>prefers-reduced-motion</code> so
+              motion never ambushes.</span
+            >
+          </li>
+          <li>
+            <b>Landmarks &amp; reading order</b><span class="by">A11Y</span
+            ><span class="r"
+              >Header/main/aside/footer landmarks so screen-reader users jump between sections
+              instead of tabbing through the editor.</span
+            >
+          </li>
+          <li>
+            <b>i18n string externalization</b><span class="by">A11Y</span
+            ><span class="r"
+              >Extract UI strings to a locale file now, before the surface grows, plus a correct
+              <code>lang</code> attribute.</span
+            >
+          </li>
+          <li>
+            <b>High-contrast light mode</b><span class="by">A11Y</span
+            ><span class="r"
+              >A light, high-contrast variant with <code>prefers-contrast: more</code> for
+              photophobia exceptions and outdoor/phone use.</span
+            >
+          </li>
+        </ul>
+      </div>
+
+      <div class="group" data-cat="mobile">
+        <h4>Mobile &amp; social <small>MOB</small></h4>
+        <ul>
+          <li>
+            <b>Native share-sheet "tap to share"</b><span class="by">MOB</span
+            ><span class="r"
+              >Send the current render straight to the OS share sheet (Web Share API) for
+              Stories/Instagram without leaving the app.</span
+            >
+          </li>
+          <li>
+            <b>Pinch-to-zoom the render</b><span class="by">MOB</span
+            ><span class="r"
+              >The standard gesture to inspect detail in a high-res trace without downloading it
+              first.</span
+            >
+          </li>
+          <li>
+            <b>Swipe between code &amp; render panes</b><span class="by">MOB</span
+            ><span class="r"
+              >A horizontal swipe to switch panes feels native on a phone vs scrolling or
+              tab-tapping.</span
+            >
+          </li>
+          <li>
+            <b>Haptic buzz on render complete</b><span class="by">MOB</span
+            ><span class="r"
+              >A short vibration so you know the trace finished without staring.</span
+            >
+          </li>
+          <li>
+            <b>"Fork this" links open editable</b><span class="by">MOB</span
+            ><span class="r"
+              >Shared URLs land in an editable copy, not a read-only view, so friends start tweaking
+              instantly.</span
+            >
+          </li>
+          <li>
+            <b>Caption generator</b><span class="by">MOB</span
+            ><span class="r"
+              >Auto-suggest a shareable caption ("chrome donut floating in fog") to paste into the
+              post.</span
+            >
+          </li>
+        </ul>
+      </div>
+
+      <div class="group" data-cat="community">
+        <h4>Power-user &amp; community workflow <small>OSS</small></h4>
+        <ul>
+          <li>
+            <b>Command palette (Cmd/Ctrl+K)</b><span class="by">OSS</span
+            ><span class="r"
+              >Fuzzy search over every action (render, load example, change quality, copy link) so
+              the mouse is never required.</span
+            >
+          </li>
+          <li>
+            <b>Watch-mode CLI</b><span class="by">OSS</span
+            ><span class="r"
+              ><code>npx povrayer --watch scene.pov</code> hot-reloads on save and writes PNG to
+              disk, keeping power users in their own editor.</span
+            >
+          </li>
+          <li>
+            <b>Git-friendly project export + CI render action</b><span class="by">OSS</span
+            ><span class="r"
+              >"Download as project" emits <code>scene.pov</code> + assets + a manifest; an official
+              GitHub Action commits the rendered PNG.</span
+            >
+          </li>
+          <li>
+            <b>WASM / POV version pinning</b><span class="by">OSS</span
+            ><span class="r"
+              >A <code>?wasmVersion=</code> param + a versions manifest so scenes do not silently
+              break when the build updates.</span
+            >
+          </li>
+        </ul>
+      </div>
+
+      <div class="group" data-cat="feature">
+        <h4>Beginner onboarding &amp; misc <small>NEW · GEN · VET</small></h4>
+        <ul>
+          <li>
+            <b>Interactive "Hello, 3D World" tutorial</b><span class="by">NEW</span
+            ><span class="r"
+              >An in-app walkthrough that places a first sphere, light, and camera without leaving
+              the page.</span
+            >
+          </li>
+          <li>
+            <b>Beginner / advanced UI mode</b><span class="by">NEW</span
+            ><span class="r"
+              >Hide the REPL, thread count, and raw flags behind an "I know what I'm doing" toggle
+              for a calmer first run.</span
+            >
+          </li>
+          <li>
+            <b>Scene outline / minimap</b><span class="by">NEW</span
+            ><span class="r"
+              >A sidebar of every named object to click-jump to once a scene grows past ~50
+              lines.</span
+            >
+          </li>
+          <li>
+            <b>Named camera bookmarks</b><span class="by">GEN</span
+            ><span class="r"
+              >Store multiple <code>camera {}</code> blocks as slots and hot-swap angles without
+              touching SDL.</span
+            >
+          </li>
+          <li>
+            <b>Clock easing / curve editor</b><span class="by">VET</span
+            ><span class="r"
+              >A bezier timeline so animation easing is not just linear
+              <code>clock</code> interpolation.</span
+            >
+          </li>
+          <li>
+            <b>Output channel / pass selector</b><span class="by">VET</span
+            ><span class="r"
+              >View alpha, depth, or surface-normal passes as layers without re-rendering, like a
+              production pipeline.</span
+            >
+          </li>
+        </ul>
+      </div>
+
+      <footer>
+        Generated from a 10-agent persona panel (each gave a ranked top-10), then de-duplicated and
+        scored by cross-persona demand. Rank ties broken by breadth and impact. The filter chips
+        above narrow the consensus list and the long-tail groups by category. Nothing here is
+        implemented; it is input for prioritization.
+      </footer>
+    </div>
+
+    <script>
+      // Fill the demand meters: N gold cells out of 10.
+      for (const el of document.querySelectorAll('.demand')) {
+        const n = Number(el.dataset.n);
+        let html = '';
+        for (let i = 0; i < 10; i++) html += '<i class="' + (i < n ? 'f' : '') + '"></i>';
+        el.innerHTML = html + '<b>' + n + '/10 personas</b>';
+      }
+
+      // Category filter: toggle cards + long-tail groups.
+      const filters = document.getElementById('filters');
+      const chips = [...filters.querySelectorAll('.chip')];
+      const targets = [...document.querySelectorAll('.card, .group')];
+      filters.addEventListener('click', (e) => {
+        const chip = e.target.closest('.chip');
+        if (!chip) return;
+        chips.forEach((c) => c.classList.toggle('on', c === chip));
+        const cat = chip.dataset.cat;
+        for (const t of targets) {
+          t.classList.toggle('hidden', cat !== 'all' && t.dataset.cat !== cat);
+        }
+      });
+    </script>
+  </body>
+</html>

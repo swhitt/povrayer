@@ -16,42 +16,17 @@ import { encodeState, decodeState } from './permalink.js';
 import { parseRenderParams } from './url-params.js';
 import { parseFlags } from './flags.js';
 import { formatStats } from './stats.js';
-import { encodeGif } from './gif.js';
-import { encodeApng } from './apng.js';
 import { buildPool, complete, applyCompletion, signatureText } from './complete.js';
 import { createAssetDrop } from './asset-drop.js';
 import { addSnapshot, snapshotPreview, relativeTime, lineDelta } from './history.js';
 import { parseDeclaredNumbers, numberTokenAt, scrubStep, formatScrubbed } from './sliders.js';
 import { CONTROL_FIELDS, coerceSaved, coerceParam, coerceHydrate } from './settings.js';
-import {
-  pickWebmMime,
-  triggerDownload,
-  downloadPngFrames,
-  recordCanvasWebm,
-} from './anim-export.js';
+import { triggerDownload } from './anim-export.js';
+import { createPlayer } from './player.js';
+import { ensureCrossOriginIsolation } from './coi.js';
 
 const isoWarning = document.getElementById('iso-warning');
-if (crossOriginIsolated) {
-  sessionStorage.removeItem('coi-retry');
-  /* c8 ignore start -- COI service-worker fallback: the test harness is always cross-origin isolated, and the SW controllerchange/reload race is non-deterministic */
-} else {
-  isoWarning.hidden = false;
-  // coi-serviceworker first-visit race: on a fast load the SW can install,
-  // activate, and claim() the page before the script's reload branches run,
-  // leaving the page controlled but not isolated and never self-reloading.
-  // A controlled page does get the injected headers on its next load, so
-  // reload as soon as the SW takes (or already has) control; the
-  // sessionStorage guard stops a loop when isolation fails for some other
-  // reason.
-  const coiRetry = () => {
-    if (sessionStorage.getItem('coi-retry')) return;
-    sessionStorage.setItem('coi-retry', '1');
-    location.reload();
-  };
-  if (navigator.serviceWorker?.controller) coiRetry();
-  else navigator.serviceWorker?.addEventListener('controllerchange', coiRetry);
-}
-/* c8 ignore stop -- closes the ignore block opened above */
+ensureCrossOriginIsolation({ warningEl: isoWarning });
 
 // Page elements. The `/** @type {...} */ (...)` casts pin each lookup to the
 // concrete element it is in index.html (verified against the markup) so checkJs
@@ -123,10 +98,10 @@ const modeAnimateBtn = /** @type {HTMLButtonElement} */ (document.getElementById
 const framesInput = /** @type {HTMLInputElement} */ (document.getElementById('frames'));
 const fpsInput = /** @type {HTMLInputElement} */ (document.getElementById('fps'));
 const playerCanvas = /** @type {HTMLCanvasElement} */ (document.getElementById('player-canvas'));
-const playerControls = document.getElementById('player-controls');
+const playerControls = /** @type {HTMLElement} */ (document.getElementById('player-controls'));
 const playBtn = /** @type {HTMLButtonElement} */ (document.getElementById('play-btn'));
 const scrubber = /** @type {HTMLInputElement} */ (document.getElementById('scrubber'));
-const frameReadout = document.getElementById('frame-readout');
+const frameReadout = /** @type {HTMLElement} */ (document.getElementById('frame-readout'));
 const loopBtn = /** @type {HTMLButtonElement} */ (document.getElementById('loop-btn'));
 const exportBtn = /** @type {HTMLButtonElement} */ (document.getElementById('export-btn'));
 const exportFormat = /** @type {HTMLSelectElement} */ (document.getElementById('export-format'));
@@ -1711,6 +1686,7 @@ function setStatus(text, state) {
   status.dataset.state = state;
   statusLastAt = performance.now();
   syncSpinner();
+  applyTabState();
 }
 
 function setBusyStatus(text) {
@@ -1750,6 +1726,41 @@ function syncSpinner() {
   statusSpinner.hidden = !inFlight;
   stopBtn.hidden = !inFlight;
 }
+
+// ---- render-state tab chrome (favicon + title) ----
+// An explicit render runs 5-15s+, exactly when a tinkerer tabs away, so the
+// tab itself carries the state: the brand-orb favicon's gold core dims to
+// --dim grey while a render is in flight (gold = the instrument is ready,
+// the one sanctioned accent use), and the title narrates busy and, while the
+// tab is hidden, the done/error payoff. Inline data URIs only (COEP-safe, no
+// fetch); both variants come from one template so the resting icon stays
+// byte-identical to the markup's.
+
+const faviconLink = /** @type {HTMLLinkElement} */ (document.querySelector('link[rel="icon"]'));
+const BASE_TITLE = document.title;
+/** @param {string} core hex (no #) for the orb's bright core stop */
+const orbIcon = (core) =>
+  `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3CradialGradient id='g' cx='.33' cy='.28' r='.75'%3E%3Cstop offset='0' stop-color='%23fff'/%3E%3Cstop offset='.38' stop-color='%23${core}'/%3E%3Cstop offset='.78' stop-color='%2315151a'/%3E%3C/radialGradient%3E%3Ccircle cx='8' cy='8' r='8' fill='url(%23g)'/%3E%3C/svg%3E`;
+const ORB_READY = orbIcon('ffd23f'); // --accent
+const ORB_BUSY = orbIcon('98a1ab'); // --dim
+
+// Recomputed from the status line's state on every setStatus AND on every
+// visibilitychange: returning to a tab that finished while hidden restores
+// the resting title without any one-shot flag to strand.
+function applyTabState() {
+  const state = status.dataset.state;
+  faviconLink.href = state === 'busy' ? ORB_BUSY : ORB_READY;
+  if (state === 'busy') {
+    document.title = 'rendering… · povrayer';
+  } else if (document.hidden && (state === 'done' || state === 'error')) {
+    // Finished while hidden: surface the payoff/error line where the user
+    // can actually see it (the tab strip).
+    document.title = `${status.textContent} · povrayer`;
+  } else {
+    document.title = BASE_TITLE;
+  }
+}
+document.addEventListener('visibilitychange', applyTabState);
 
 // ---- progress bar ----
 // Indeterminate sweep from render start. The bar only leaves the sweep once
@@ -1872,12 +1883,26 @@ function setLogSummary(label) {
   logCount.textContent = n ? `(${n} lines)` : '';
 }
 
-// ---- image zoom (fit / 1:1) ----
+// ---- image zoom (fit / 1:1 / 4x) ----
 // The meta-row button is the accessible path; clicking the image is the
-// bonus pointer shortcut. .zoom-1x styling (max-width: none, pixelated,
-// plate overflow) lives in styles.css.
+// bonus pointer shortcut. Both cycle fit -> 1:1 -> 4x -> fit; the image
+// click additionally anchors the zoom on the clicked point, and a drag pans
+// the zoomed image (see the plate pointer handlers below). The 4x step is
+// the pixel-peep: sub-pixel options (the 0.05 antialias threshold) are
+// invisible without it. .zoom-1x styling (max-width: none, pixelated, plate
+// overflow) lives in styles.css and covers both zoomed steps; the 4x width
+// is written inline because it derives from naturalWidth, which CSS can't
+// read.
 
-let zoom1x = false;
+const outputPlate = /** @type {HTMLElement} */ (document.getElementById('output-plate'));
+
+// 0 = fit (CSS max-width scaling), 1 = 1:1 device pixels, 2 = 4x pixel-peep.
+let zoomLevel = 0;
+
+// Set when a press on the image/plate was consumed as a drag-pan or a
+// hold-to-peek: the browser still synthesizes a click on release, and that
+// click must not ALSO cycle the zoom. Consumed by the plate click handler.
+let suppressClick = false;
 
 // Live drafts render downscaled (DRAFT_MAX_EDGE) but must not shrink the hero
 // plate: the page below would pump in height on every keystroke between a full
@@ -1889,8 +1914,13 @@ let zoom1x = false;
 /** @type {number | null} */
 let heldWidth = null;
 
-function applyHeldWidth() {
-  output.style.width = heldWidth !== null && !zoom1x ? `${heldWidth}px` : '';
+// One owner for #output's inline width: the 4x peep beats a draft's footprint
+// hold (a zoom is an explicit inspection request), and the hold only applies
+// at fit (1:1/4x promise device pixels, which a held upscale contradicts).
+function applyImageWidth() {
+  if (zoomLevel === 2) output.style.width = `${output.naturalWidth * 4}px`;
+  else if (heldWidth !== null && zoomLevel === 0) output.style.width = `${heldWidth}px`;
+  else output.style.width = '';
 }
 
 function updateZoomLabel() {
@@ -1898,12 +1928,12 @@ function updateZoomLabel() {
     zoomBtn.hidden = true;
     return;
   }
-  // aria-pressed exposes the toggle state (1:1 engaged) beyond the visible
-  // label, which only some AT surfaces read aloud.
-  zoomBtn.setAttribute('aria-pressed', String(zoom1x));
-  if (zoom1x) {
+  // aria-pressed stays a boolean ("a zoom step is engaged"); WHICH step is
+  // engaged rides in the visible label, which is also the accessible name.
+  zoomBtn.setAttribute('aria-pressed', String(zoomLevel > 0));
+  if (zoomLevel > 0) {
     zoomBtn.hidden = false;
-    zoomBtn.textContent = '1:1';
+    zoomBtn.textContent = zoomLevel === 2 ? '4×' : '1:1';
     return;
   }
   const pct = Math.round((output.clientWidth / output.naturalWidth) * 100) || 100;
@@ -1915,19 +1945,182 @@ function updateZoomLabel() {
   zoomBtn.textContent = `fit (${pct}%)`;
 }
 
-function toggleZoom() {
-  zoom1x = !zoom1x;
-  output.classList.toggle('zoom-1x', zoom1x);
-  applyHeldWidth(); // 1:1 suspends a draft's footprint hold; fit restores it
+function cycleZoom() {
+  zoomLevel = (zoomLevel + 1) % 3;
+  output.classList.toggle('zoom-1x', zoomLevel > 0);
+  // zoom-4x only flips the cursor (zoom-in at 1:1, where the next click goes
+  // further IN; zoom-out at the last step). The shared .zoom-1x block carries
+  // everything else for both steps.
+  output.classList.toggle('zoom-4x', zoomLevel === 2);
+  applyImageWidth();
   updateZoomLabel();
 }
 
-zoomBtn.addEventListener('click', toggleZoom);
-output.addEventListener('click', () => {
-  if (!output.hidden) toggleZoom();
+// Scroll the plate so the image-space fraction (fx, fy) lands at the plate
+// viewport's center. Out-of-range targets clamp to the scroll bounds (native
+// scrollLeft/scrollTop behavior), so a fit-sized image just stays put.
+function anchorZoom(fx, fy) {
+  outputPlate.scrollLeft = fx * output.clientWidth - outputPlate.clientWidth / 2;
+  outputPlate.scrollTop = fy * output.clientHeight - outputPlate.clientHeight / 2;
+}
+
+zoomBtn.addEventListener('click', () => {
+  cycleZoom();
+  // The button carries no click point; anchor each zoomed step on the center.
+  if (zoomLevel > 0) anchorZoom(0.5, 0.5);
 });
-output.addEventListener('load', () => requestAnimationFrame(updateZoomLabel));
+
+// The zoom-cycle click lives on the PLATE, not the image: while a drag-pan
+// has pointer capture, the browser retargets the synthesized click at the
+// capturing plate, so an image-only listener would miss the under-4px presses
+// that must still count as clicks. Image-relative bounds gate it back to
+// "clicks on the render" (the surrounding mat is not a zoom control), and the
+// click point becomes the zoom anchor so the pixel under the cursor stays
+// under the cursor.
+outputPlate.addEventListener('click', (e) => {
+  if (suppressClick) {
+    suppressClick = false;
+    return;
+  }
+  if (output.hidden) return;
+  const r = output.getBoundingClientRect();
+  if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) {
+    return;
+  }
+  const fx = (e.clientX - r.left) / r.width;
+  const fy = (e.clientY - r.top) / r.height;
+  cycleZoom();
+  if (zoomLevel > 0) anchorZoom(fx, fy);
+});
+
+// ---- drag-to-pan while zoomed ----
+// Mouse/pen only: on touch the plate's native overflow scrolling already
+// pans, and capturing the pointer would fight it. Presses that move under
+// 4px stay clicks (the zoom cycle above); past it the press is a pan and the
+// release's click is suppressed.
+
+/** @type {{ x: number, y: number, left: number, top: number, moved: boolean } | null} */
+let panState = null;
+
+outputPlate.addEventListener('pointerdown', (e) => {
+  if (zoomLevel === 0 || e.pointerType === 'touch' || e.button !== 0) return;
+  panState = {
+    x: e.clientX,
+    y: e.clientY,
+    left: outputPlate.scrollLeft,
+    top: outputPlate.scrollTop,
+    moved: false,
+  };
+  outputPlate.setPointerCapture(e.pointerId);
+});
+
+outputPlate.addEventListener('pointermove', (e) => {
+  if (!panState) return;
+  const dx = e.clientX - panState.x;
+  const dy = e.clientY - panState.y;
+  if (!panState.moved && Math.hypot(dx, dy) < 4) return;
+  panState.moved = true;
+  cancelPeekHold(); // the press is a pan, not a hold-to-peek
+  outputPlate.classList.add('panning'); // grabbing cursor while actually moving
+  outputPlate.scrollLeft = panState.left - dx;
+  outputPlate.scrollTop = panState.top - dy;
+});
+
+function endPan() {
+  if (!panState) return;
+  if (panState.moved) suppressClick = true;
+  panState = null;
+  outputPlate.classList.remove('panning');
+}
+
+// One release path for every way a press on the plate can end. pointerleave
+// covers the uncaptured (fit-mode) press dragged off the plate and released
+// outside, where pointerup never fires here and a peek would otherwise stick.
+function endPlatePress() {
+  endPan();
+  cancelPeekHold();
+  endPeek();
+}
+outputPlate.addEventListener('pointerup', endPlatePress);
+outputPlate.addEventListener('pointercancel', endPlatePress);
+outputPlate.addEventListener('pointerleave', endPlatePress);
+
+output.addEventListener('load', () =>
+  requestAnimationFrame(() => {
+    applyImageWidth(); // the 4x width derives from naturalWidth, which just changed
+    updateZoomLabel();
+  })
+);
 window.addEventListener('resize', updateZoomLabel);
+
+// ---- hold-to-peek the previous render (A/B compare) ----
+// The core loop is tweak -> render -> squint at what changed, so showImage
+// keeps ONE step of image history (prevUrl). Holding Alt+B, or press-and-
+// holding the image itself, swaps the previous render in; release restores
+// the current one. Drafts and full renders both flow through showImage, so
+// the compare works draft-to-draft and full-to-full alike.
+
+// The hold threshold separating a peek press from a zoom-cycle click.
+const PEEK_HOLD_MS = 350;
+/** @type {string | null} */
+let prevUrl = null;
+let peeking = false;
+let peekStatusText = '';
+/** @type {ReturnType<typeof setTimeout> | null} */
+let peekTimer = null;
+
+function startPeek() {
+  if (peeking || !prevUrl || output.hidden) return;
+  peeking = true;
+  // Direct textContent writes (not setStatus): the peek is a momentary
+  // overlay on whatever the status machinery is doing, and must put the
+  // exact text back on release without disturbing its state/throttle
+  // bookkeeping.
+  peekStatusText = status.textContent;
+  status.textContent = 'previous render';
+  output.src = prevUrl;
+}
+
+function endPeek() {
+  if (!peeking) return;
+  peeking = false;
+  status.textContent = peekStatusText;
+  output.src = lastUrl;
+}
+
+function cancelPeekHold() {
+  clearTimeout(peekTimer);
+  peekTimer = null;
+}
+
+// Pointer path: engage only after a hold, so a quick press stays the zoom
+// click and a drag past the pan threshold cancels the hold (pointermove
+// above). The release is endPlatePress (the press bubbles to the plate).
+output.addEventListener('pointerdown', () => {
+  cancelPeekHold();
+  peekTimer = setTimeout(() => {
+    peekTimer = null;
+    suppressClick = true; // the long press's release must not cycle the zoom
+    startPeek();
+  }, PEEK_HOLD_MS);
+});
+
+// Keyboard path, document-level so it works while typing in the editor.
+// e.code, not e.key: with Alt held macOS composes '∫', and preventDefault
+// keeps that character out of the focused field. Key-repeat re-fires keydown
+// for the whole hold; startPeek's `peeking` guard absorbs it.
+document.addEventListener('keydown', (e) => {
+  if (e.altKey && e.code === 'KeyB') {
+    e.preventDefault();
+    startPeek();
+  }
+});
+document.addEventListener('keyup', (e) => {
+  if (e.code === 'KeyB') endPeek();
+});
+// Alt+Tab away mid-peek would otherwise strand the previous frame on screen
+// (the keyup lands in another window).
+window.addEventListener('blur', endPeek);
 
 // ---- error -> editor line jump ----
 
@@ -2157,16 +2350,21 @@ let lastUrl = null;
 // render's silence is wasm startup, later renders go straight to parsing.
 let engineSeen = false;
 
-// One image-swap path shared by the explicit render and the live draft: a
-// single lastUrl revoke, and the zoom label recomputes off the #output 'load'
-// listener. `holdWidth` (drafts only) pins the display width so the downscaled
-// preview keeps the full render's footprint; full renders omit it, restoring
-// natural sizing.
+// One image-swap path shared by the explicit render and the live draft: the
+// zoom label recomputes off the #output 'load' listener, and the outgoing
+// image survives one generation as prevUrl (the hold-to-peek A/B frame, one
+// blob of memory) before the revoke. `holdWidth` (drafts only) pins the
+// display width so the downscaled preview keeps the full render's footprint;
+// full renders omit it, restoring natural sizing.
 function showImage(blobUrl, alt, holdWidth = null) {
-  if (lastUrl) URL.revokeObjectURL(lastUrl);
+  // A frame landing mid-peek must win over the release's restore: settle the
+  // peek first, so the swap below is the last word on output.src.
+  endPeek();
+  if (prevUrl) URL.revokeObjectURL(prevUrl);
+  prevUrl = lastUrl;
   lastUrl = blobUrl;
   heldWidth = holdWidth;
-  applyHeldWidth();
+  applyImageWidth();
   output.src = blobUrl;
   output.hidden = false;
   playerCanvas.hidden = true;
@@ -2592,281 +2790,16 @@ async function runAnimateRender() {
   }
 }
 
-// ---- inline frame player ----
-// Page-agnostic-ish playback over the bitmaps render-client hands back: a
-// canvas, scrubber, play/pause, loop, fps, and WebM/PNG export. It owns the
-// playback assets and frees them (revoke blobUrls, close bitmaps) on the next
-// load().
-function createPlayer() {
-  const ctx = playerCanvas.getContext('2d');
-  let bitmaps = [];
-  let urls = [];
-  // The raw per-frame PNG bytes, kept for the lossless APNG export (which repacks
-  // their already-compressed pixel data; no canvas round-trip, alpha preserved).
-  /** @type {Uint8Array[]} */
-  let pngFrames = [];
-  // A detached canvas reused to read RGBA back out of the bitmaps for the GIF
-  // encoder (the visible playerCanvas stays untouched mid-playback).
-  /** @type {HTMLCanvasElement | null} */
-  let exportCanvas = null;
-  let idx = 0;
-  let fps = 12;
-  let loop = true;
-  let playing = false;
-  let rafHandle = null;
-  let lastAdvance = 0;
-
-  // One merged readout ("7 / 24 · 12 fps"): frame position and playback rate
-  // share the span (the status line's · convention) so the two values can't
-  // run together as one garbled number string.
-  function updateReadout() {
-    frameReadout.textContent = `${bitmaps.length ? idx + 1 : 0} / ${bitmaps.length} · ${fps} fps`;
-  }
-
-  function draw(i) {
-    idx = i;
-    ctx.drawImage(bitmaps[i], 0, 0);
-    scrubber.value = String(i);
-    // aria-valuetext so a screen reader announces the 1-based "frame 2 of 3"
-    // that matches the visible readout, not the raw 0-indexed slider value.
-    scrubber.setAttribute('aria-valuetext', `frame ${i + 1} of ${bitmaps.length}`);
-    updateReadout();
-  }
-
-  function setPlayLabel() {
-    playBtn.textContent = playing ? 'Pause' : 'Play';
-    playBtn.setAttribute('aria-pressed', String(playing));
-  }
-
-  function pause() {
-    if (rafHandle !== null) {
-      cancelAnimationFrame(rafHandle);
-      rafHandle = null;
-    }
-    playing = false;
-    setPlayLabel();
-  }
-
-  function tick(now) {
-    if (!playing) return;
-    const interval = 1000 / fps;
-    if (now - lastAdvance >= interval) {
-      // Accumulate the interval instead of snapping lastAdvance to `now`:
-      // snapping rounds every step up to the next rAF tick, which biased
-      // playback slow (a 24fps target measured ~21.5fps) and made the preview
-      // drift behind the exported WebM. After a long stall (backgrounded tab)
-      // resync rather than replay the backlog as a burst.
-      lastAdvance += interval;
-      if (now - lastAdvance >= interval) lastAdvance = now;
-      let next = idx + 1;
-      if (next >= bitmaps.length) {
-        if (!loop) {
-          pause();
-          return;
-        }
-        next = 0;
-      }
-      draw(next);
-    }
-    rafHandle = requestAnimationFrame(tick);
-  }
-
-  function play() {
-    if (!bitmaps.length || playing) return;
-    // Restart from the top when paused on the last frame of a non-looping clip.
-    if (!loop && idx >= bitmaps.length - 1) draw(0);
-    playing = true;
-    setPlayLabel();
-    lastAdvance = performance.now();
-    rafHandle = requestAnimationFrame(tick);
-  }
-
-  function toggle() {
-    if (playing) pause();
-    else play();
-  }
-
-  function seek(i) {
-    if (!bitmaps.length) return;
-    pause();
-    draw(clamp(i, 0, bitmaps.length - 1));
-  }
-
-  function setFps(n) {
-    fps = n;
-    updateReadout();
-  }
-
-  function setLoop(on) {
-    loop = on;
-    loopBtn.setAttribute('aria-pressed', String(on));
-  }
-
-  function destroy() {
-    pause();
-    for (const u of urls) URL.revokeObjectURL(u);
-    for (const b of bitmaps) b.close();
-    urls = [];
-    bitmaps = [];
-  }
-
-  function load(result, playbackFps) {
-    destroy();
-    bitmaps = result.bitmaps;
-    urls = result.blobUrls;
-    pngFrames = result.frames;
-    idx = 0;
-    setFps(playbackFps);
-    playerCanvas.width = bitmaps[0].width;
-    playerCanvas.height = bitmaps[0].height;
-    // Replace the static "animation playback" placeholder with the real shape
-    // once frames load, mirroring the REPL inline player's labelling.
-    playerCanvas.setAttribute(
-      'aria-label',
-      `animation, ${bitmaps[0].width}×${bitmaps[0].height}, ${bitmaps.length} frames`
-    );
-    scrubber.max = String(bitmaps.length - 1);
-    scrubber.value = '0';
-    draw(0);
-    playerControls.hidden = false;
-    // Autoplay only when motion is welcome; otherwise wait for the play button.
-    if (matchMedia('(prefers-reduced-motion: no-preference)').matches) play();
-    else setPlayLabel();
-  }
-
-  // Wrap encoder output bytes in a Blob and trigger a download, revoking the URL
-  // after a grace window (the click navigates synchronously; the timeout frees it).
-  /** @param {Uint8Array} bytes @param {string} mime @param {string} name */
-  function saveBytes(bytes, mime, name) {
-    const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
-    triggerDownload(url, name);
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
-  }
-
-  // Read every frame's RGBA back out of the bitmaps via a detached canvas, for
-  // the GIF encoder. Each getImageData call allocates a fresh buffer, so the
-  // per-frame Uint8Array views never alias each other.
-  /** @returns {{ data: Uint8Array }[]} */
-  function frameRgba() {
-    const w = bitmaps[0].width;
-    const h = bitmaps[0].height;
-    if (!exportCanvas) exportCanvas = document.createElement('canvas');
-    exportCanvas.width = w;
-    exportCanvas.height = h;
-    const ectx = exportCanvas.getContext('2d', { willReadFrequently: true });
-    return bitmaps.map((bm) => {
-      ectx.clearRect(0, 0, w, h);
-      ectx.drawImage(bm, 0, 0);
-      const { data } = ectx.getImageData(0, 0, w, h);
-      return { data: new Uint8Array(data.buffer) };
-    });
-  }
-
-  // Step through every frame once, holding each for one fps interval, so the
-  // captureStream recorder sees real canvas updates over wall-clock time.
-  function playOnce() {
-    return new Promise((resolve) => {
-      let i = 0;
-      const step = () => {
-        if (i >= bitmaps.length) {
-          resolve();
-          return;
-        }
-        draw(i);
-        i += 1;
-        setTimeout(step, 1000 / fps);
-      };
-      step();
-    });
-  }
-
-  function canWebm() {
-    return pickWebmMime() !== null;
-  }
-
-  // WebM via MediaRecorder over the player canvas: the one lossy/codec path (GIF +
-  // APNG are deterministic client-side encodes). recordCanvasWebm runs playOnce in
-  // real time so the recorder captures every frame, so it takes ~clip-length.
-  async function exportWebm() {
-    const url = await recordCanvasWebm(playerCanvas, fps, pickWebmMime(), playOnce);
-    triggerDownload(url, 'animation.webm');
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
-  }
-
-  // Animated GIF: a single global palette (median-cut) over the frames' RGBA,
-  // looping unless loop is off. The rAF yield lets the 'exporting…' label paint
-  // before the synchronous encode blocks the main thread.
-  async function exportGif() {
-    await new Promise((r) => requestAnimationFrame(r));
-    const bytes = encodeGif(frameRgba(), {
-      width: bitmaps[0].width,
-      height: bitmaps[0].height,
-      delayCs: Math.max(1, Math.round(100 / fps)),
-      numPlays: loop ? 0 : 1,
-    });
-    saveBytes(bytes, 'image/gif', 'animation.gif');
-  }
-
-  // Lossless animated PNG: repacks the source PNGs' compressed pixel data, so it
-  // keeps full color + alpha. Carries a .png extension (APNG is a PNG superset).
-  async function exportApng() {
-    await new Promise((r) => requestAnimationFrame(r));
-    const bytes = encodeApng(pngFrames, {
-      delayNum: Math.max(1, Math.round(1000 / fps)),
-      delayDen: 1000,
-      numPlays: loop ? 0 : 1,
-    });
-    saveBytes(bytes, 'image/apng', 'animation.png');
-  }
-
-  let exporting = false;
-
-  // The export entry point: dispatch on the chosen format. PNG frames are
-  // synchronous (no relabel needed); WebM with no codec degrades to PNG frames.
-  // The heavy paths (webm/gif/apng) share one re-entrancy guard + 'exporting…'
-  // relabel so a second click can't start a second encode over the same frames.
-  /** @param {string} format gif | apng | webm | png */
-  async function exportAs(format) {
-    if (!bitmaps.length || exporting) return;
-    if (format === 'png' || (format === 'webm' && !canWebm())) {
-      downloadPngFrames(urls);
-      return;
-    }
-    exporting = true;
-    const prevLabel = exportBtn.textContent;
-    exportBtn.disabled = true;
-    exportBtn.textContent = 'exporting…';
-    pause();
-    try {
-      if (format === 'gif') await exportGif();
-      else if (format === 'apng') await exportApng();
-      else await exportWebm();
-    } finally {
-      exporting = false;
-      exportBtn.disabled = false;
-      exportBtn.textContent = prevLabel;
-    }
-  }
-
-  function hasFrames() {
-    return bitmaps.length > 0;
-  }
-
-  return {
-    load,
-    toggle,
-    play,
-    pause,
-    seek,
-    setFps,
-    setLoop,
-    exportAs,
-    canWebm,
-    destroy,
-    hasFrames,
-  };
-}
-const player = createPlayer();
+const player = createPlayer({
+  canvas: playerCanvas,
+  controls: playerControls,
+  playButton: playBtn,
+  scrubber,
+  frameReadout,
+  loopButton: loopBtn,
+  exportButton: exportBtn,
+  exportFormat,
+});
 
 // ---- mode toggle + plate routing ----
 
@@ -3069,20 +3002,6 @@ liveToggle.addEventListener('click', () => {
     if (status.dataset.state === 'draft') setStatus('live off', 'idle');
   }
 });
-playBtn.addEventListener('click', () => player.toggle());
-scrubber.addEventListener('input', () => player.seek(Number(scrubber.value)));
-loopBtn.addEventListener('click', () => {
-  player.setLoop(loopBtn.getAttribute('aria-pressed') !== 'true');
-});
-exportBtn.addEventListener('click', () => player.exportAs(exportFormat.value));
-// Drop the WebM option where MediaRecorder has no webm codec (e.g. some Safari):
-// GIF/APNG/PNG cover every browser deterministically, so a dead option would
-// just mislead. GIF stays the default (first option) regardless.
-/* c8 ignore next 3 -- Chromium (the only coverage browser) always has a webm codec, so this Safari-only option removal never runs under the gate */
-if (!player.canWebm()) {
-  exportFormat.querySelector('option[value="webm"]')?.remove();
-}
-
 // Seed the player fps from the (restored) input and route the plate for the
 // restored mode.
 player.setFps(Number(fpsInput.value));
@@ -3419,8 +3338,10 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// Plain Enter inside the number inputs renders too.
-for (const el of [widthInput, heightInput, threadsInput, framesInput, fpsInput]) {
+// Plain Enter inside the number inputs and the raw-flags field renders too:
+// every sibling control in the settings rows answers Enter, and the flags
+// field's whole point is iterating on AA settings render-to-render.
+for (const el of [widthInput, heightInput, threadsInput, framesInput, fpsInput, flagsInput]) {
   el.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();

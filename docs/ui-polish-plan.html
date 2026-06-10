@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>povrayer UI polish plan</title>
+    <style>
+      :root {
+        --bg: #0b0d10;
+        --panel: #14171c;
+        --border: #2b303a;
+        --border-strong: #606a7a;
+        --text: #d7dbe0;
+        --dim: #98a1ab;
+        --accent: #ffd23f;
+        --error: #ff6b5e;
+        --green: #5fb3a1;
+        --violet: #a98fd0;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        margin: 0;
+        font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+        font-size: 13px;
+        line-height: 1.55;
+      }
+      .wrap {
+        max-width: 1060px;
+        margin: 0 auto;
+        padding: 32px 24px 80px;
+      }
+      h1 {
+        font-size: 20px;
+        margin: 0 0 4px;
+      }
+      h1 .accent {
+        color: var(--accent);
+      }
+      .sub {
+        color: var(--dim);
+        margin: 0 0 28px;
+      }
+      h2 {
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 6px;
+        margin: 36px 0 14px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+      th {
+        text-align: left;
+        color: var(--dim);
+        font-weight: 400;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        padding: 6px 10px;
+        border-bottom: 1px solid var(--border-strong);
+      }
+      td {
+        padding: 7px 10px;
+        border-bottom: 1px solid var(--border);
+        vertical-align: top;
+      }
+      tr:hover td {
+        background: var(--panel);
+      }
+      .pri {
+        font-weight: 700;
+        white-space: nowrap;
+      }
+      .hi {
+        color: var(--accent);
+      }
+      .med {
+        color: var(--green);
+      }
+      .lo {
+        color: var(--dim);
+      }
+      code {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        padding: 0 4px;
+        font-size: 12px;
+      }
+      .files {
+        color: var(--dim);
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .wave {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        padding: 14px 16px;
+        margin: 10px 0;
+      }
+      .wave b {
+        color: var(--accent);
+        font-weight: 700;
+      }
+      .wave p {
+        margin: 4px 0 0;
+        color: var(--dim);
+      }
+      .deferred {
+        color: var(--dim);
+      }
+      .note {
+        border-left: 3px solid var(--border-strong);
+        padding: 8px 12px;
+        color: var(--dim);
+        margin: 16px 0;
+      }
+      kbd {
+        border: 1px solid var(--border-strong);
+        padding: 0 5px;
+        font-size: 11px;
+        background: var(--panel);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1><span class="accent">pov</span>rayer UI polish plan</h1>
+      <p class="sub">
+        2026-06-09 · two critique passes (visual design + power-user UX) over the live UI at
+        127.0.0.1:8080 · 33 findings, 27 planned
+      </p>
+
+      <div class="note">
+        Constraint honored throughout: the existing "optical bench" design system in
+        <code>web/styles.css</code>. Accent yellow only on the render action / links / focus /
+        wordmark, square corners, the rendered image is the only shadowed/textured element,
+        monospace only. Nothing below adds chrome; most of it removes brightness or text.
+      </div>
+
+      <h2>Execution waves</h2>
+      <div class="wave">
+        <b>Wave 1, visual calm</b> (two agents in parallel: CSS/HTML vs ui.js behavior)
+        <p>
+          Stabilize the hero plate, unify the slider language, de-dupe the example popover, fix
+          mode-switch jank, quiet the toggle row. V1&ndash;V16 below.
+        </p>
+      </div>
+      <div class="wave">
+        <b>Wave 2, power-user keyboard batch</b> (ui.js agent + repl.js agent in parallel)
+        <p>
+          Comment-toggle, line duplicate/move, keyboard number stepping, Cmd+S export, Cmd+K
+          examples, permalink full render, shortcut cheat sheet, REPL prefix history. P2&ndash;P14
+          below.
+        </p>
+      </div>
+      <div class="wave">
+        <b>Wave 3, structural gaps</b> (single agent, sequential)
+        <p>
+          Find bar + go-to-line in the editor; draggable editor/output split. The two biggest "I
+          live in this tool" gaps.
+        </p>
+      </div>
+      <div class="wave">
+        <b>Verify</b>
+        <p>
+          playwright-cli before/after screenshots of every touched state ·
+          <code>npm run lint</code> · <code>typecheck:js</code> · browser UI tests.
+        </p>
+      </div>
+
+      <h2>Wave 1, visual findings</h2>
+      <table>
+        <tr>
+          <th></th>
+          <th>Pri</th>
+          <th>Finding and fix</th>
+          <th>Files</th>
+        </tr>
+        <tr>
+          <td>V1</td>
+          <td class="pri hi">HIGH</td>
+          <td>
+            Hero plate pumps ~144px between 320px live draft and full render. Hold the draft at the
+            render footprint (explicit display width / <code>aspect-ratio</code> on
+            <code>#output</code>).
+          </td>
+          <td class="files">ui.js, styles.css</td>
+        </tr>
+        <tr>
+          <td>V2</td>
+          <td class="pri hi">HIGH</td>
+          <td>
+            Scene-param sliders are accent yellow (3 yellow tracks above the yellow RENDER button).
+            Restyle to the grey <code>.scrubber</code> treatment: one slider language, accent census
+            restored.
+          </td>
+          <td class="files">styles.css</td>
+        </tr>
+        <tr>
+          <td>V3</td>
+          <td class="pri hi">HIGH</td>
+          <td>
+            Every example row repeats "povrayer · CC0-1.0" (a third of each row, zero info). Only
+            render the byline when it differs from the popover footer attribution.
+          </td>
+          <td class="files">ui.js, styles.css</td>
+        </tr>
+        <tr>
+          <td>V4</td>
+          <td class="pri hi">HIGH</td>
+          <td>
+            Switching to animate wipes the hero, shows first-run onboarding copy mid-session, leaves
+            the stale still-render log below. Mode-aware hint copy + hide stale log on mode flip.
+          </td>
+          <td class="files">ui.js, index.html</td>
+        </tr>
+        <tr>
+          <td>V5</td>
+          <td class="pri med">MED</td>
+          <td>
+            Desktop shows both Cancel (toolbar) and Stop (status row) while rendering. One stop
+            affordance per viewport.
+          </td>
+          <td class="files">styles.css</td>
+        </tr>
+        <tr>
+          <td>V6</td>
+          <td class="pri med">MED</td>
+          <td>
+            Example popover's max-height slices a category header mid-row. Strong border on the
+            attribution footer + height landing on a row boundary.
+          </td>
+          <td class="files">styles.css</td>
+        </tr>
+        <tr>
+          <td>V7</td>
+          <td class="pri med">MED</td>
+          <td>
+            Player readouts run together ("7 / 24 12 fps") and fps duplicates the toolbar input.
+            Join as "7 / 24 · 12 fps" or drop the fps readout.
+          </td>
+          <td class="files">index.html, ui.js</td>
+        </tr>
+        <tr>
+          <td>V8</td>
+          <td class="pri med">MED</td>
+          <td>
+            "fit (100%)" is a no-op toggle and shows as a lone orphan chip after drafts. Hide when
+            fit = 100% and not zoomed.
+          </td>
+          <td class="files">ui.js</td>
+        </tr>
+        <tr>
+          <td>V9</td>
+          <td class="pri med">MED</td>
+          <td>
+            Pressed "live draft" is a permanently lit slab next to pressed "still". Quieter on-state
+            for the persistent preference (outline + bold, not inverted fill).
+          </td>
+          <td class="files">styles.css</td>
+        </tr>
+        <tr>
+          <td>V10</td>
+          <td class="pri med">MED</td>
+          <td>
+            "render ready" status reads as renderer-readiness. Keep the dims convention: "still
+            ready · 512×384".
+          </td>
+          <td class="files">ui.js</td>
+        </tr>
+        <tr>
+          <td>V11</td>
+          <td class="pri lo">LOW</td>
+          <td>
+            Play/Pause width flip jiggles the scrubber. <code>min-width</code> on
+            <code>#play-btn</code>.
+          </td>
+          <td class="files">styles.css</td>
+        </tr>
+        <tr>
+          <td>V12</td>
+          <td class="pri lo">LOW</td>
+          <td>
+            Slider reset ↺ floats between adjacent sliders. Wider <code>#sliders</code> column gap.
+          </td>
+          <td class="files">styles.css</td>
+        </tr>
+        <tr>
+          <td>V13</td>
+          <td class="pri lo">LOW</td>
+          <td>
+            Log summary writes counts inline, unlike the other disclosures. Adopt the
+            <code>.disclosure-count</code> span.
+          </td>
+          <td class="files">ui.js, index.html</td>
+        </tr>
+        <tr>
+          <td>V14</td>
+          <td class="pri lo">LOW</td>
+          <td><code>#example-search</code> 6px inset off the popover's 8px rhythm. Make it 8px.</td>
+          <td class="files">styles.css</td>
+        </tr>
+        <tr>
+          <td>V15</td>
+          <td class="pri lo">LOW</td>
+          <td>
+            Animate toolbar wraps at 1440 (frames/fps inputs too wide). 3.5em fits the maxima.
+          </td>
+          <td class="files">styles.css</td>
+        </tr>
+        <tr>
+          <td>V16</td>
+          <td class="pri lo">LOW</td>
+          <td>
+            REPL nav: bordered button beside underlined link, no defined gap.
+            <code>header nav { display:flex; gap:12px }</code>.
+          </td>
+          <td class="files">styles.css</td>
+        </tr>
+      </table>
+
+      <h2>Wave 2, power-user findings</h2>
+      <table>
+        <tr>
+          <th></th>
+          <th>Pri</th>
+          <th>Finding and fix</th>
+          <th>Files</th>
+        </tr>
+        <tr>
+          <td>P2</td>
+          <td class="pri hi">HIGH</td>
+          <td>
+            <kbd>Ctrl/Cmd+/</kbd> comment-toggle, <kbd>Alt+Shift+↓</kbd> duplicate line,
+            <kbd>Alt+↑/↓</kbd> move lines, via <code>setRangeText</code> so undo survives. With live
+            draft on, comment-toggle is an instant scene A/B.
+          </td>
+          <td class="files">ui.js</td>
+        </tr>
+        <tr>
+          <td>P4</td>
+          <td class="pri hi">HIGH</td>
+          <td>
+            Keyboard twin for Alt+drag scrubbing: <kbd>Alt+↑/↓</kbd> on a number token steps it
+            (Shift = 10×), reusing <code>numberTokenAt</code>/<code>formatScrubbed</code> from
+            sliders.js. (Binding clash with move-line: number token under caret wins.)
+          </td>
+          <td class="files">ui.js</td>
+        </tr>
+        <tr>
+          <td>P5</td>
+          <td class="pri hi">HIGH</td>
+          <td>
+            No shortcut discoverability. <kbd>?</kbd> overlay listing all bindings (REPL's
+            <code>:help</code> grid proves the pattern), small <code>kbd</code> link in the footer.
+          </td>
+          <td class="files">ui.js, index.html, styles.css</td>
+        </tr>
+        <tr>
+          <td>P3</td>
+          <td class="pri hi">HIGH</td>
+          <td>
+            Opening a #hash permalink lands on a 320px draft; gist links already auto-render full.
+            Call <code>startRender()</code> after permalink hydrate, same rationale.
+          </td>
+          <td class="files">ui.js</td>
+        </tr>
+        <tr>
+          <td>P9</td>
+          <td class="pri med">MED</td>
+          <td>
+            <kbd>Cmd+S</kbd> fires the browser save dialog. Intercept: flush state + download
+            <code>scene.pov</code>.
+          </td>
+          <td class="files">ui.js</td>
+        </tr>
+        <tr>
+          <td>P14</td>
+          <td class="pri med">MED</td>
+          <td>
+            Example browser is already a fuzzy-find palette but mouse-only.
+            <kbd>Ctrl/Cmd+K</kbd> opens it.
+          </td>
+          <td class="files">ui.js</td>
+        </tr>
+        <tr>
+          <td>P11</td>
+          <td class="pri med">MED</td>
+          <td>
+            REPL ArrowUp is linear-only over 100 entries. Bash-style prefix recall when input is
+            non-empty.
+          </td>
+          <td class="files">repl.js</td>
+        </tr>
+        <tr>
+          <td>P10</td>
+          <td class="pri med">MED</td>
+          <td>
+            History entries are blind ("2m ago" vs "8m ago"). Add a
+            <code>+N/−M lines vs current</code> badge per entry.
+          </td>
+          <td class="files">history.js, ui.js</td>
+        </tr>
+        <tr>
+          <td>P7</td>
+          <td class="pri med">MED</td>
+          <td>
+            <kbd>Shift+Ctrl/Cmd+Enter</kbd> = final-quality render (q9, AA 0.05) without persisting
+            the controls.
+          </td>
+          <td class="files">ui.js</td>
+        </tr>
+        <tr>
+          <td>P8</td>
+          <td class="pri lo">LOW</td>
+          <td>
+            Draft resolution hardcoded at 320. "draft size" select (256/320/512) in advanced,
+            persisted via <code>CONTROL_FIELDS</code>.
+          </td>
+          <td class="files">ui.js, settings.js, index.html</td>
+        </tr>
+        <tr>
+          <td>P17</td>
+          <td class="pri lo">LOW</td>
+          <td>Swap-W×H button next to the size inputs.</td>
+          <td class="files">index.html, ui.js</td>
+        </tr>
+      </table>
+
+      <h2>Wave 3, structural</h2>
+      <table>
+        <tr>
+          <th></th>
+          <th>Pri</th>
+          <th>Finding and fix</th>
+          <th>Files</th>
+        </tr>
+        <tr>
+          <td>P1</td>
+          <td class="pri hi">HIGH</td>
+          <td>
+            No find / go-to-line in a raw textarea editor. <kbd>Ctrl/Cmd+F</kbd> find bar over
+            <code>#editor-stack</code> (Enter/Shift+Enter cycles), <kbd>Ctrl/Cmd+G</kbd> go-to-line
+            into the existing <code>selectEditorLine</code>.
+          </td>
+          <td class="files">ui.js, index.html, styles.css</td>
+        </tr>
+        <tr>
+          <td>P6</td>
+          <td class="pri hi">HIGH</td>
+          <td>
+            Fixed 50/50 editor/output split. Slim draggable divider writing a
+            <code>--split</code> var, persisted with the other UI state.
+          </td>
+          <td class="files">ui.js, index.html, styles.css</td>
+        </tr>
+      </table>
+
+      <h2>Deferred (not in this pass)</h2>
+      <p class="deferred">
+        P12 REPL SDL completion (M, popup DOM work) · P13 editor font-size keys · P15 warnings chip
+        + log shortcut (M) · P16 named scene slots (L) · mobile layout audit beyond the 700px
+        spot-check.
+      </p>
+    </div>
+  </body>
+</html>

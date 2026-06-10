@@ -59,9 +59,12 @@ const FILES = [
   { path: 'web/apng.js' },
   { path: 'web/gif.js' },
   { path: 'web/ui.js', browser: true },
+  { path: 'web/player.js', browser: true },
   { path: 'web/repl.js', browser: true },
+  { path: 'web/repl-scene.js', browser: true },
   { path: 'web/anim-export.js', browser: true },
   { path: 'web/asset-drop.js', browser: true },
+  { path: 'web/coi.js', browser: true },
 ];
 
 // Browser modules measured via Playwright V8 coverage, keyed by the basename the

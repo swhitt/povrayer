@@ -348,7 +348,9 @@
         <div id="progress" hidden></div>
         <pre id="error" class="error" role="alert" hidden></pre>
         <div id="output-plate">
-          <img id="output" alt="render output" hidden />
+          <!-- draggable=false: the browser's native image-drag would
+               pointercancel the plate's drag-to-pan on the first movement. -->
+          <img id="output" alt="render output" draggable="false" hidden />
           <canvas id="player-canvas" role="img" aria-label="animation playback" hidden></canvas>
           <p class="hint">
             Describe a 3D scene in text; POV-Ray ray-traces it in your browser. Ctrl/Cmd+Enter
@@ -444,6 +446,8 @@
         <dd>download the scene as scene.pov</dd>
         <dt><kbd>Ctrl/Cmd</kbd> <kbd>K</kbd></dt>
         <dd>example browser</dd>
+        <dt><kbd>Alt</kbd> <kbd>B</kbd> (hold)</dt>
+        <dd>peek at the previous render (press-and-hold the image works too)</dd>
         <dt><kbd>?</kbd></dt>
         <dd>this overlay</dd>
       </dl>

@@ -772,7 +772,7 @@ try {
   await page.fill('#input', ':zzz');
   await page.keyboard.press('Tab'); // no candidates -> consumed, unchanged
   await page.fill('#input', 'plain text');
-  await page.keyboard.press('Tab'); // not a :command -> Tab falls through
+  await page.keyboard.press('Tab'); // not a :command -> SDL completion (PART 5.7 covers it in depth)
   await page.evaluate(() => {
     const i = document.getElementById('input');
     i.value = ':help extra';
@@ -1051,6 +1051,332 @@ try {
     { timeout: 5_000 }
   );
   assert.equal((await sourceState()).hidden, 'true', '#source-close closes the panel + hides it');
+
+  // ===========================================================================
+  // PART 5.7: clickable try-snippet, shell-style SDL Tab completion, the
+  // undeclared-identifier include tip, and the open-in-editor graduation.
+  // ===========================================================================
+  const TRY_LINE = 'sphere { <0,1,0>, 1 pigment { color rgb <1,0,0> } }';
+  // SDL completion + the include tip read the includes manifest; wait for the
+  // readiness marker its fetch sets (mirrors the editor's data-complete-ready).
+  await page.waitForFunction(
+    () => document.getElementById('input').hasAttribute('data-complete-ready'),
+    null,
+    { timeout: 30_000 }
+  );
+  const setCaretInput = (v, caret) =>
+    page.evaluate(
+      ({ v, caret }) => {
+        const i = document.getElementById('input');
+        i.value = v;
+        i.focus();
+        const c = caret ?? v.length;
+        i.setSelectionRange(c, c);
+      },
+      { v, caret }
+    );
+  const activeId = () => page.evaluate(() => document.activeElement.id);
+
+  // Greeting try-snippet: one click fills the input (focused); Enter stays the
+  // user's. The greeting is the first info block of this load, so its button is
+  // the first link-styled button in the transcript.
+  await setCaretInput('');
+  await page.click('#scrollback .info button.linkish');
+  assert.equal(await inputVal(), TRY_LINE, 'clicking the greeting snippet fills the input');
+  assert.equal(await activeId(), 'input', 'the try-snippet click focuses the input');
+
+  // The not-English rollback tip carries the same one-click snippet.
+  {
+    const before = await sbCount();
+    await submit(page, 'still not povray, just words');
+    await page.waitForFunction(
+      (n) =>
+        [...document.getElementById('scrollback').children]
+          .slice(n)
+          .some((el) => el.classList.contains('error') && el.textContent.includes('tip:')),
+      before,
+      { timeout: 60_000 }
+    );
+  }
+  await setCaretInput('');
+  await page.click('#scrollback .error button.linkish');
+  assert.equal(await inputVal(), TRY_LINE, 'the error-tip snippet fills the input on click');
+
+  // --- SDL Tab completion (bash semantics, into the transcript) ---------------
+  await setCaretInput('assumed_ga');
+  await page.keyboard.press('Tab');
+  assert.equal(await inputVal(), 'assumed_gamma', 'Tab completes a unique SDL token inline');
+
+  await setCaretInput('pig');
+  await page.keyboard.press('Tab');
+  assert.equal(await inputVal(), 'pigment', 'an ambiguous Tab extends to the common prefix');
+  {
+    const before = await infoCount(page);
+    await page.keyboard.press('Tab'); // no further progress -> list the candidates
+    await page.waitForFunction(
+      (n) => document.querySelectorAll('#scrollback .info').length > n,
+      before,
+      { timeout: 5_000 }
+    );
+    const listing = await lastInfoText(page);
+    assert.ok(
+      listing.includes('pigment_map'),
+      `candidate listing should show pigment_map: ${listing}`
+    );
+    assert.equal(await inputVal(), 'pigment', 'listing candidates leaves the input untouched');
+  }
+
+  // Prefix matching is case-sensitive (shell semantics): a case-mismatched
+  // token is consumed (focus stays put, the mid-scene-code fix) but unchanged.
+  await setCaretInput('SPHER');
+  await page.keyboard.press('Tab');
+  assert.equal(await inputVal(), 'SPHER', 'a case-mismatched token stays unchanged');
+  assert.equal(await activeId(), 'input', 'a no-match Tab must not drop focus mid-scene-code');
+
+  // No candidates at all (the completion offer itself is null).
+  await setCaretInput('zzzqqq');
+  await page.keyboard.press('Tab');
+  assert.equal(await inputVal(), 'zzzqqq', 'an unmatched token stays unchanged');
+
+  // Directives complete after a '#'.
+  await setCaretInput('#decl');
+  await page.keyboard.press('Tab');
+  assert.equal(await inputVal(), '#declare', "Tab completes '#decl' to the directive");
+
+  // A macro defined in the buffer completes with call parens, caret inside.
+  await setCaretInput('#macro MySpin(A) #end MySp');
+  await page.keyboard.press('Tab');
+  assert.equal(
+    await inputVal(),
+    '#macro MySpin(A) #end MySpin()',
+    'a buffer macro completes with its call parens'
+  );
+  assert.equal(
+    await page.evaluate(() => document.getElementById('input').selectionStart),
+    '#macro MySpin(A) #end MySpin('.length,
+    'the caret lands inside the macro parens'
+  );
+
+  // No token under the caret: Tab falls through so keyboard focus can still
+  // leave the input; same for an active selection.
+  await setCaretInput('sphere ');
+  await page.keyboard.press('Tab');
+  assert.notEqual(await activeId(), 'input', 'Tab with no token keeps moving focus');
+  await page.evaluate(() => {
+    const i = document.getElementById('input');
+    i.value = 'pig';
+    i.focus();
+    i.setSelectionRange(0, 3);
+  });
+  await page.keyboard.press('Tab');
+  assert.notEqual(await activeId(), 'input', 'Tab over a selection falls through');
+
+  // The scene's own #declare completes too: the lookup runs against the
+  // assembled scene + the input, not the input alone.
+  await submitRender('#declare MyThing = 1; sphere { 0, MyThing pigment { rgb <1,0,0> } }');
+  await setCaretInput('MyThi');
+  await page.keyboard.press('Tab');
+  assert.equal(await inputVal(), 'MyThing', "the scene's #declare names complete");
+  await setCaretInput('');
+
+  // --- undeclared identifier -> one-line include tip ---------------------------
+  // 'Blue' ships in colors.inc, which the scene doesn't #include yet: the
+  // rollback error gains a clickable fix.
+  {
+    const before = await sbCount();
+    await submit(page, 'sphere { <2,1,0>, 1 pigment { color Blue } }');
+    await page.waitForFunction(
+      (n) =>
+        [...document.getElementById('scrollback').children]
+          .slice(n)
+          .some(
+            (el) => el.classList.contains('error') && el.textContent.includes('ships in colors.inc')
+          ),
+      before,
+      { timeout: 60_000 }
+    );
+  }
+
+  // While a render is in flight the tip click is ignored (renders are
+  // single-flight) and Tab bails in both completers (readOnly).
+  await runCmd(':size 1400x1400');
+  await submit(page, ':render');
+  await page.waitForFunction(() => document.getElementById('input').readOnly === true, null, {
+    timeout: 60_000,
+  });
+  await page.keyboard.press('Tab');
+  const busyClick = await page.evaluate(() => {
+    const i = document.getElementById('input');
+    if (!i.readOnly) return false; // render already settled: the click would be live
+    [...document.querySelectorAll('#scrollback .error button.linkish')]
+      .find((b) => b.textContent.startsWith('#include'))
+      .click();
+    return i.readOnly;
+  });
+  assert.equal(busyClick, true, 'the tip click must land while the render is in flight');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.getElementById('input').readOnly === false, null, {
+    timeout: 30_000,
+  });
+  await runCmd(':size 48x32');
+  await runCmd(':list');
+  assert.ok(
+    !(await lastInfoText(page)).includes('#include'),
+    'a busy-render tip click must not prepend the include'
+  );
+
+  // Idle, the click prepends the include as entry 1 and re-renders.
+  {
+    const before = await imgCount(page);
+    await page.click('#scrollback .error button.linkish:has-text("#include")');
+    await page.waitForFunction(
+      (n) => document.querySelectorAll('#scrollback img.preview').length > n,
+      before,
+      { timeout: 120_000 }
+    );
+  }
+  await runCmd(':list');
+  assert.ok(
+    (await lastInfoText(page)).includes('1: #include "colors.inc"'),
+    'the tip click prepends the include as entry 1'
+  );
+  // The previously failing entry now succeeds verbatim.
+  await submitRender('sphere { <2,1,0>, 1 pigment { color Blue } }');
+
+  // Already-#included symbols are skipped: this failure's only fixable-looking
+  // name (Blue) is already covered, and Zog_Zog isn't in the manifest, so the
+  // undeclared-identifier error carries no tip.
+  {
+    const before = await sbCount();
+    await submit(page, 'sphere { <4,1,0>, 1 pigment { color Blue } finish { Zog_Zog } }');
+    await page.waitForFunction(
+      (n) =>
+        [...document.getElementById('scrollback').children]
+          .slice(n)
+          .some((el) => el.classList.contains('error') && el.textContent.includes('rolled back')),
+      before,
+      { timeout: 60_000 }
+    );
+  }
+  assert.ok(
+    !(await lastErrText()).includes('ships in'),
+    'an already-included symbol must not retrigger the include tip'
+  );
+
+  // A braced rollback whose error is not an undeclared identifier gets no tip.
+  {
+    const before = await sbCount();
+    await submit(page, 'sphere { <0,0,0> }');
+    await page.waitForFunction(
+      (n) =>
+        [...document.getElementById('scrollback').children]
+          .slice(n)
+          .some((el) => el.classList.contains('error') && el.textContent.includes('rolled back')),
+      before,
+      { timeout: 60_000 }
+    );
+  }
+  assert.ok(
+    !(await lastErrText()).includes('tip:'),
+    'a non-identifier parse error must stay tipless'
+  );
+
+  // --- open in editor (graduation link + :editor) ------------------------------
+  await runCmd(':reset');
+  await page.click('#source-toggle');
+  await page.waitForFunction(
+    () => document.getElementById('source-toggle').getAttribute('aria-expanded') === 'true',
+    null,
+    { timeout: 5_000 }
+  );
+  assert.equal(
+    await page.evaluate(() => document.getElementById('open-in-editor').hidden),
+    true,
+    'an empty scene hides the graduation link'
+  );
+  await runCmd(':editor');
+  assert.match(await lastErrText(), /scene empty/, ':editor on an empty scene reports it');
+
+  const editorState = () =>
+    page.evaluate(() => ({
+      source: document.getElementById('editor').value,
+      width: document.getElementById('width').value,
+      height: document.getElementById('height').value,
+      quality: document.getElementById('quality').value,
+      antialias: document.getElementById('antialias').value,
+      threads: document.getElementById('threads').value,
+      flags: document.getElementById('flags').value,
+    }));
+  const editorHydrated = () =>
+    page.waitForFunction(
+      () => (document.getElementById('editor')?.value ?? '').includes('camera {'),
+      null,
+      { timeout: 60_000 }
+    );
+  const backToRepl = async () => {
+    await page.goBack({ waitUntil: 'load' });
+    await page.waitForFunction(
+      () => document.querySelectorAll('#scrollback .info').length >= 1,
+      null,
+      { timeout: 30_000 }
+    );
+  };
+
+  // Default settings ride along; antialias false maps to the editor's 'off'
+  // option ('' would be dropped by its hydration), unset numerics ride empty.
+  await runCmd(':size 48x32');
+  await submitRender('sphere { 0, 1 pigment { rgb <1,0,0> } }');
+  assert.equal(
+    await page.evaluate(() => document.getElementById('open-in-editor').hidden),
+    false,
+    'the graduation link appears once the scene has entries'
+  );
+  await page.click('#open-in-editor');
+  await page.waitForURL(/index\.html#./, { timeout: 60_000 });
+  await editorHydrated();
+  const handoff1 = await editorState();
+  assert.ok(
+    handoff1.source.includes('sphere { 0, 1 pigment { rgb <1,0,0> } }'),
+    'the editor receives the entry text'
+  );
+  assert.ok(
+    handoff1.source.startsWith('#version 3.8;'),
+    'the handoff carries the assembled scene, scaffold included'
+  );
+  assert.deepEqual(
+    {
+      width: handoff1.width,
+      height: handoff1.height,
+      quality: handoff1.quality,
+      antialias: handoff1.antialias,
+      threads: handoff1.threads,
+      flags: handoff1.flags,
+    },
+    { width: '48', height: '32', quality: '', antialias: 'off', threads: '', flags: '' },
+    'default REPL settings map to the editor defaults'
+  );
+  await backToRepl();
+
+  // Explicit settings ride along too (:editor, the keyboard path).
+  await runCmd(':q 5');
+  await runCmd(':aa');
+  await runCmd(':threads 2');
+  await runCmd(':args +UA');
+  await submit(page, ':editor');
+  await page.waitForURL(/index\.html#./, { timeout: 60_000 });
+  await editorHydrated();
+  const handoff2 = await editorState();
+  assert.deepEqual(
+    {
+      quality: handoff2.quality,
+      antialias: handoff2.antialias,
+      threads: handoff2.threads,
+      flags: handoff2.flags,
+    },
+    { quality: '5', antialias: '0.3', threads: '2', flags: '+UA' },
+    ':editor carries quality/antialias/threads/args into the editor controls'
+  );
+  await backToRepl();
 
   // --- PART 6: persistence restore -------------------------------------------
   const seedReload = async (blob) => {
