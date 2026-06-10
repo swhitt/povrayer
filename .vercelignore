@@ -1,0 +1,13 @@
+.git/
+.vercel/
+_site/
+coverage/
+.nyc_output/
+.playwright-cli/
+node_modules/
+wrapper/node_modules/
+test-output/
+test/fixtures/*.png
+*.lcov
+*.log
+.DS_Store
