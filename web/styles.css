@@ -523,6 +523,10 @@ body.ui main > * {
   text-align: left;
 }
 
+#gallery-btn {
+  flex: none;
+}
+
 .ex-trigger-text {
   overflow: hidden;
   white-space: nowrap;
@@ -2550,4 +2554,117 @@ kbd {
 #shortcuts-hint:hover:not(:disabled) {
   background: none;
   color: var(--text);
+}
+
+/* ---- example gallery overlay ---------------------------------------------
+   A visual browser for the same examples as the compact picker. It stays modal
+   and fixed, so the editor chrome remains quiet until the user asks for it. */
+#gallery {
+  position: fixed;
+  inset: 5vh 4vw;
+  z-index: 35;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  padding: 14px;
+}
+
+.gallery-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.gallery-head h2 {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  color: var(--dim);
+  font-size: var(--fs-body);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.gallery-filters {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.5fr) repeat(4, minmax(96px, 1fr));
+  gap: 6px;
+}
+
+.gallery-filters > * {
+  min-width: 0;
+}
+
+#gallery-grid {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  align-content: start;
+  gap: 10px;
+  padding-right: 2px;
+}
+
+.gallery-card {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 7px;
+  padding: 8px;
+  text-align: left;
+  color: inherit;
+  background: var(--bg);
+  border-color: var(--border);
+}
+
+.gallery-card:hover,
+.gallery-card:focus-visible {
+  border-color: var(--border-strong);
+}
+
+.gallery-card[data-loaded='true'] {
+  border-color: var(--accent);
+}
+
+.gallery-card img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  background: var(--mat) 0 0 / 16px 16px;
+}
+
+.gallery-title {
+  display: block;
+  color: var(--text);
+}
+
+.gallery-meta,
+.gallery-license {
+  display: block;
+  color: var(--dim);
+  font-size: var(--fs-chrome);
+}
+
+.gallery-empty {
+  margin: 0;
+  color: var(--dim);
+  font-size: var(--fs-out);
+}
+
+@media (max-width: 720px) {
+  #gallery {
+    inset: 0;
+    padding: 10px;
+  }
+
+  .gallery-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #gallery-search {
+    grid-column: 1 / -1;
+  }
 }

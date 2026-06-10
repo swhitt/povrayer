@@ -42,6 +42,9 @@
             <span id="example-trigger-text" class="ex-trigger-text"></span>
             <span class="ex-caret" aria-hidden="true">▾</span>
           </button>
+          <button id="gallery-btn" type="button" aria-haspopup="dialog" aria-controls="gallery">
+            Gallery
+          </button>
 
           <div id="example-browser" hidden>
             <div class="ex-search-row">
@@ -485,6 +488,49 @@
         <dt><kbd>?</kbd></dt>
         <dd>this overlay</dd>
       </dl>
+    </div>
+    <div id="gallery" role="dialog" aria-label="example gallery" tabindex="-1" hidden>
+      <div class="gallery-head">
+        <h2>example gallery</h2>
+        <button id="gallery-close" type="button" aria-label="close gallery">x</button>
+      </div>
+      <div class="gallery-filters" aria-label="gallery filters">
+        <input
+          id="gallery-search"
+          type="search"
+          aria-label="filter gallery"
+          placeholder="filter examples…"
+          autocomplete="off"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+        />
+        <select id="gallery-type" aria-label="gallery animation filter">
+          <option value="all">all</option>
+          <option value="still">still</option>
+          <option value="animated">animated</option>
+        </select>
+        <select id="gallery-difficulty" aria-label="gallery difficulty filter">
+          <option value="all">any level</option>
+          <option value="intro">intro</option>
+          <option value="intermediate">intermediate</option>
+          <option value="advanced">advanced</option>
+        </select>
+        <select id="gallery-tier" aria-label="gallery render cost filter">
+          <option value="all">any speed</option>
+          <option value="instant">instant</option>
+          <option value="fast">fast</option>
+          <option value="heavy">heavy</option>
+        </select>
+        <select id="gallery-license" aria-label="gallery license filter">
+          <option value="all">any license</option>
+          <option value="cc0">cc0</option>
+          <option value="share-alike">share-alike</option>
+          <option value="gpl">gpl</option>
+        </select>
+      </div>
+      <div id="gallery-grid" aria-label="gallery examples"></div>
+      <p id="gallery-empty" class="gallery-empty" hidden>no examples match</p>
     </div>
     <footer>
       <a href="https://github.com/swhitt/povrayer">source</a> ·

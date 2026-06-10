@@ -653,6 +653,21 @@ try {
     page.evaluate(() => document.getElementById('example-trigger').getAttribute('aria-expanded'));
   const triggerName = () =>
     page.evaluate(() => document.getElementById('example-trigger').dataset.name);
+  const galleryState = () =>
+    page.evaluate(() => ({
+      hidden: document.getElementById('gallery').hidden,
+      focused: document.activeElement?.id,
+      search: document.getElementById('gallery-search').value,
+      empty: document.getElementById('gallery-empty').hidden,
+      browser: document.getElementById('example-trigger').getAttribute('aria-expanded'),
+      shortcuts: document.getElementById('shortcuts').hidden,
+    }));
+  const visibleGalleryNames = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('.gallery-card')]
+        .filter((card) => !card.hidden)
+        .map((card) => card.dataset.name)
+    );
   const activeName = () =>
     page.evaluate(() => document.querySelector('.ex-option.is-active')?.dataset.name ?? null);
   // The roving item may be a HEAD or an OPTION; read its id off the search box's
@@ -1204,6 +1219,106 @@ try {
     'example-trigger',
     'an outside pointerdown must not force focus back to the trigger'
   );
+
+  // Example gallery: a visual, modal way to browse the same examples. It opens
+  // independently of the compact picker, reuses the same filter semantics, and
+  // selects through the same example-loading path.
+  await openBrowser();
+  await page.click('#gallery-btn');
+  await page.waitForFunction(
+    () =>
+      !document.getElementById('gallery').hidden &&
+      document.getElementById('example-trigger').getAttribute('aria-expanded') === 'false',
+    null,
+    { timeout: 5_000 }
+  );
+  const galleryOpen = await page.evaluate(async () => {
+    const { EXAMPLES } = await import('/examples.js');
+    const first = document.querySelector('.gallery-card[data-name="csg-die"] img');
+    return {
+      count: [...document.querySelectorAll('.gallery-card')].length,
+      loaded: document.querySelector('.gallery-card[data-loaded="true"]')?.dataset.name,
+      focused: document.activeElement?.id,
+      img: first.getAttribute('src'),
+      imgW: first.getAttribute('width'),
+      expected: EXAMPLES.length,
+    };
+  });
+  assert.equal(galleryOpen.count, galleryOpen.expected, 'gallery renders one card per example');
+  assert.deepEqual(
+    galleryOpen,
+    {
+      count: galleryOpen.expected,
+      loaded: 'csg-die',
+      focused: 'gallery',
+      img: 'example-thumbnails/csg-die.png',
+      imgW: '160',
+      expected: galleryOpen.expected,
+    },
+    'gallery opens as a focused thumbnail grid and marks the loaded example'
+  );
+  await page.keyboard.press('?');
+  assert.equal((await galleryState()).shortcuts, true, '? is ignored while the gallery is open');
+  await page.keyboard.press('Control+k');
+  assert.equal(
+    (await galleryState()).browser,
+    'false',
+    'Ctrl+K is ignored while the gallery owns the screen'
+  );
+  await page.fill('#gallery-search', 'sombrero');
+  await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll('.gallery-card')]
+        .filter((card) => !card.hidden)
+        .map((card) => card.dataset.name)
+        .join(',') === 'sourced-sombrero',
+    null,
+    { timeout: 5_000 }
+  );
+  assert.deepEqual(
+    await visibleGalleryNames(),
+    ['sourced-sombrero'],
+    'gallery search narrows cards'
+  );
+  await page.selectOption('#gallery-license', 'gpl');
+  await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll('.gallery-card')].filter((card) => !card.hidden).length === 0 &&
+      !document.getElementById('gallery-empty').hidden,
+    null,
+    { timeout: 5_000 }
+  );
+  await page.evaluate(() =>
+    document
+      .getElementById('gallery-grid')
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  );
+  assert.equal((await galleryState()).hidden, false, 'a stray gallery-grid click loads nothing');
+  await page.keyboard.press('Escape');
+  assert.deepEqual(
+    await galleryState(),
+    {
+      hidden: true,
+      focused: 'gallery-btn',
+      search: '',
+      empty: false,
+      browser: 'false',
+      shortcuts: true,
+    },
+    'Esc closes the gallery, resets filters, and returns focus'
+  );
+  await page.click('#gallery-btn');
+  assert.equal((await galleryState()).search, '', 'reopening starts with reset gallery filters');
+  await page.fill('#gallery-search', 'wine glass');
+  await page.click('.gallery-card[data-name="sourced-wineglass"]');
+  await page.waitForFunction(
+    () =>
+      document.getElementById('gallery').hidden &&
+      document.getElementById('example-trigger').dataset.name === 'sourced-wineglass',
+    null,
+    { timeout: 5_000 }
+  );
+  assert.equal(await triggerName(), 'sourced-wineglass', 'clicking a gallery card loads it');
 
   // Pristine editor (=== the loaded scene) switches with no confirm.
   await switchExample('blobs');

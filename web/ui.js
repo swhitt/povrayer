@@ -10,6 +10,7 @@ import {
   PovrayError,
 } from './render-client.js';
 import {
+  CATEGORIES,
   DIFFICULTIES,
   EXAMPLES,
   RENDER_TIERS,
@@ -43,6 +44,7 @@ ensureCrossOriginIsolation({ warningEl: isoWarning });
 const exampleField = document.getElementById('example-field');
 const exampleTrigger = document.getElementById('example-trigger');
 const exampleTriggerText = document.getElementById('example-trigger-text');
+const galleryBtn = /** @type {HTMLButtonElement} */ (document.getElementById('gallery-btn'));
 const exampleBrowser = document.getElementById('example-browser');
 const exampleSearch = /** @type {HTMLInputElement} */ (document.getElementById('example-search'));
 const exampleClear = /** @type {HTMLButtonElement} */ (document.getElementById('example-clear'));
@@ -60,6 +62,19 @@ const exampleAttrText = document.querySelector('#example-attribution .ex-attr-te
 const exampleAttrSrc = /** @type {HTMLAnchorElement} */ (
   document.querySelector('#example-attribution .ex-attr-src')
 );
+const galleryPanel = /** @type {HTMLElement} */ (document.getElementById('gallery'));
+const galleryClose = /** @type {HTMLButtonElement} */ (document.getElementById('gallery-close'));
+const gallerySearch = /** @type {HTMLInputElement} */ (document.getElementById('gallery-search'));
+const galleryType = /** @type {HTMLSelectElement} */ (document.getElementById('gallery-type'));
+const galleryDifficulty = /** @type {HTMLSelectElement} */ (
+  document.getElementById('gallery-difficulty')
+);
+const galleryTier = /** @type {HTMLSelectElement} */ (document.getElementById('gallery-tier'));
+const galleryLicense = /** @type {HTMLSelectElement} */ (
+  document.getElementById('gallery-license')
+);
+const galleryGrid = document.getElementById('gallery-grid');
+const galleryEmpty = document.getElementById('gallery-empty');
 const sceneDirty = /** @type {HTMLElement} */ (document.getElementById('scene-dirty'));
 const resetSceneBtn = /** @type {HTMLButtonElement} */ (document.getElementById('reset-scene-btn'));
 const copySceneBtn = /** @type {HTMLButtonElement} */ (document.getElementById('copy-scene-btn'));
@@ -166,11 +181,13 @@ const SPLIT_MAX_FR = SPLIT_MAX_FRACTION / (1 - SPLIT_MAX_FRACTION); // 4
 // drives the disclosure (openBrowser seeds it, the head toggle flips it).
 const optionEls = [];
 const exampleGroups = [];
+const galleryCards = [];
 // The roving aria-activedescendant item: a category HEAD or an OPTION, or null.
 let activeItem = null;
 
 const labelByKey = (items, key) => items.find((item) => item.key === key).label;
 const tierByKey = (key) => RENDER_TIERS.find((tier) => tier.key === key);
+const categoryLabelByKey = (key) => CATEGORIES.find((item) => item.key === key).label;
 const LICENSE_BUCKET = {
   'CC0-1.0': 'cc0',
   'CC-BY-4.0': 'share-alike',
@@ -184,6 +201,16 @@ const LICENSE_BUCKET = {
 
 function licenseBucket(ex) {
   return LICENSE_BUCKET[ex.license];
+}
+
+function matchesFilterValues(ex, type, difficulty, tier, license) {
+  const typeMatch = type === 'all' || (type === 'animated' ? ex.animated : !ex.animated);
+  return (
+    typeMatch &&
+    (difficulty === 'all' || ex.difficulty === difficulty) &&
+    (tier === 'all' || ex.renderTier === tier) &&
+    (license === 'all' || licenseBucket(ex) === license)
+  );
 }
 
 // Render one .ex-group per CATEGORIES entry (in order) and one .ex-option per
@@ -281,6 +308,60 @@ function buildExampleBrowser() {
 }
 buildExampleBrowser();
 
+function buildGallery() {
+  for (const ex of EXAMPLES) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'gallery-card';
+    card.dataset.name = ex.name;
+
+    const img = document.createElement('img');
+    img.src = ex.thumbnail;
+    img.alt = '';
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    img.width = 160;
+    img.height = 120;
+
+    const body = document.createElement('span');
+    const title = document.createElement('span');
+    title.className = 'gallery-title';
+    title.textContent = ex.title;
+    const meta = document.createElement('span');
+    meta.className = 'gallery-meta';
+    meta.textContent = [
+      categoryLabelByKey(ex.category),
+      labelByKey(DIFFICULTIES, ex.difficulty),
+      labelByKey(RENDER_TIERS, ex.renderTier),
+      ex.animated ? 'Animated' : 'Still',
+    ].join(' · ');
+    const license = document.createElement('span');
+    license.className = 'gallery-license';
+    license.textContent = `${ex.license} · ${ex.author}`;
+    body.append(title, meta, license);
+    card.append(img, body);
+    galleryGrid.appendChild(card);
+
+    const haystack = [
+      ex.name,
+      ex.title,
+      ex.description,
+      ex.author,
+      ex.license,
+      ex.difficulty,
+      labelByKey(DIFFICULTIES, ex.difficulty),
+      ex.renderTier,
+      labelByKey(RENDER_TIERS, ex.renderTier),
+      categoryLabelByKey(ex.category),
+      ...ex.tags,
+    ]
+      .join(' ')
+      .toLowerCase();
+    galleryCards.push({ el: card, ex, haystack });
+  }
+}
+buildGallery();
+
 // EXAMPLES is a static, non-empty module literal, so EXAMPLES[0] is defined.
 const DEFAULT_EXAMPLE = EXAMPLES[0].name;
 // The loaded scene's name; replaces every old examplesSelect.value read/write.
@@ -324,6 +405,10 @@ function setTriggerLabel(name) {
     by.hidden = parts.length === 0;
     if (loaded) opt.dataset.loaded = 'true';
     else delete opt.dataset.loaded;
+  }
+  for (const { el } of galleryCards) {
+    if (el.dataset.name === name) el.dataset.loaded = 'true';
+    else delete el.dataset.loaded;
   }
 }
 
@@ -628,14 +713,56 @@ function resetExampleFilters() {
 }
 
 function matchesExampleFilters(ex) {
-  const typeMatch =
-    exampleType.value === 'all' || (exampleType.value === 'animated' ? ex.animated : !ex.animated);
-  return (
-    typeMatch &&
-    (exampleDifficulty.value === 'all' || ex.difficulty === exampleDifficulty.value) &&
-    (exampleTier.value === 'all' || ex.renderTier === exampleTier.value) &&
-    (exampleLicense.value === 'all' || licenseBucket(ex) === exampleLicense.value)
+  return matchesFilterValues(
+    ex,
+    exampleType.value,
+    exampleDifficulty.value,
+    exampleTier.value,
+    exampleLicense.value
   );
+}
+
+function resetGalleryFilters() {
+  gallerySearch.value = '';
+  galleryType.value = 'all';
+  galleryDifficulty.value = 'all';
+  galleryTier.value = 'all';
+  galleryLicense.value = 'all';
+}
+
+function matchesGalleryFilters(ex) {
+  return matchesFilterValues(
+    ex,
+    galleryType.value,
+    galleryDifficulty.value,
+    galleryTier.value,
+    galleryLicense.value
+  );
+}
+
+function renderGallery() {
+  const q = gallerySearch.value.trim().toLowerCase();
+  let anyMatch = false;
+  for (const { el, ex, haystack } of galleryCards) {
+    const match = (q === '' || haystack.includes(q)) && matchesGalleryFilters(ex);
+    el.hidden = !match;
+    if (match) anyMatch = true;
+  }
+  galleryEmpty.hidden = anyMatch;
+}
+
+function openGallery() {
+  closeBrowser(false);
+  resetGalleryFilters();
+  renderGallery();
+  galleryPanel.hidden = false;
+  galleryPanel.focus();
+}
+
+function closeGallery() {
+  galleryPanel.hidden = true;
+  resetGalleryFilters();
+  galleryBtn.focus();
 }
 
 function renderList() {
@@ -717,6 +844,22 @@ exampleTrigger.addEventListener('keydown', (e) => {
     e.preventDefault();
     openBrowser();
   }
+});
+
+galleryBtn.addEventListener('click', openGallery);
+galleryClose.addEventListener('click', closeGallery);
+
+gallerySearch.addEventListener('input', renderGallery);
+for (const filter of [galleryType, galleryDifficulty, galleryTier, galleryLicense]) {
+  filter.addEventListener('change', renderGallery);
+}
+
+galleryGrid.addEventListener('click', (e) => {
+  const target = /** @type {Element} */ (e.target);
+  const card = /** @type {HTMLElement | null} */ (target.closest('.gallery-card'));
+  if (!card) return;
+  selectExample(card.dataset.name);
+  closeGallery();
 });
 
 exampleSearch.addEventListener('input', () => {
@@ -3399,7 +3542,8 @@ document.addEventListener('keydown', (e) => {
     if (e.shiftKey) finalRenderOnce = true;
     startRender();
   } else if (e.key === 'Escape') {
-    if (!shortcutsPanel.hidden) closeShortcuts();
+    if (!galleryPanel.hidden) closeGallery();
+    else if (!shortcutsPanel.hidden) closeShortcuts();
     else if (!findBar.hidden) closeFind(false);
     else abortCtl?.abort();
   } else if ((e.key === 'f' || e.key === 'F') && mod && !e.shiftKey && !e.altKey) {
@@ -3416,10 +3560,16 @@ document.addEventListener('keydown', (e) => {
   } else if ((e.key === 'k' || e.key === 'K') && mod && !e.shiftKey && !e.altKey) {
     // Leave the chord alone while another popover/overlay owns the screen (the
     // browser already showing included: re-opening would reset its state).
-    if (!exampleBrowser.hidden || !shortcutsPanel.hidden || isCompleteOpen()) return;
+    if (
+      !exampleBrowser.hidden ||
+      !galleryPanel.hidden ||
+      !shortcutsPanel.hidden ||
+      isCompleteOpen()
+    )
+      return;
     e.preventDefault();
     openBrowser();
-  } else if (e.key === '?' && !mod && !e.altKey && !isTextField(e.target)) {
+  } else if (e.key === '?' && !mod && !e.altKey && galleryPanel.hidden && !isTextField(e.target)) {
     e.preventDefault();
     toggleShortcuts();
   }
