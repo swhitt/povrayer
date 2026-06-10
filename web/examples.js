@@ -35,7 +35,73 @@ export const CATEGORIES = [
   { key: 'motion', label: 'Animation' },
 ];
 
-export const EXAMPLES = [
+export const DIFFICULTIES = [
+  { key: 'intro', label: 'Intro' },
+  { key: 'intermediate', label: 'Intermediate' },
+  { key: 'advanced', label: 'Advanced' },
+];
+
+export const RENDER_TIERS = [
+  { key: 'instant', label: 'Instant', quality: '3' },
+  { key: 'fast', label: 'Fast', quality: '5' },
+  { key: 'heavy', label: 'Heavy', quality: '8' },
+];
+
+const EXAMPLE_META = {
+  'csg-die': { difficulty: 'intro', renderTier: 'fast' },
+  'sunset-sea': { difficulty: 'intro', renderTier: 'fast' },
+  isosurface: { difficulty: 'advanced', renderTier: 'heavy' },
+  blobs: { difficulty: 'intro', renderTier: 'instant' },
+  glass: { difficulty: 'intermediate', renderTier: 'fast' },
+  materials: { difficulty: 'intro', renderTier: 'instant' },
+  helix: { difficulty: 'intermediate', renderTier: 'instant' },
+  'cornell-mood': { difficulty: 'intermediate', renderTier: 'fast' },
+  'focal-marbles': { difficulty: 'advanced', renderTier: 'fast' },
+  'orbit-moons': { difficulty: 'intermediate', renderTier: 'instant' },
+  'pulse-grid': { difficulty: 'intermediate', renderTier: 'instant' },
+  steinmetz: { difficulty: 'intermediate', renderTier: 'instant' },
+  'lathe-vase': { difficulty: 'intro', renderTier: 'instant' },
+  'prism-lantern': { difficulty: 'intermediate', renderTier: 'fast' },
+  'sweep-knot': { difficulty: 'advanced', renderTier: 'fast' },
+  'parametric-shell': { difficulty: 'advanced', renderTier: 'heavy' },
+  'algebraic-heart': { difficulty: 'advanced', renderTier: 'heavy' },
+  'julia-fractal': { difficulty: 'advanced', renderTier: 'heavy' },
+  'menger-sponge': { difficulty: 'advanced', renderTier: 'fast' },
+  'agate-light': { difficulty: 'intro', renderTier: 'instant' },
+  'normal-study': { difficulty: 'intro', renderTier: 'instant' },
+  'photon-caustics': { difficulty: 'advanced', renderTier: 'heavy' },
+  'radiosity-niche': { difficulty: 'advanced', renderTier: 'heavy' },
+  'soft-shadow-colonnade': { difficulty: 'intermediate', renderTier: 'fast' },
+  'god-rays': { difficulty: 'advanced', renderTier: 'heavy' },
+  'heightfield-dunes': { difficulty: 'intermediate', renderTier: 'fast' },
+  'focus-pull': { difficulty: 'advanced', renderTier: 'fast' },
+  'pendulum-wave': { difficulty: 'intermediate', renderTier: 'instant' },
+  'spin-gears': { difficulty: 'advanced', renderTier: 'fast' },
+  'sourced-chess2': { difficulty: 'intro', renderTier: 'fast' },
+  'sourced-wineglass': { difficulty: 'intermediate', renderTier: 'fast' },
+  'sourced-infinity-box': { difficulty: 'intermediate', renderTier: 'fast' },
+  'sourced-isocacti': { difficulty: 'advanced', renderTier: 'heavy' },
+  'sourced-landscape': { difficulty: 'intermediate', renderTier: 'fast' },
+  'sourced-woodbox': { difficulty: 'intro', renderTier: 'instant' },
+  'sourced-sunsethf': { difficulty: 'intermediate', renderTier: 'fast' },
+  'sourced-swirlbox': { difficulty: 'intermediate', renderTier: 'instant' },
+  'sourced-mediasky': { difficulty: 'intro', renderTier: 'fast' },
+  'sourced-mtmand': { difficulty: 'advanced', renderTier: 'heavy' },
+  'sourced-sombrero': { difficulty: 'advanced', renderTier: 'heavy' },
+  'sourced-lamppost': { difficulty: 'intro', renderTier: 'fast' },
+  'sourced-optics': { difficulty: 'intermediate', renderTier: 'fast' },
+  'sourced-quilt': { difficulty: 'intro', renderTier: 'instant' },
+  'sourced-wallstucco': { difficulty: 'intro', renderTier: 'instant' },
+  'sourced-borromean-rings': { difficulty: 'intermediate', renderTier: 'instant' },
+  'sourced-figure-eight-knot': { difficulty: 'advanced', renderTier: 'fast' },
+  'sourced-endless-knot': { difficulty: 'advanced', renderTier: 'fast' },
+  'sourced-alexander-horned': { difficulty: 'advanced', renderTier: 'fast' },
+  'sourced-diffract': { difficulty: 'intro', renderTier: 'instant' },
+};
+
+const addExampleMetadata = (ex) => ({ ...ex, ...EXAMPLE_META[ex.name] });
+
+const CORE_EXAMPLES = [
   {
     name: 'csg-die',
     title: 'CSG dice (superellipsoid difference)',
@@ -2258,6 +2324,8 @@ cylinder { < PitchB, 0, -0.3>, < PitchB, 0, 2.8>, 0.40 texture { AxleTex } }
   },
   ...SOURCED_EXAMPLES,
 ];
+
+export const EXAMPLES = CORE_EXAMPLES.map(addExampleMetadata);
 
 // FROZEN contract: both ui.js and repl.js depend on this exact signature.
 export function getExample(name) {

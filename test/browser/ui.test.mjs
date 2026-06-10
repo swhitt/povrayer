@@ -666,13 +666,61 @@ try {
   const visibleNames = () =>
     page.evaluate(() =>
       [...document.querySelectorAll('.ex-option')]
-        .filter((o) => !o.hidden)
+        .filter((o) => !o.hidden && !o.closest('.ex-group').hidden)
         .map((o) => o.dataset.name)
     );
   const visibleCount = () =>
     page.evaluate(
-      () => [...document.querySelectorAll('.ex-option')].filter((o) => !o.hidden).length
+      () =>
+        [...document.querySelectorAll('.ex-option')].filter(
+          (o) => !o.hidden && !o.closest('.ex-group').hidden
+        ).length
     );
+  const expectedExampleNames = (filters) =>
+    page.evaluate(async (f) => {
+      const { groupByCategory } = await import('/examples.js');
+      const bucket = (ex) =>
+        ex.license === 'CC0-1.0'
+          ? 'cc0'
+          : ex.license === 'GPL-3.0-or-later'
+            ? 'gpl'
+            : 'share-alike';
+      return groupByCategory().flatMap((g) =>
+        g.items
+          .filter((ex) => {
+            const typeMatch =
+              f.type === 'all' || (f.type === 'animated' ? ex.animated : !ex.animated);
+            return (
+              typeMatch &&
+              (f.difficulty === 'all' || ex.difficulty === f.difficulty) &&
+              (f.tier === 'all' || ex.renderTier === f.tier) &&
+              (f.license === 'all' || bucket(ex) === f.license)
+            );
+          })
+          .map((ex) => ex.name)
+      );
+    }, filters);
+  const applyExampleFilters = async (filters) => {
+    await page.selectOption('#example-type', filters.type);
+    await page.selectOption('#example-difficulty', filters.difficulty);
+    await page.selectOption('#example-tier', filters.tier);
+    await page.selectOption('#example-license', filters.license);
+  };
+  const assertFilteredExamples = async (filters, message) => {
+    await applyExampleFilters(filters);
+    const expected = await expectedExampleNames(filters);
+    await page.waitForFunction(
+      (names) =>
+        JSON.stringify(
+          [...document.querySelectorAll('.ex-option')]
+            .filter((o) => !o.hidden && !o.closest('.ex-group').hidden)
+            .map((o) => o.dataset.name)
+        ) === JSON.stringify(names),
+      expected,
+      { timeout: 5_000 }
+    );
+    assert.deepEqual(await visibleNames(), expected, message);
+  };
   const groupHidden = (key) =>
     page.evaluate((k) => document.getElementById(`exgrp-${k}`).parentElement.hidden, key);
   const focusSearch = () => page.evaluate(() => document.getElementById('example-search').focus());
@@ -748,7 +796,7 @@ try {
         .filter((h) => h.getAttribute('aria-expanded') === 'true')
         .map((h) => h.id),
       visible: [...document.querySelectorAll('.ex-option')]
-        .filter((o) => !o.hidden)
+        .filter((o) => !o.hidden && !o.closest('.ex-group').hidden)
         .map((o) => o.dataset.name),
     })),
     {
@@ -797,8 +845,9 @@ try {
   await page.type('#example-search', 'modeling');
   await page.waitForFunction(
     (count) =>
-      [...document.querySelectorAll('.ex-option')].filter((o) => !o.hidden).length === count &&
-      document.getElementById('exgrp-implicit').parentElement.hidden,
+      [...document.querySelectorAll('.ex-option')].filter(
+        (o) => !o.hidden && !o.closest('.ex-group').hidden
+      ).length === count && document.getElementById('exgrp-implicit').parentElement.hidden,
     modelingCount,
     { timeout: 5_000 }
   );
@@ -817,7 +866,9 @@ try {
     (count) =>
       document.getElementById('example-search').value === '' &&
       document.getElementById('example-clear').hidden &&
-      [...document.querySelectorAll('.ex-option')].filter((o) => !o.hidden).length === count,
+      [...document.querySelectorAll('.ex-option')].filter(
+        (o) => !o.hidden && !o.closest('.ex-group').hidden
+      ).length === count,
     modelingCount,
     { timeout: 5_000 }
   );
@@ -826,10 +877,56 @@ try {
     modelingNames,
     'clear restores the compact unfiltered list'
   );
+
+  // structured filters: animation / difficulty / render cost / license all use
+  // the same auto-expand path as text search, and the clear button resets them
+  // as one filter set.
+  await assertFilteredExamples(
+    { type: 'animated', difficulty: 'all', tier: 'all', license: 'all' },
+    'the animation filter shows only animated examples'
+  );
+  await assertFilteredExamples(
+    { type: 'still', difficulty: 'advanced', tier: 'heavy', license: 'all' },
+    'combined still + difficulty + render-cost filters intersect cleanly'
+  );
+  await assertFilteredExamples(
+    { type: 'all', difficulty: 'all', tier: 'all', license: 'share-alike' },
+    'the license filter surfaces adapted share-alike examples'
+  );
+  await assertFilteredExamples(
+    { type: 'all', difficulty: 'all', tier: 'all', license: 'gpl' },
+    'the license filter surfaces GPL examples'
+  );
+  await assertFilteredExamples(
+    { type: 'all', difficulty: 'all', tier: 'all', license: 'cc0' },
+    'the license filter surfaces first-party CC0 examples'
+  );
+  assert.equal(
+    await page.evaluate(() => document.getElementById('example-clear').hidden),
+    false,
+    'a structured filter shows the clear button'
+  );
+  await page.click('#example-clear');
+  await page.waitForFunction(
+    (count) =>
+      document.getElementById('example-type').value === 'all' &&
+      document.getElementById('example-difficulty').value === 'all' &&
+      document.getElementById('example-tier').value === 'all' &&
+      document.getElementById('example-license').value === 'all' &&
+      document.getElementById('example-clear').hidden &&
+      [...document.querySelectorAll('.ex-option')].filter(
+        (o) => !o.hidden && !o.closest('.ex-group').hidden
+      ).length === count,
+    modelingCount,
+    { timeout: 5_000 }
+  );
+
   await page.type('#example-search', 'modeling');
   await page.waitForFunction(
     (count) =>
-      [...document.querySelectorAll('.ex-option')].filter((o) => !o.hidden).length === count,
+      [...document.querySelectorAll('.ex-option')].filter(
+        (o) => !o.hidden && !o.closest('.ex-group').hidden
+      ).length === count,
     modelingCount,
     { timeout: 5_000 }
   );
@@ -848,8 +945,9 @@ try {
   await page.fill('#example-search', 'zzz-no-match');
   await page.waitForFunction(
     () =>
-      [...document.querySelectorAll('.ex-option')].filter((o) => !o.hidden).length === 0 &&
-      !document.getElementById('example-empty').hidden,
+      [...document.querySelectorAll('.ex-option')].filter(
+        (o) => !o.hidden && !o.closest('.ex-group').hidden
+      ).length === 0 && !document.getElementById('example-empty').hidden,
     null,
     { timeout: 5_000 }
   );
@@ -869,7 +967,9 @@ try {
   await page.fill('#example-search', '');
   await page.waitForFunction(
     (count) =>
-      [...document.querySelectorAll('.ex-option')].filter((o) => !o.hidden).length === count &&
+      [...document.querySelectorAll('.ex-option')].filter(
+        (o) => !o.hidden && !o.closest('.ex-group').hidden
+      ).length === count &&
       document.getElementById('exgrp-modeling').getAttribute('aria-expanded') === 'true' &&
       document.getElementById('exgrp-implicit').getAttribute('aria-expanded') === 'false' &&
       document.querySelector('.ex-option.is-active')?.dataset.name === 'csg-die',
@@ -960,12 +1060,17 @@ try {
 
   // Select an animated scene via Enter on its active option: the panel closes,
   // focus returns to the trigger, and the clock autoset prefills frames/fps.
+  // When quality is still automatic, the example's fast-render tier preselects
+  // a concrete quality value.
   // (commitOption, selectExample pristine path, applyExampleClock animated arm,
   // closeBrowser(returnFocus=true), setTriggerLabel re-mark.)
+  await selAdvanced('#quality', '');
   await page.fill('#example-search', 'orbit');
   await page.waitForFunction(
     () => {
-      const v = [...document.querySelectorAll('.ex-option')].filter((o) => !o.hidden);
+      const v = [...document.querySelectorAll('.ex-option')].filter(
+        (o) => !o.hidden && !o.closest('.ex-group').hidden
+      );
       return v.length === 1 && v[0].dataset.name === 'orbit-moons';
     },
     null,
@@ -982,21 +1087,25 @@ try {
     await page.evaluate(() => ({
       frames: document.getElementById('frames').value,
       fps: document.getElementById('fps').value,
+      quality: document.getElementById('quality').value,
       focused: document.activeElement?.id,
       label: document.getElementById('example-trigger-text').textContent,
     })),
     {
       frames: '24',
       fps: '24',
+      quality: '3',
       focused: 'example-trigger',
       label: 'Orbit (two moons, clock-driven)',
     },
-    'an animated example autofills frames/fps, returns focus, and relabels the trigger'
+    'an animated example autofills frames/fps, quality, focus, and trigger label'
   );
 
   // Loading a STILL example must leave dialed-in frames/fps untouched (the
-  // applyExampleClock early-return), and this exercises the click-select path.
+  // applyExampleClock early-return), and a manually-set quality must not be
+  // overwritten by the example tier. This exercises the click-select path.
   // The animate-only inputs are hidden in still mode, so seed them directly.
+  await selAdvanced('#quality', '8');
   await page.evaluate(() => {
     document.getElementById('frames').value = '7';
     document.getElementById('fps').value = '9';
@@ -1006,9 +1115,10 @@ try {
     await page.evaluate(() => ({
       frames: document.getElementById('frames').value,
       fps: document.getElementById('fps').value,
+      quality: document.getElementById('quality').value,
     })),
-    { frames: '7', fps: '9' },
-    'loading a still example must not touch frames/fps'
+    { frames: '7', fps: '9', quality: '8' },
+    'loading a still example must not touch frames/fps or an explicit quality'
   );
 
   // A second trigger click closes an open panel (the toggle's close arm).

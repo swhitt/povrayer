@@ -9,7 +9,14 @@ import {
   parseStats,
   PovrayError,
 } from './render-client.js';
-import { EXAMPLES, getExample, getExampleRecord, groupByCategory } from './examples.js';
+import {
+  DIFFICULTIES,
+  EXAMPLES,
+  RENDER_TIERS,
+  getExample,
+  getExampleRecord,
+  groupByCategory,
+} from './examples.js';
 import { highlight } from './highlight.js';
 import { validateScene } from './sdl-validate.js';
 import { encodeState, decodeState } from './permalink.js';
@@ -39,6 +46,14 @@ const exampleTriggerText = document.getElementById('example-trigger-text');
 const exampleBrowser = document.getElementById('example-browser');
 const exampleSearch = /** @type {HTMLInputElement} */ (document.getElementById('example-search'));
 const exampleClear = /** @type {HTMLButtonElement} */ (document.getElementById('example-clear'));
+const exampleType = /** @type {HTMLSelectElement} */ (document.getElementById('example-type'));
+const exampleDifficulty = /** @type {HTMLSelectElement} */ (
+  document.getElementById('example-difficulty')
+);
+const exampleTier = /** @type {HTMLSelectElement} */ (document.getElementById('example-tier'));
+const exampleLicense = /** @type {HTMLSelectElement} */ (
+  document.getElementById('example-license')
+);
 const exampleListbox = document.getElementById('example-listbox');
 const exampleEmpty = document.getElementById('example-empty');
 const exampleAttrText = document.querySelector('#example-attribution .ex-attr-text');
@@ -148,6 +163,23 @@ const exampleGroups = [];
 // The roving aria-activedescendant item: a category HEAD or an OPTION, or null.
 let activeItem = null;
 
+const labelByKey = (items, key) => items.find((item) => item.key === key).label;
+const tierByKey = (key) => RENDER_TIERS.find((tier) => tier.key === key);
+const LICENSE_BUCKET = {
+  'CC0-1.0': 'cc0',
+  'CC-BY-4.0': 'share-alike',
+  'CC-BY-SA-3.0': 'share-alike',
+  'CC-BY-SA-4.0': 'share-alike',
+  MIT: 'share-alike',
+  'Apache-2.0': 'share-alike',
+  'BSD-3-Clause': 'share-alike',
+  'GPL-3.0-or-later': 'gpl',
+};
+
+function licenseBucket(ex) {
+  return LICENSE_BUCKET[ex.license];
+}
+
 // Render one .ex-group per CATEGORIES entry (in order) and one .ex-option per
 // scene. The head is a disclosure toggle (role=button + aria-expanded) carrying
 // a caret, the label, and a scene count. No `if (items.length)` guard: the node
@@ -208,10 +240,22 @@ function buildExampleBrowser() {
       groupEl.appendChild(opt);
       // Filter target: everything a user might type, joined + lowercased. Tags
       // and the category label fuel the search without ever showing per-row.
-      const haystack = [ex.name, ex.title, ex.description, ex.author, ...ex.tags, group.label]
+      const haystack = [
+        ex.name,
+        ex.title,
+        ex.description,
+        ex.author,
+        ex.license,
+        ex.difficulty,
+        labelByKey(DIFFICULTIES, ex.difficulty),
+        ex.renderTier,
+        labelByKey(RENDER_TIERS, ex.renderTier),
+        ...ex.tags,
+        group.label,
+      ]
         .join(' ')
         .toLowerCase();
-      opts.push({ el: opt, haystack });
+      opts.push({ el: opt, ex, haystack });
       optionEls.push(opt);
     }
     exampleListbox.insertBefore(groupEl, exampleEmpty);
@@ -231,16 +275,14 @@ function hasExample(name) {
 
 // Per-row byline for an example option. The popover footer (.ex-attr) already
 // shows the active option's author/license, so a row earns a third line only
-// when it carries non-default (third-party) credit; for the shipped in-house
-// scenes the byline would just repeat the footer on all 29 rows.
+// when it carries non-default (third-party) credit; for in-house scenes the
+// byline would just repeat the footer on every row.
 function exByline(ex) {
-  /* c8 ignore next -- every shipped scene carries the default povrayer attribution; the credit arm lights up when an adapted third-party scene lands */
   return ex.author === 'povrayer' ? '' : `${ex.author} · ${ex.license}`;
 }
 
 // Footer attribution. Branch-free: the link's visibility is an assignment off
-// sourceUrl (every shipped scene ships ''), so the "shown" outcome lights up
-// automatically if an adapted scene with a real URL ever lands.
+// sourceUrl, so first-party rows hide the link and sourced rows show it.
 function updateAttribution(ex) {
   exampleAttrText.textContent = `by ${ex.author} · ${ex.license}`;
   exampleAttrSrc.href = ex.sourceUrl; // '' is fine; the link stays hidden
@@ -277,6 +319,11 @@ function applyExampleClock(record) {
   framesInput.value = String(record.frames);
   fpsInput.value = String(record.fps);
   player.setFps(record.fps);
+}
+
+function applyExampleRenderDefaults(record) {
+  if (qualitySelect.value !== '') return;
+  qualitySelect.value = tierByKey(record.renderTier).quality;
 }
 
 function readSavedState() {
@@ -463,6 +510,7 @@ function selectExample(name) {
   editor.value = source;
   lastLoadedSource = source;
   applyExampleClock(record); // BEFORE scheduleDraft
+  applyExampleRenderDefaults(record);
   setTriggerLabel(name); // trigger text + data-name + re-mark loaded option
   reflectSceneReplaced();
 }
@@ -529,23 +577,52 @@ function setActive(item) {
 // shows its rows only when expanded. A head hides only when a search excludes
 // it. #example-empty shows ONLY when a search matches nothing, never merely
 // because categories are collapsed.
+function hasExampleFilters() {
+  return (
+    exampleSearch.value.trim() !== '' ||
+    exampleType.value !== 'all' ||
+    exampleDifficulty.value !== 'all' ||
+    exampleTier.value !== 'all' ||
+    exampleLicense.value !== 'all'
+  );
+}
+
+function resetExampleFilters() {
+  exampleSearch.value = '';
+  exampleType.value = 'all';
+  exampleDifficulty.value = 'all';
+  exampleTier.value = 'all';
+  exampleLicense.value = 'all';
+}
+
+function matchesExampleFilters(ex) {
+  const typeMatch =
+    exampleType.value === 'all' || (exampleType.value === 'animated' ? ex.animated : !ex.animated);
+  return (
+    typeMatch &&
+    (exampleDifficulty.value === 'all' || ex.difficulty === exampleDifficulty.value) &&
+    (exampleTier.value === 'all' || ex.renderTier === exampleTier.value) &&
+    (exampleLicense.value === 'all' || licenseBucket(ex) === exampleLicense.value)
+  );
+}
+
 function renderList() {
   const q = exampleSearch.value.trim().toLowerCase();
-  const searching = q !== '';
-  exampleClear.hidden = !searching;
+  const filtering = hasExampleFilters();
+  exampleClear.hidden = !filtering;
   let anyMatch = false;
   for (const g of exampleGroups) {
     let groupHasMatch = false;
-    for (const { el, haystack } of g.opts) {
-      const match = q === '' || haystack.includes(q);
-      el.hidden = !(match && (searching || !g.collapsed));
+    for (const { el, ex, haystack } of g.opts) {
+      const match = (q === '' || haystack.includes(q)) && matchesExampleFilters(ex);
+      el.hidden = !(match && (filtering || !g.collapsed));
       if (match) groupHasMatch = true;
     }
-    g.groupEl.hidden = searching && !groupHasMatch;
-    g.headEl.setAttribute('aria-expanded', String(searching ? groupHasMatch : !g.collapsed));
+    g.groupEl.hidden = filtering && !groupHasMatch;
+    g.headEl.setAttribute('aria-expanded', String(filtering ? groupHasMatch : !g.collapsed));
     if (groupHasMatch) anyMatch = true;
   }
-  exampleEmpty.hidden = !(searching && !anyMatch);
+  exampleEmpty.hidden = !(filtering && !anyMatch);
 }
 
 function setGroupCollapsed(g, collapsed) {
@@ -568,7 +645,7 @@ function moveActiveTo(index) {
 function openBrowser() {
   exampleBrowser.hidden = false;
   exampleTrigger.setAttribute('aria-expanded', 'true');
-  exampleSearch.value = '';
+  resetExampleFilters();
   // Open COMPACT: collapse every category except the loaded scene's, so its
   // rows are the only ones showing and the panel isn't a 29-row wall.
   const loaded = document.getElementById(`ex-opt-${selectedExample}`);
@@ -582,7 +659,7 @@ function openBrowser() {
 function closeBrowser(returnFocus) {
   exampleBrowser.hidden = true;
   exampleTrigger.setAttribute('aria-expanded', 'false');
-  exampleSearch.value = '';
+  resetExampleFilters();
   setActive(null);
   if (returnFocus) exampleTrigger.focus();
 }
@@ -619,11 +696,18 @@ exampleSearch.addEventListener('input', () => {
 
 exampleClear.addEventListener('mousedown', (e) => e.preventDefault());
 exampleClear.addEventListener('click', () => {
-  exampleSearch.value = '';
+  resetExampleFilters();
   renderList();
   setActive(visibleOptions()[0] ?? null);
   exampleSearch.focus();
 });
+
+for (const filter of [exampleType, exampleDifficulty, exampleTier, exampleLicense]) {
+  filter.addEventListener('change', () => {
+    renderList();
+    setActive(visibleOptions()[0] ?? null);
+  });
+}
 
 exampleSearch.addEventListener('keydown', (e) => {
   const items = navItems();

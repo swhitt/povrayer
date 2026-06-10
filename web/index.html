@@ -62,6 +62,31 @@
               />
               <button id="example-clear" type="button" aria-label="clear filter" hidden>x</button>
             </div>
+            <div class="ex-filter-row" aria-label="example filters">
+              <select id="example-type" aria-label="filter by animation">
+                <option value="all">all</option>
+                <option value="still">still</option>
+                <option value="animated">animated</option>
+              </select>
+              <select id="example-difficulty" aria-label="filter by difficulty">
+                <option value="all">any level</option>
+                <option value="intro">intro</option>
+                <option value="intermediate">intermediate</option>
+                <option value="advanced">advanced</option>
+              </select>
+              <select id="example-tier" aria-label="filter by render cost">
+                <option value="all">any speed</option>
+                <option value="instant">instant</option>
+                <option value="fast">fast</option>
+                <option value="heavy">heavy</option>
+              </select>
+              <select id="example-license" aria-label="filter by license">
+                <option value="all">any license</option>
+                <option value="cc0">cc0</option>
+                <option value="share-alike">share-alike</option>
+                <option value="gpl">gpl</option>
+              </select>
+            </div>
 
             <div id="example-listbox" role="listbox" aria-label="example scenes">
               <!-- ui.js generates one .ex-group per CATEGORIES entry, in order. -->

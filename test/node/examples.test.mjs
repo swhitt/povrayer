@@ -8,6 +8,8 @@ import assert from 'node:assert/strict';
 import {
   EXAMPLES,
   CATEGORIES,
+  DIFFICULTIES,
+  RENDER_TIERS,
   getExample,
   getExampleRecord,
   groupByCategory,
@@ -30,6 +32,8 @@ test('EXAMPLES is a non-empty array of fully-specified records', () => {
   assert.ok(EXAMPLES.length > 0, 'EXAMPLES must not be empty');
 
   const keys = new Set(CATEGORIES.map((c) => c.key));
+  const difficultyKeys = new Set(DIFFICULTIES.map((d) => d.key));
+  const renderTierKeys = new Set(RENDER_TIERS.map((t) => t.key));
 
   for (const ex of EXAMPLES) {
     assert.equal(typeof ex.name, 'string', 'name must be a string');
@@ -66,6 +70,14 @@ test('EXAMPLES is a non-empty array of fully-specified records', () => {
     assert.ok(ex.description.length <= 100, `description must be <= 100 chars (${ex.name})`);
     assert.ok(!ex.description.endsWith('.'), `description must not end with a period (${ex.name})`);
     assert.match(ex.description, /^[A-Z]/, `description must be sentence case (${ex.name})`);
+    assert.ok(
+      difficultyKeys.has(ex.difficulty),
+      `difficulty '${ex.difficulty}' is not a DIFFICULTIES key (${ex.name})`
+    );
+    assert.ok(
+      renderTierKeys.has(ex.renderTier),
+      `renderTier '${ex.renderTier}' is not a RENDER_TIERS key (${ex.name})`
+    );
 
     // author non-empty; sourceUrl is '' or an https URL; license is on the list.
     assert.ok(
@@ -120,6 +132,34 @@ test('CATEGORIES keys are unique and each homes at least one scene', () => {
       members.length >= 1,
       `category '${c.key}' has no scenes (the UI builds an empty group head)`
     );
+  }
+});
+
+test('metadata taxonomies are unique and fully represented', () => {
+  assert.equal(
+    new Set(DIFFICULTIES.map((d) => d.key)).size,
+    DIFFICULTIES.length,
+    'duplicate difficulty key(s)'
+  );
+  assert.equal(
+    new Set(RENDER_TIERS.map((t) => t.key)).size,
+    RENDER_TIERS.length,
+    'duplicate render tier key(s)'
+  );
+
+  for (const d of DIFFICULTIES) {
+    assert.ok(
+      EXAMPLES.some((e) => e.difficulty === d.key),
+      `difficulty '${d.key}' is unused`
+    );
+  }
+  for (const t of RENDER_TIERS) {
+    assert.ok(
+      EXAMPLES.some((e) => e.renderTier === t.key),
+      `render tier '${t.key}' is unused`
+    );
+    assert.equal(typeof t.quality, 'string', `render tier quality must be a string (${t.key})`);
+    assert.ok(t.quality.length > 0, `render tier quality must be non-empty (${t.key})`);
   }
 });
 

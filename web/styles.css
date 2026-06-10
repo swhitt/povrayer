@@ -557,7 +557,7 @@ body.ui main > * {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 28px;
   gap: 6px;
-  margin: 8px; /* the popover's 8px rhythm (.ex-attr, .ex-empty), not a one-off 6px */
+  margin: 8px 8px 6px;
 }
 
 #example-search {
@@ -579,6 +579,22 @@ body.ui main > * {
 #example-clear:hover {
   color: var(--text);
   border-color: var(--border-strong);
+}
+
+.ex-filter-row {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0 8px 8px;
+}
+
+.ex-filter-row select {
+  min-width: 0;
+  width: 100%;
+  height: 26px;
+  padding: 0 18px 0 6px;
+  font-size: var(--fs-chrome);
 }
 
 #example-listbox {
