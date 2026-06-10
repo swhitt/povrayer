@@ -5,11 +5,18 @@
 // runs this and uploads its root; the local full run goes through here too
 // (shard 'full'), so there is exactly ONE collection path and the sharded gate
 // can't diverge from the single-process one.
-import { rm, mkdir } from 'node:fs/promises';
+import { rm, mkdir, readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { repoRoot, rawRoot, rawNodeDir, rawBrowserDir } from './paths.mjs';
+
+// Deep requires into c8: deliberate. c8 has no exports map, the Report half of
+// the package is yargs-free, and only the yargs half is broken on Node >= 26.
+const require = createRequire(import.meta.url);
+const { outputReport } = require('c8/lib/commands/report.js');
+const defaultExtension = require('@istanbuljs/schema/default-extension');
 
 // shard -> test command. Single-sourced so CI and local can't drift. The browser
 // drivers run standalone (no pretest hook needed); the node shard goes through
@@ -38,31 +45,49 @@ export async function collectRaw(shard) {
   await mkdir(nodeDir, { recursive: true });
   await mkdir(browserDir, { recursive: true });
 
-  // c8 reads .c8rc.json (all:true, include/exclude, json reporter) but we steer
-  // its output per shard with --reports-dir / --temp-directory. POVRAYER_COVERAGE
-  // makes the browser drivers dump V8 into POVRAYER_COVERAGE_DIR.
-  const run = spawnSync(
-    'npx',
-    [
-      'c8',
-      '--config',
-      '.c8rc.json',
-      '--reports-dir',
-      nodeDir,
-      '--temp-directory',
-      resolve(nodeDir, '.v8'),
-      ...cmd,
-    ],
-    {
-      cwd: repoRoot,
-      stdio: 'inherit',
-      env: {
-        ...process.env,
-        POVRAYER_COVERAGE: '1',
-        POVRAYER_COVERAGE_DIR: browserDir,
-      },
-    }
-  );
+  // The c8 CLI is unusable on Node >= 26 (its yargs 17 dependency ships an
+  // extensionless CJS entry that newer Node force-parses as ESM and crashes),
+  // so this replicates the CLI's two halves directly: NODE_V8_COVERAGE on the
+  // child is the entire instrumentation story (every Node process in the tree
+  // inherits it and dumps V8 JSON), and c8's yargs-free outputReport() is the
+  // CLI's own report path. .c8rc.json still holds all:true + include/exclude
+  // (the keys the CLI would have read); we steer output per shard with
+  // reports-dir / temp-directory, exactly as the old --flags did.
+  // POVRAYER_COVERAGE makes the browser drivers dump V8 into
+  // POVRAYER_COVERAGE_DIR.
+  const tempDir = resolve(nodeDir, '.v8');
+  await mkdir(tempDir, { recursive: true });
+  const run = spawnSync(cmd[0], cmd.slice(1), {
+    cwd: repoRoot,
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      NODE_V8_COVERAGE: tempDir,
+      POVRAYER_COVERAGE: '1',
+      POVRAYER_COVERAGE_DIR: browserDir,
+    },
+  });
+  const c8rc = JSON.parse(await readFile(resolve(repoRoot, '.c8rc.json'), 'utf8'));
+  // Mirrors lib/commands/report.js's argv contract; the literals are the CLI
+  // defaults .c8rc.json relied on (extension list, omit-relative, resolve).
+  await outputReport({
+    include: c8rc.include,
+    exclude: c8rc.exclude,
+    extension: defaultExtension,
+    excludeAfterRemap: false,
+    reporter: c8rc.reporter,
+    'reports-dir': nodeDir,
+    tempDirectory: tempDir,
+    resolve: '',
+    omitRelative: true,
+    wrapperLength: 0,
+    all: c8rc.all,
+    allowExternal: false,
+    src: c8rc.src,
+    skipFull: false,
+    excludeNodeModules: c8rc.excludeNodeModules,
+    mergeAsync: false,
+  });
   return run.status ?? 1;
 }
 
