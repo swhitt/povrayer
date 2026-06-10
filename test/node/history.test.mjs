@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { addSnapshot, snapshotPreview, relativeTime } from '../../web/history.js';
+import { addSnapshot, snapshotPreview, relativeTime, lineDelta } from '../../web/history.js';
 
 test('addSnapshot prepends newest-first', () => {
   const a = addSnapshot([], 'one', 1000, 20);
@@ -48,6 +48,26 @@ test('snapshotPreview truncates long lines and handles a blank scene', () => {
   assert.equal(out.length, 48);
   assert.ok(out.endsWith('…'));
   assert.equal(snapshotPreview('   \n\t\n'), '(blank scene)');
+});
+
+test('lineDelta counts lines unique to each side (no LCS)', () => {
+  assert.deepEqual(lineDelta('a\nb\nc', 'a\nb\nd\ne'), { added: 2, removed: 1 });
+  assert.deepEqual(lineDelta('a', 'a\nb'), { added: 1, removed: 0 });
+  assert.deepEqual(lineDelta('a\nb', 'a'), { added: 0, removed: 1 });
+});
+
+test('lineDelta is a multiset count: duplicate lines tally per occurrence', () => {
+  assert.deepEqual(lineDelta('x\nx\ny', 'x\ny\ny'), { added: 1, removed: 1 });
+});
+
+test('lineDelta: a pure reorder is "+0 −0", not identical', () => {
+  assert.deepEqual(lineDelta('a\nb', 'b\na'), { added: 0, removed: 0 });
+});
+
+test('lineDelta returns null only for byte-identical texts', () => {
+  assert.equal(lineDelta('a\nb', 'a\nb'), null);
+  assert.equal(lineDelta('', ''), null);
+  assert.deepEqual(lineDelta('', 'a'), { added: 1, removed: 1 }); // '' is one empty line
 });
 
 test('relativeTime buckets seconds / minutes / hours / days', () => {

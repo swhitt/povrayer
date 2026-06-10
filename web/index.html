@@ -114,6 +114,24 @@
                  (CSS keys off #editor-wrap.drag-over). pointer-events:none so the
                  drop still lands on the textarea. -->
             <div id="drop-hint" aria-hidden="true">drop an image, .inc, or .pov to import</div>
+            <!-- Find / go-to-line bar, pinned over the editor's top edge. One
+                 input serves both modes (Ctrl/Cmd+F find, Ctrl/Cmd+G go to
+                 line); ui.js swaps the placeholder and the dim counter copy.
+                 Enter cycles matches (Shift+Enter back), Esc returns to the
+                 editor at the current match. -->
+            <div id="find-bar" role="search" aria-label="find in scene" hidden>
+              <input
+                id="find-input"
+                type="text"
+                placeholder="find"
+                aria-label="find in scene"
+                autocomplete="off"
+                autocapitalize="off"
+                autocorrect="off"
+                spellcheck="false"
+              />
+              <span id="find-count" aria-live="polite">0/0</span>
+            </div>
           </div>
         </div>
         <!-- Dropped-asset chips (images/.inc staged into the render FS); ui.js
@@ -193,6 +211,14 @@
               aria-label="height (pixels)"
               title="height (pixels)"
             />
+            <button
+              id="swap-size"
+              type="button"
+              aria-label="swap width and height"
+              title="swap width and height"
+            >
+              ⇄
+            </button>
           </span>
           <span class="ctl-group animate-only">
             <label title="frame count (1..240)"
@@ -203,7 +229,13 @@
             /></label>
           </span>
           <span class="actions">
-            <button id="render-btn" type="button" title="Ctrl/Cmd+Enter">Render</button>
+            <button
+              id="render-btn"
+              type="button"
+              title="Ctrl/Cmd+Enter · Shift+Ctrl/Cmd+Enter renders once at final quality (q9, antialias 0.05)"
+            >
+              Render
+            </button>
             <button id="cancel-btn" type="button" title="Esc" hidden>Cancel</button>
             <button
               id="copy-link-btn"
@@ -242,6 +274,14 @@
                   <option value="0.05">0.05</option>
                 </select></label
               >
+              <label title="live-draft preview size: the longest edge in pixels (smaller is faster)"
+                >draft
+                <select id="draft-size">
+                  <option>256</option>
+                  <option selected>320</option>
+                  <option>512</option>
+                </select></label
+              >
               <label title="worker threads (auto = hardware concurrency)"
                 >threads <input id="threads" type="number" min="1" max="32" placeholder="auto"
               /></label>
@@ -276,6 +316,21 @@
           <div id="history-list" aria-label="rendered scene history"></div>
         </details>
       </section>
+      <!-- Two-column splitter (WAI-ARIA window-splitter): drag or Arrow keys
+           resize the editor/output panes, double-click or Home resets to 50/50.
+           ui.js drives main's split custom property and persists it; CSS
+           hides the handle below the two-column breakpoint. -->
+      <div
+        id="split-handle"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="resize editor and output panes"
+        aria-valuemin="20"
+        aria-valuemax="80"
+        aria-valuenow="50"
+        tabindex="0"
+        title="drag to resize · double-click to reset"
+      ></div>
       <section id="output-pane" aria-label="render output">
         <div id="status-row">
           <div id="status" role="status" data-state="idle">no render yet</div>
@@ -312,8 +367,9 @@
             step="1"
             aria-label="frame scrubber"
           />
-          <span id="frame-readout" class="player-readout">0 / 0</span>
-          <span id="fps-readout" class="player-readout">12 fps</span>
+          <!-- One merged readout ("7 / 24 · 12 fps"); ui.js rewrites it on every
+               frame draw and fps change. -->
+          <span id="frame-readout" class="player-readout">0 / 0 · 12 fps</span>
           <button id="loop-btn" class="toggle-btn" type="button" aria-pressed="true">loop</button>
           <span class="export-field">
             <select id="export-format" aria-label="animation export format">
@@ -345,14 +401,59 @@
         </div>
         <dl id="stats" class="stats still-only" aria-label="render statistics" hidden></dl>
         <details id="log-details" hidden>
-          <summary id="log-summary">render log</summary>
+          <summary id="log-summary">
+            <span id="log-label" class="disclosure-label">render log</span>
+            <span id="log-count" class="disclosure-count"></span>
+          </summary>
           <pre id="log" tabindex="0" aria-label="render log"></pre>
         </details>
       </section>
     </main>
+    <!-- Keyboard-shortcuts overlay: toggled by ? (outside text fields) or the
+         footer hint; Esc or ? closes. ui.js owns the focus handoff (panel on
+         open, opener back on close). tabindex="-1" makes the panel itself
+         focusable so opening lands focus inside the dialog. -->
+    <div id="shortcuts" role="dialog" aria-label="keyboard shortcuts" tabindex="-1" hidden>
+      <h2>keyboard shortcuts</h2>
+      <dl class="shortcuts-list">
+        <dt><kbd>Ctrl/Cmd</kbd> <kbd>Enter</kbd></dt>
+        <dd>render</dd>
+        <dt><kbd>Shift</kbd> <kbd>Ctrl/Cmd</kbd> <kbd>Enter</kbd></dt>
+        <dd>final-quality render (q9, antialias 0.05)</dd>
+        <dt><kbd>Esc</kbd></dt>
+        <dd>cancel a running render</dd>
+        <dt><kbd>Tab</kbd> / <kbd>Shift</kbd> <kbd>Tab</kbd></dt>
+        <dd>indent / outdent in the editor</dd>
+        <dt><kbd>Esc</kbd> then <kbd>Tab</kbd></dt>
+        <dd>move focus out of the editor</dd>
+        <dt><kbd>Ctrl</kbd> <kbd>Space</kbd></dt>
+        <dd>completions</dd>
+        <dt><kbd>Alt</kbd> drag</dt>
+        <dd>scrub a number in the editor</dd>
+        <dt><kbd>Alt</kbd> <kbd>↑</kbd>/<kbd>↓</kbd></dt>
+        <dd>step the number under the caret, else move lines</dd>
+        <dt><kbd>Alt</kbd> <kbd>Shift</kbd> <kbd>↑</kbd>/<kbd>↓</kbd></dt>
+        <dd>10× number step, else duplicate lines</dd>
+        <dt><kbd>Ctrl/Cmd</kbd> <kbd>/</kbd></dt>
+        <dd>toggle // line comments</dd>
+        <dt><kbd>Ctrl/Cmd</kbd> <kbd>F</kbd></dt>
+        <dd>find in the scene (Enter next, Shift+Enter previous)</dd>
+        <dt><kbd>Ctrl/Cmd</kbd> <kbd>G</kbd></dt>
+        <dd>go to line</dd>
+        <dt><kbd>Ctrl/Cmd</kbd> <kbd>S</kbd></dt>
+        <dd>download the scene as scene.pov</dd>
+        <dt><kbd>Ctrl/Cmd</kbd> <kbd>K</kbd></dt>
+        <dd>example browser</dd>
+        <dt><kbd>?</kbd></dt>
+        <dd>this overlay</dd>
+      </dl>
+    </div>
     <footer>
       <a href="https://github.com/swhitt/povrayer">source</a> ·
-      <a href="https://www.povray.org/documentation/">scene docs</a>
+      <a href="https://www.povray.org/documentation/">scene docs</a> ·
+      <button id="shortcuts-hint" type="button" aria-haspopup="dialog" aria-controls="shortcuts">
+        <kbd>?</kbd> shortcuts
+      </button>
     </footer>
     <script type="module" src="./ui.js"></script>
   </body>

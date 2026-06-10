@@ -175,12 +175,17 @@ try {
     /^render-160x120/,
     `download filename should reflect the render opts, got: ${downloadName}`
   );
-  // The raw log lives behind a disclosure whose summary carries the line count.
-  const logSummary = await page.evaluate(() => document.getElementById('log-summary').textContent);
+  // The raw log lives behind a disclosure whose summary carries the label +
+  // dim line-count pair (the shared disclosure-label/-count structure).
+  const logSummary = await page.evaluate(() => ({
+    label: document.getElementById('log-label').textContent,
+    count: document.getElementById('log-count').textContent,
+  }));
+  assert.equal(logSummary.label, 'render log', 'log summary label after a successful render');
   assert.match(
-    logSummary,
-    /render log \(\d+ lines\)/,
-    `unexpected log summary after a successful render: ${logSummary}`
+    logSummary.count,
+    /^\(\d+ lines\)$/,
+    `unexpected log summary count after a successful render: ${logSummary.count}`
   );
 
   // Stats readout: the still render populates the chip row (showStats). The
@@ -284,7 +289,11 @@ try {
   );
 
   // Explicit render: Stop appears with the spinner the instant a render is in
-  // flight, and activating it cancels exactly like the toolbar Cancel.
+  // flight, and activating it cancels exactly like the toolbar Cancel. Stop is
+  // the single-column affordance (CSS hides it at the two-column breakpoint,
+  // where the toolbar Cancel is the one stop control), so click it at a mobile
+  // viewport.
+  await page.setViewportSize({ width: 480, height: 900 });
   await page.fill('#width', '1024');
   await page.fill('#height', '768');
   await selAdvanced('#antialias', '0.05');
@@ -312,6 +321,7 @@ try {
     160,
     'a Stop-cancelled render must not replace the previous image'
   );
+  await page.setViewportSize({ width: 1280, height: 720 });
 
   // --- render-client.js direct coverage --------------------------------------
   // The UI's happy/cancel paths leave a handful of render-client branches
@@ -583,36 +593,40 @@ try {
     null,
     { timeout: 5_000 }
   );
-  await page.waitForFunction(
-    () => !document.querySelector('#output-pane .zoom-toggle').hidden,
-    null,
-    {
-      timeout: 5_000,
-    }
+  // A 160px image in a wider pane fits at 100%, where fit IS 1:1: the toggle
+  // would be a no-op, so the chip hides and the image click is the pointer
+  // path into 1:1.
+  await page.evaluate(() => window.dispatchEvent(new Event('resize'))); // updateZoomLabel fit path
+  assert.equal(
+    await page.evaluate(() => document.querySelector('#output-pane .zoom-toggle').hidden),
+    true,
+    'the zoom chip hides while fit equals 100%'
   );
-  assert.match(
-    await page.evaluate(() => document.querySelector('#output-pane .zoom-toggle').textContent),
-    /^fit/,
-    'zoom toggle should read fit before engaging 1:1'
-  );
-  await page.click('#output-pane .zoom-toggle'); // toggleZoom -> 1:1
+  await page.click('#output'); // clicking the image engages 1:1
   assert.equal(
     await page.evaluate(() => document.getElementById('output').classList.contains('zoom-1x')),
     true,
-    'zoom toggle should engage 1:1'
+    'clicking the image should engage 1:1'
   );
-  assert.equal(
-    await page.evaluate(() => document.querySelector('#output-pane .zoom-toggle').textContent),
-    '1:1',
-    'zoom label should read 1:1 when engaged'
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const z = document.querySelector('#output-pane .zoom-toggle');
+      return { hidden: z.hidden, text: z.textContent };
+    }),
+    { hidden: false, text: '1:1' },
+    'the zoom chip shows, reading 1:1, while engaged'
   );
-  await page.click('#output'); // clicking the visible image toggles back to fit
+  await page.click('#output-pane .zoom-toggle'); // toggleZoom -> back to fit
   assert.equal(
     await page.evaluate(() => document.getElementById('output').classList.contains('zoom-1x')),
     false,
-    'clicking the image should toggle back to fit'
+    'the zoom toggle should return to fit'
   );
-  await page.evaluate(() => window.dispatchEvent(new Event('resize'))); // updateZoomLabel fit path
+  assert.equal(
+    await page.evaluate(() => document.querySelector('#output-pane .zoom-toggle').hidden),
+    true,
+    'back at a 100% fit the chip hides again'
+  );
 
   // --- example browser: open / filter / navigate / select + dirty guard ------
   // The flat <select> is gone; the example picker is now an editable-combobox
@@ -1581,7 +1595,7 @@ try {
         return document.getElementById('frame-readout').textContent;
       }
     }),
-    { aria: 'frame 2 of 3', readout: '2 / 3' },
+    { aria: 'frame 2 of 3', readout: '2 / 3 · 12 fps' },
     'the scrubber aria-valuetext must read "frame 2 of 3" on a seek to index 1'
   );
   await page.fill('#fps', '20'); // valid -> player.setFps(20)
@@ -1624,10 +1638,14 @@ try {
     }
   });
   assert.equal(resync.scheduled, true, 'play() must schedule a tick through the stubbed rAF');
-  assert.equal(resync.before, '1 / 3', 'the player must start parked on frame 0 (reads "1 / 3")');
+  assert.equal(
+    resync.before,
+    '1 / 3 · 12 fps',
+    'the player must start parked on frame 0 (reads "1 / 3 · 12 fps")'
+  );
   assert.equal(
     resync.after,
-    '2 / 3',
+    '2 / 3 · 12 fps',
     'a stalled tick must resync and advance exactly one frame (not burst the backlog)'
   );
   assert.equal(resync.aria, 'frame 2 of 3', 'the resync-advanced frame announces "frame 2 of 3"');
@@ -1899,29 +1917,31 @@ try {
     false,
     'switching back to still should re-show the kept image'
   );
-  // ...and switching back to still (image present) reads 'render ready', never a
-  // lingering 'animation ready' / 'live draft' line.
+  // ...and switching back to still (image present) names the kept artifact +
+  // its dims, never a lingering 'animation ready' / 'live draft' line (and
+  // never a bare 'render ready', which reads as engine readiness).
   assert.deepEqual(
     await page.evaluate(() => {
       const s = document.getElementById('status');
       return { text: s.textContent, state: s.dataset.state };
     }),
-    { text: 'render ready', state: 'idle' },
-    'switching back into still with a kept image must read "render ready"'
+    { text: 'still ready · 48×36', state: 'idle' },
+    'switching back into still with a kept image must read "still ready · 48×36"'
   );
 
   // updateZoomLabel with a zero-width (but shown) image: clientWidth/naturalWidth
-  // rounds to 0, so the label falls back to '|| 100'.
+  // rounds to 0, so the percentage falls back to '|| 100', and at 100% the
+  // fit/1:1 toggle is a no-op so the chip hides.
   await page.evaluate(() => {
     const o = document.getElementById('output');
     o.style.width = '0px';
     window.dispatchEvent(new Event('resize'));
     o.style.width = '';
   });
-  assert.match(
-    await page.evaluate(() => document.querySelector('#output-pane .zoom-toggle').textContent),
-    /fit \(100%\)/,
-    'a zero-width image should fall back to a 100% fit label'
+  assert.equal(
+    await page.evaluate(() => document.querySelector('#output-pane .zoom-toggle').hidden),
+    true,
+    'a zero-width image falls back to 100% fit, where the zoom chip hides'
   );
 
   // Persistence: invalid mode/frames/fps fall back to still/24/12 across the
@@ -2482,7 +2502,11 @@ try {
     false,
     'stop button should show while a live draft is in flight'
   );
+  // Stop is display:none at the two-column breakpoint (Cancel owns desktop), so
+  // take the mobile viewport to click it for real.
+  await page.setViewportSize({ width: 480, height: 900 });
   await page.click('#stop-btn'); // aborts the draft AND turns live-draft off
+  await page.setViewportSize({ width: 1280, height: 720 });
   assert.equal(
     await ariaPressed('live-toggle'),
     'false',
@@ -2826,9 +2850,9 @@ try {
   assert.equal(await aria('mode-animate'), 'true', 'animate toggle reflects pressed');
   assert.equal(await ctlValue('fps'), '30', 'permalink hydrates fps in animate');
   assert.match(
-    await page.evaluate(() => document.getElementById('fps-readout').textContent),
-    /30/,
-    'player.setFps reflects the hydrated fps in the readout'
+    await page.evaluate(() => document.getElementById('frame-readout').textContent),
+    /30 fps/,
+    'player.setFps reflects the hydrated fps in the merged readout'
   );
   // A live draft never fires in animate (scheduleDraft self-guards to still).
   assert.equal(
@@ -3669,6 +3693,260 @@ try {
     await page.evaluate(() => document.getElementById('history').hidden),
     true,
     'malformed history JSON is swallowed'
+  );
+
+  // ===========================================================================
+  // Power-user batch: the find / go-to-line bar, the draggable editor/output
+  // split (drag + keyboard + persistence), history delta badges, and the
+  // draft-size select driving the live draft's rendered size.
+  // ===========================================================================
+
+  // -- find bar + split restore (one seeded reload covers both) ---------------
+  const FIND_SCENE = 'line a\nfoo bar\nline c\nFOO again\nlast foo';
+  await seedReload(JSON.stringify({ source: FIND_SCENE, liveDraft: false, split: 1.5 }));
+
+  assert.equal(
+    await page.evaluate(() => document.querySelector('main').style.getPropertyValue('--split')),
+    '1.5fr',
+    'a saved split restores onto main as --split'
+  );
+  assert.equal(
+    await page.evaluate(() =>
+      document.getElementById('split-handle').getAttribute('aria-valuenow')
+    ),
+    '60',
+    'the restored split is mirrored into the separator aria-valuenow (1.5fr = 60%)'
+  );
+
+  const findState = () =>
+    page.evaluate(() => {
+      const e = document.getElementById('editor');
+      return {
+        hidden: document.getElementById('find-bar').hidden,
+        count: document.getElementById('find-count').textContent,
+        selStart: e.selectionStart,
+        selEnd: e.selectionEnd,
+        focused: document.activeElement && document.activeElement.id,
+      };
+    });
+
+  await page.evaluate(() => {
+    const e = document.getElementById('editor');
+    e.focus();
+    e.setSelectionRange(0, 0);
+  });
+  await page.keyboard.press('Control+f');
+  let find = await findState();
+  assert.equal(find.hidden, false, 'Ctrl+F opens the find bar');
+  assert.equal(find.focused, 'find-input', 'the find input takes focus');
+  assert.equal(find.count, '0/0', 'the counter reads 0/0 before a query');
+
+  // Case-insensitive matches: 'foo bar', 'FOO again', 'last foo'.
+  const m1 = FIND_SCENE.toLowerCase().indexOf('foo');
+  const m2 = FIND_SCENE.toLowerCase().indexOf('foo', m1 + 1);
+  const m3 = FIND_SCENE.toLowerCase().indexOf('foo', m2 + 1);
+  await page.keyboard.type('foo');
+  find = await findState();
+  assert.deepEqual(
+    { count: find.count, selStart: find.selStart, selEnd: find.selEnd },
+    { count: '1/3', selStart: m1, selEnd: m1 + 3 },
+    'typing selects the first match from the caret, counting case-insensitively'
+  );
+
+  await page.keyboard.press('Enter');
+  find = await findState();
+  assert.deepEqual([find.count, find.selStart], ['2/3', m2], 'Enter steps to the next match');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter'); // past the last -> wraps to the first
+  find = await findState();
+  assert.deepEqual([find.count, find.selStart], ['1/3', m1], 'next wraps past the last match');
+  assert.equal(find.focused, 'find-input', 'cycling keeps focus in the find bar (no re-render)');
+  await page.keyboard.press('Shift+Enter'); // before the first -> wraps to the last
+  find = await findState();
+  assert.deepEqual([find.count, find.selStart], ['3/3', m3], 'previous wraps to the last match');
+
+  await page.keyboard.press('Escape');
+  find = await findState();
+  assert.equal(find.hidden, true, 'Esc closes the find bar');
+  assert.equal(find.focused, 'editor', 'Esc hands focus back to the editor');
+  assert.deepEqual(
+    [find.selStart, find.selEnd],
+    [m3, m3 + 3],
+    'the editor keeps the current match selected after Esc'
+  );
+
+  // Editing the scene closes a still-open bar (stale match offsets).
+  await page.keyboard.press('Control+f');
+  assert.equal((await findState()).hidden, false, 'the bar reopens for the edit-close check');
+  await page.evaluate(() =>
+    document.getElementById('editor').dispatchEvent(new Event('input', { bubbles: true }))
+  );
+  assert.equal((await findState()).hidden, true, 'an editor edit closes the find bar');
+
+  // -- go-to-line --------------------------------------------------------------
+  await page.evaluate(() => document.getElementById('editor').focus());
+  await page.keyboard.press('Control+g');
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      hidden: document.getElementById('find-bar').hidden,
+      placeholder: document.getElementById('find-input').placeholder,
+      count: document.getElementById('find-count').textContent,
+    })),
+    { hidden: false, placeholder: 'go to line', count: '5 lines' },
+    'Ctrl+G opens the bar in go-to-line mode with the buffer line count'
+  );
+  await page.keyboard.type('3');
+  await page.keyboard.press('Enter');
+  const line3Start = FIND_SCENE.split('\n').slice(0, 2).join('\n').length + 1;
+  find = await findState();
+  assert.equal(find.hidden, true, 'go-to-line closes on Enter');
+  assert.equal(find.focused, 'editor', 'go-to-line hands focus back to the editor');
+  assert.deepEqual(
+    [find.selStart, find.selEnd],
+    [line3Start, line3Start + 'line c'.length],
+    'Enter selects the requested line via selectEditorLine'
+  );
+
+  // -- draggable split: pointer drag, keyboard, reset, persistence -------------
+  const splitBox = await page.locator('#split-handle').boundingBox();
+  assert.ok(splitBox, 'the split handle is laid out at the two-column breakpoint');
+  await page.mouse.move(splitBox.x + splitBox.width / 2, splitBox.y + 200);
+  await page.mouse.down();
+  await page.mouse.move(splitBox.x - 200, splitBox.y + 200, { steps: 4 });
+  await page.mouse.up();
+  const dragged = await page.evaluate(() => ({
+    split: document.querySelector('main').style.getPropertyValue('--split'),
+    editorW: document.getElementById('editor-pane').getBoundingClientRect().width,
+    outputW: document.getElementById('output-pane').getBoundingClientRect().width,
+  }));
+  assert.match(dragged.split, /^[\d.]+fr$/, 'dragging writes an fr count into --split');
+  assert.ok(
+    parseFloat(dragged.split) < 1.5,
+    `dragging left shrinks the editor pane's fr (got ${dragged.split})`
+  );
+  assert.ok(
+    dragged.editorW < dragged.outputW,
+    `the panes are visibly uneven after the drag (${dragged.editorW} vs ${dragged.outputW})`
+  );
+
+  await page.focus('#split-handle');
+  const beforeNudge = parseFloat(dragged.split);
+  await page.keyboard.press('ArrowLeft');
+  const afterNudge = await page.evaluate(() =>
+    parseFloat(document.querySelector('main').style.getPropertyValue('--split'))
+  );
+  assert.ok(afterNudge < beforeNudge, 'ArrowLeft nudges the split toward the editor');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Home');
+  assert.equal(
+    await page.evaluate(() => document.querySelector('main').style.getPropertyValue('--split')),
+    '',
+    'Home resets the split to the stylesheet 50/50 default'
+  );
+
+  // Persistence: nudge off the default, flush the save, and check the blob.
+  await page.keyboard.press('ArrowRight');
+  await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+  const savedSplit = await page.evaluate(
+    () => JSON.parse(localStorage.getItem('povrayer.ui.v1')).split
+  );
+  assert.equal(typeof savedSplit, 'number', 'the split persists as a number in the saved state');
+  assert.ok(savedSplit > 1, `ArrowRight saved an editor-favoring split (got ${savedSplit})`);
+
+  await page.locator('#split-handle').dblclick();
+  assert.equal(
+    await page.evaluate(() => document.querySelector('main').style.getPropertyValue('--split')),
+    '',
+    'double-click resets the split to 50/50'
+  );
+
+  // -- history delta badges ----------------------------------------------------
+  const HIST_OLD = 'line one\nline two\nline three';
+  const HIST_NEW = 'line one\nline two\nline four\nline five';
+  await page.addInitScript(
+    ([hist, ui]) => {
+      localStorage.setItem('povrayer.ui.history', hist);
+      localStorage.setItem('povrayer.ui.v1', ui);
+    },
+    [
+      JSON.stringify([{ t: Date.now(), source: HIST_OLD }]),
+      JSON.stringify({ source: HIST_NEW, liveDraft: false }),
+    ]
+  );
+  await page.goto(`${server.url}?seed=${seedNav++}`, { waitUntil: 'load' });
+  await page.waitForFunction(
+    () => document.querySelectorAll('#example-listbox .ex-option').length >= 4,
+    null,
+    { timeout: 30_000 }
+  );
+  assert.equal(
+    await page.evaluate(() => document.querySelector('#history .history-delta').textContent),
+    '+2 −1',
+    'the badge counts lines only in the editor (+) and only in the snapshot (−)'
+  );
+
+  // Loading the snapshot text and reopening the panel relabels it "current"
+  // (the badge recomputes on open, not per keystroke).
+  await setSceneSource(HIST_OLD);
+  await page.evaluate(() => {
+    const h = document.getElementById('history');
+    h.open = false;
+    h.open = true;
+  });
+  await page.waitForFunction(
+    () => {
+      const b = document.querySelector('#history .history-delta');
+      return b && b.textContent === 'current';
+    },
+    null,
+    { timeout: 5_000 }
+  );
+
+  // -- draft-size select drives the live draft's rendered size -----------------
+  await seedReload(
+    JSON.stringify({
+      source: histScene('DRAFT SIZE'),
+      width: '400',
+      height: '300',
+      antialias: 'off',
+      liveDraft: false,
+      draft: '256',
+    })
+  );
+  await openAdvanced();
+  assert.equal(
+    await page.evaluate(() => document.getElementById('draft-size').value),
+    '256',
+    'a saved draft size restores into the select'
+  );
+  await page.click('#live-toggle');
+  await page.waitForFunction(
+    () => {
+      const o = document.getElementById('output');
+      return (
+        document.getElementById('status').dataset.state === 'draft' &&
+        o.src.startsWith('blob:') &&
+        o.naturalWidth === 256 &&
+        o.naturalHeight === 192
+      );
+    },
+    null,
+    { timeout: 60_000 }
+  );
+  // Raising the edge past the render size re-drafts the unchanged scene at the
+  // uncapped 400×300 (the no-upscale clamp).
+  await selAdvanced('#draft-size', '512');
+  await page.waitForFunction(
+    () => {
+      const o = document.getElementById('output');
+      return (
+        document.getElementById('status').dataset.state === 'draft' &&
+        o.naturalWidth === 400 &&
+        o.naturalHeight === 300
+      );
+    },
+    null,
+    { timeout: 60_000 }
   );
 
   // ===========================================================================

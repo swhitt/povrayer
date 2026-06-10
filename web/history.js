@@ -36,6 +36,35 @@ export function snapshotPreview(source) {
 }
 
 /**
+ * Line-multiset delta between a snapshot's text and the current editor text,
+ * shaped for a dim "+N −M" badge: `added` counts lines only in `current`,
+ * `removed` lines only in `source`. Multiset counts per distinct line (no
+ * LCS/ordering: a reordered scene legitimately reads "+0 −0"). Returns null
+ * when the two texts are byte-identical so the caller can label the entry
+ * "current" instead of "+0 −0".
+ * @param {string} source the snapshot text
+ * @param {string} current the current editor text
+ * @returns {{ added: number, removed: number } | null}
+ */
+export function lineDelta(source, current) {
+  if (source === current) return null;
+  /** @param {string} text */
+  const tally = (text) => {
+    /** @type {Map<string, number>} */
+    const m = new Map();
+    for (const line of text.split('\n')) m.set(line, (m.get(line) ?? 0) + 1);
+    return m;
+  };
+  const from = tally(source);
+  const to = tally(current);
+  let added = 0;
+  let removed = 0;
+  for (const [line, n] of to) added += Math.max(0, n - (from.get(line) ?? 0));
+  for (const [line, n] of from) removed += Math.max(0, n - (to.get(line) ?? 0));
+  return { added, removed };
+}
+
+/**
  * A coarse "2m ago"-style age. Pure: the caller passes the current time.
  * @param {number} then epoch ms
  * @param {number} now epoch ms

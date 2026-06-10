@@ -81,3 +81,9 @@ test('flags pass through raw', () => {
   assert.equal(parseRenderParams('?flags=%2BA0.05+%2BAM2').flags, '+A0.05 +AM2');
   assert.equal('flags' in parseRenderParams('?width=8'), false);
 });
+
+test('draft passes through raw (validated against the select by the caller)', () => {
+  assert.equal(parseRenderParams('?draft=256').draft, '256');
+  assert.equal(parseRenderParams('?draft=999').draft, '999'); // dropped later by ui.js
+  assert.equal('draft' in parseRenderParams('?width=8'), false);
+});

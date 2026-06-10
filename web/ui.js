@@ -20,7 +20,7 @@ import { encodeGif } from './gif.js';
 import { encodeApng } from './apng.js';
 import { buildPool, complete, applyCompletion, signatureText } from './complete.js';
 import { createAssetDrop } from './asset-drop.js';
-import { addSnapshot, snapshotPreview, relativeTime } from './history.js';
+import { addSnapshot, snapshotPreview, relativeTime, lineDelta } from './history.js';
 import { parseDeclaredNumbers, numberTokenAt, scrubStep, formatScrubbed } from './sliders.js';
 import { CONTROL_FIELDS, coerceSaved, coerceParam, coerceHydrate } from './settings.js';
 import {
@@ -71,6 +71,11 @@ const exampleAttrSrc = /** @type {HTMLAnchorElement} */ (
 const editor = /** @type {HTMLTextAreaElement} */ (document.getElementById('editor'));
 const editorCode = document.getElementById('editor-code');
 const editorStack = document.getElementById('editor-stack');
+const findBar = document.getElementById('find-bar');
+const findInput = /** @type {HTMLInputElement} */ (document.getElementById('find-input'));
+const findCount = document.getElementById('find-count');
+const mainEl = /** @type {HTMLElement} */ (document.querySelector('main'));
+const splitHandle = document.getElementById('split-handle');
 const completeBox = document.getElementById('complete');
 const completeStatus = document.getElementById('complete-status');
 const slidersPanel = document.getElementById('sliders');
@@ -88,6 +93,7 @@ const widthInput = /** @type {HTMLInputElement} */ (document.getElementById('wid
 const heightInput = /** @type {HTMLInputElement} */ (document.getElementById('height'));
 const qualitySelect = /** @type {HTMLSelectElement} */ (document.getElementById('quality'));
 const antialiasSelect = /** @type {HTMLSelectElement} */ (document.getElementById('antialias'));
+const draftSelect = /** @type {HTMLSelectElement} */ (document.getElementById('draft-size'));
 const threadsInput = /** @type {HTMLInputElement} */ (document.getElementById('threads'));
 const flagsInput = /** @type {HTMLInputElement} */ (document.getElementById('flags'));
 const statsList = /** @type {HTMLElement} */ (document.getElementById('stats'));
@@ -103,7 +109,8 @@ const output = /** @type {HTMLImageElement} */ (document.getElementById('output'
 const downloadBtn = /** @type {HTMLAnchorElement} */ (document.getElementById('download-btn'));
 const log = document.getElementById('log');
 const logDetails = document.getElementById('log-details');
-const logSummary = document.getElementById('log-summary');
+const logLabel = document.getElementById('log-label');
+const logCount = document.getElementById('log-count');
 const progressBar = document.getElementById('progress');
 const plateHint = /** @type {HTMLElement} */ (document.querySelector('#output-plate .hint'));
 const zoomBtn = /** @type {HTMLButtonElement} */ (
@@ -120,7 +127,6 @@ const playerControls = document.getElementById('player-controls');
 const playBtn = /** @type {HTMLButtonElement} */ (document.getElementById('play-btn'));
 const scrubber = /** @type {HTMLInputElement} */ (document.getElementById('scrubber'));
 const frameReadout = document.getElementById('frame-readout');
-const fpsReadout = document.getElementById('fps-readout');
 const loopBtn = /** @type {HTMLButtonElement} */ (document.getElementById('loop-btn'));
 const exportBtn = /** @type {HTMLButtonElement} */ (document.getElementById('export-btn'));
 const exportFormat = /** @type {HTMLSelectElement} */ (document.getElementById('export-format'));
@@ -139,6 +145,19 @@ let hasStillImage = false;
 // Live-draft auto-render: ON by default, persisted. Drafts fire only in still
 // mode; the full machinery lives in the "live draft" section near the bottom.
 let liveDraft = true;
+// Two-column editor/output split, as the editor pane's fr count against the
+// output pane's 1fr (so 1 = 50/50, 1.5 ≈ 60/40); null = the CSS default 50/50.
+// Persisted like advancedOpen/liveDraft; the splitter machinery lives in the
+// "draggable editor/output split" section.
+/** @type {number | null} */
+let splitFr = null;
+// Drag bounds as pane fractions: the editor pane stays within 20%..80% of the
+// row (the grid's minmax(320px, …) floors are the second, hard guard). The fr
+// equivalents (f / (1 - f)) bound splitFr itself.
+const SPLIT_MIN_FRACTION = 0.2;
+const SPLIT_MAX_FRACTION = 0.8;
+const SPLIT_MIN_FR = SPLIT_MIN_FRACTION / (1 - SPLIT_MIN_FRACTION); // 0.25
+const SPLIT_MAX_FR = SPLIT_MAX_FRACTION / (1 - SPLIT_MAX_FRACTION); // 4
 
 // ---- example browser (editable-combobox popover) + persisted state ----
 
@@ -200,9 +219,13 @@ function buildExampleBrowser() {
       const desc = document.createElement('span');
       desc.className = 'ex-desc';
       desc.textContent = ex.description;
+      // The byline span always exists (setTriggerLabel reuses it for the
+      // quiet `loaded` marker) but hides when it has nothing beyond what the
+      // attribution footer already shows.
       const by = document.createElement('span');
       by.className = 'ex-by';
-      by.textContent = `${ex.author} · ${ex.license}`;
+      by.textContent = exByline(ex);
+      by.hidden = by.textContent === '';
       opt.append(title, desc, by);
 
       groupEl.appendChild(opt);
@@ -229,6 +252,15 @@ function hasExample(name) {
   return EXAMPLES.some((e) => e.name === name);
 }
 
+// Per-row byline for an example option. The popover footer (.ex-attr) already
+// shows the active option's author/license, so a row earns a third line only
+// when it carries non-default (third-party) credit; for the shipped in-house
+// scenes the byline would just repeat the footer on all 29 rows.
+function exByline(ex) {
+  /* c8 ignore next -- every shipped scene carries the default povrayer attribution; the credit arm lights up when an adapted third-party scene lands */
+  return ex.author === 'povrayer' ? '' : `${ex.author} · ${ex.license}`;
+}
+
 // Footer attribution. Branch-free: the link's visibility is an assignment off
 // sourceUrl (every shipped scene ships ''), so the "shown" outcome lights up
 // automatically if an adapted scene with a real URL ever lands.
@@ -240,16 +272,20 @@ function updateAttribution(ex) {
 }
 
 // Reflect the loaded scene in the trigger label + data-name, and re-mark the
-// loaded option (bold + a quiet ` · loaded` suffix on .ex-by, never aria-selected).
+// loaded option (bold + a quiet `loaded` byline, never aria-selected).
 function setTriggerLabel(name) {
   const record = getExampleRecord(name);
   exampleTriggerText.textContent = record.title;
   exampleTrigger.dataset.name = name;
   for (const opt of optionEls) {
     const r = getExampleRecord(opt.dataset.name);
-    const byBase = `${r.author} · ${r.license}`;
     const loaded = opt.dataset.name === name;
-    opt.querySelector('.ex-by').textContent = loaded ? `${byBase} · loaded` : byBase;
+    // The byline carries the (rare) third-party credit and/or the loaded
+    // marker; with neither it hides so default rows stay two lines.
+    const parts = [exByline(r), loaded ? 'loaded' : ''].filter(Boolean);
+    const by = /** @type {HTMLElement} */ (opt.querySelector('.ex-by'));
+    by.textContent = parts.join(' · ');
+    by.hidden = parts.length === 0;
     if (loaded) opt.dataset.loaded = 'true';
     else delete opt.dataset.loaded;
   }
@@ -286,6 +322,7 @@ const controlEl = {
   height: heightInput,
   quality: qualitySelect,
   antialias: antialiasSelect,
+  draft: draftSelect,
   threads: threadsInput,
   flags: flagsInput,
   frames: framesInput,
@@ -321,6 +358,7 @@ function saveState() {
         mode,
         liveDraft,
         advancedOpen: advanced.open,
+        split: splitFr,
       })
     );
   } catch {
@@ -412,6 +450,12 @@ let lastLoadedSource = '';
     if (typeof saved.liveDraft === 'boolean') liveDraft = saved.liveDraft;
     if (typeof saved.advancedOpen === 'boolean') advanced.open = saved.advancedOpen;
     if (saved.mode === 'still' || saved.mode === 'animate') mode = saved.mode;
+    // The fr count is re-clamped to the drag's own bounds (a hand-edited blob
+    // could otherwise crush a pane); applySplit() in the splitter section
+    // writes it onto <main> once the handle wiring is set up.
+    if (typeof saved.split === 'number' && Number.isFinite(saved.split) && saved.split > 0) {
+      splitFr = clamp(saved.split, SPLIT_MIN_FR, SPLIT_MAX_FR);
+    }
   }
 }
 
@@ -717,6 +761,7 @@ editor.addEventListener('scroll', syncEditorScroll);
 editor.addEventListener('input', () => {
   restoreNote.hidden = true; // a fresh edit supersedes the restore-a-replaced-scene offer
   clearErrorLine(); // the edit may well fix the error; drop the stale marker
+  closeFind(false); // editing invalidates the match set; the bar simply closes
   renderGutter();
   paintHighlight();
   refreshComplete(false);
@@ -751,6 +796,131 @@ function outdentSelection() {
   editor.setRangeText(out, lineStart, end, block.includes('\n') ? 'select' : 'preserve');
 }
 
+// ---- editor line operations (comment toggle, move, duplicate) + keyboard
+//      number stepping ----
+// All of these are keyboard edits that bypass the textarea's input event
+// (setRangeText fires none), so each successful edit runs refreshAfterEdit for
+// the same bookkeeping a keystroke gets via the input handler.
+
+// The post-edit refresh for setRangeText keyboard edits: same supersede/cleanup
+// the input handler does (a fresh edit replaces the restore offer and may well
+// fix the blamed error line), then the standard repaint + slider re-parse (the
+// edit shifted literal spans) + save/draft debounces.
+function refreshAfterEdit() {
+  restoreNote.hidden = true;
+  clearErrorLine();
+  renderGutter();
+  paintHighlight();
+  buildSliders();
+  scheduleSave();
+  scheduleDraft();
+}
+
+// The whole-line span [start, end) covering the selection, end EXCLUSIVE of the
+// trailing newline. A multi-line selection ending at column 0 (how a
+// shift+down full-line sweep lands) does NOT pull in that final line, so the
+// line ops act on exactly the lines that look selected.
+function selectedLineRange() {
+  const { selectionStart: s, selectionEnd: e, value } = editor;
+  const start = value.lastIndexOf('\n', s - 1) + 1;
+  const endRef = e > s && value[e - 1] === '\n' ? e - 1 : e;
+  const nl = value.indexOf('\n', endRef);
+  return { start, end: nl === -1 ? value.length : nl };
+}
+
+// Ctrl/Cmd+/: toggle `//` line comments on the selected line(s). Uncomment only
+// when EVERY non-blank line is already commented (mixed blocks comment, so the
+// toggle is idempotent over a mixed region); blank lines never gain a marker.
+// Returns false (no edit) for an all-blank block.
+function toggleLineComment() {
+  const { selectionStart: s, selectionEnd: e } = editor;
+  const { start, end } = selectedLineRange();
+  const block = editor.value.slice(start, end);
+  const lines = block.split('\n');
+  const nonBlank = lines.filter((l) => l.trim() !== '');
+  const uncomment = nonBlank.length > 0 && nonBlank.every((l) => /^[ \t]*\/\//.test(l));
+  const out = lines
+    .map((l) => {
+      if (l.trim() === '') return l;
+      return uncomment ? l.replace(/^([ \t]*)\/\/ ?/, '$1') : '// ' + l;
+    })
+    .join('\n');
+  if (out === block) return false;
+  if (block.includes('\n')) {
+    editor.setRangeText(out, start, end, 'select'); // keep the block selected, like indent
+    return true;
+  }
+  // Single line: shift the caret/selection by the marker delta (clamped into
+  // the rewritten line) so typing can resume where it left off.
+  const delta = out.length - block.length;
+  editor.setRangeText(out, start, end, 'preserve');
+  editor.setSelectionRange(
+    clamp(s + delta, start, start + out.length),
+    clamp(e + delta, start, start + out.length)
+  );
+  return true;
+}
+
+// Alt+Up/Down: swap the selected line block with the adjacent line in ONE
+// setRangeText (a single undo step), then re-anchor the selection onto the
+// moved text. No-ops (returns false) at the buffer's first/last line.
+function moveLines(dir) {
+  const { selectionStart: s, selectionEnd: e, value } = editor;
+  const { start, end } = selectedLineRange();
+  const block = value.slice(start, end);
+  if (dir < 0) {
+    if (start === 0) return false;
+    const prevStart = value.lastIndexOf('\n', start - 2) + 1;
+    const prev = value.slice(prevStart, start - 1);
+    editor.setRangeText(block + '\n' + prev, prevStart, end, 'preserve');
+    editor.setSelectionRange(s - prev.length - 1, e - prev.length - 1);
+  } else {
+    if (end === value.length) return false;
+    const nextEnd = value.indexOf('\n', end + 1);
+    const stop = nextEnd === -1 ? value.length : nextEnd;
+    const next = value.slice(end + 1, stop);
+    editor.setRangeText(next + '\n' + block, start, stop, 'preserve');
+    editor.setSelectionRange(s + next.length + 1, e + next.length + 1);
+  }
+  return true;
+}
+
+// Alt+Shift+Up/Down: duplicate the selected line block. Down keeps the
+// selection on the LOWER copy (repeats stamp the block downward); Up keeps it
+// on the upper copy, so the caret visually stays put.
+function duplicateLines(dir) {
+  const { selectionStart: s, selectionEnd: e, value } = editor;
+  const { start, end } = selectedLineRange();
+  const block = value.slice(start, end);
+  editor.setRangeText(block + '\n' + block, start, end, 'preserve');
+  if (dir > 0) editor.setSelectionRange(s + block.length + 1, e + block.length + 1);
+  else editor.setSelectionRange(s, e);
+  return true;
+}
+
+// The number token Alt+arrows should step, or null when they should fall
+// through to the line ops: a collapsed caret on a literal, or a selection that
+// is EXACTLY a literal (how stepNumber leaves it, so held/repeated presses keep
+// stepping). Any other selection means the user is operating on lines.
+function stepTokenAtCaret() {
+  const { selectionStart: s, selectionEnd: e } = editor;
+  const tok = numberTokenAt(editor.value, s);
+  if (!tok) return null;
+  if (s !== e && (s !== tok.start || e !== tok.end)) return null;
+  return tok;
+}
+
+// Keyboard scrubbing: step the literal by the same magnitude-aware step the
+// Alt+drag scrub uses (sliders.js scrubStep/formatScrubbed), 10x with Shift,
+// and leave the whole new literal selected for stepTokenAtCaret above.
+function stepNumber(tok, dir, big) {
+  const step = scrubStep(tok.value);
+  const literal = formatScrubbed(tok.value + dir * step * (big ? 10 : 1), step);
+  editor.setRangeText(literal, tok.start, tok.end, 'preserve');
+  editor.setSelectionRange(tok.start, tok.start + literal.length);
+  return true;
+}
+
 let escapePrimed = false;
 editor.addEventListener('keydown', (e) => {
   // Autocomplete takes navigation keys while open (and Ctrl+Space opens it);
@@ -774,6 +944,29 @@ editor.addEventListener('keydown', (e) => {
     paintHighlight();
     scheduleSave();
     scheduleDraft();
+    return;
+  }
+  if (e.key === '/' && (e.ctrlKey || e.metaKey) && !e.altKey) {
+    e.preventDefault();
+    escapePrimed = false;
+    if (toggleLineComment()) refreshAfterEdit();
+    return;
+  }
+  if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+    e.preventDefault();
+    escapePrimed = false;
+    const dir = e.key === 'ArrowDown' ? 1 : -1;
+    // Precedence: a number token under the caret takes the chord (step it,
+    // Shift = 10x); otherwise Alt+arrows move lines and Alt+Shift duplicates.
+    // The sign flips for stepping: ArrowUp moves a line UP (-1 in offsets) but
+    // steps a number's value UP (+1).
+    const tok = stepTokenAtCaret();
+    const edited = tok
+      ? stepNumber(tok, -dir, e.shiftKey)
+      : e.shiftKey
+        ? duplicateLines(dir)
+        : moveLines(dir);
+    if (edited) refreshAfterEdit();
     return;
   }
   if (e.key !== 'Shift') escapePrimed = false;
@@ -1182,7 +1375,14 @@ function renderHistory() {
     const preview = document.createElement('span');
     preview.className = 'history-preview';
     preview.textContent = snapshotPreview(entry.source);
-    row.append(time, preview);
+    // Dim line delta vs the CURRENT editor text ("+2 −5"), or "current" when
+    // identical. Recomputed when the list rebuilds (render milestone or panel
+    // open), never per keystroke.
+    const delta = lineDelta(entry.source, editor.value);
+    const badge = document.createElement('span');
+    badge.className = 'history-delta';
+    badge.textContent = delta === null ? 'current' : `+${delta.added} −${delta.removed}`;
+    row.append(time, preview, badge);
     row.addEventListener('click', () => {
       replaceScene(entry.source);
       historyDetails.open = false; // collapse once a version is loaded
@@ -1408,6 +1608,15 @@ function readRenderOptions() {
   return { width, height, quality, antialias, threads };
 }
 
+// One-shot final-quality override, armed by Shift+Ctrl/Cmd+Enter: the next
+// explicit render runs at quality 9 + antialias 0.05 without touching the
+// persisted control values. A module flag rather than a startRender argument
+// because the draft-abort handoff re-enters startRender() from runDraft's
+// finally with no arguments; collectOptions consumes it at the moment the
+// options are actually read, and startRender's bail paths disarm it so a
+// swallowed chord can't silently upgrade a LATER plain render.
+let finalRenderOnce = false;
+
 // The explicit-render path: read + clamp, then write the clamped dims back into
 // the inputs so the UI always shows the values actually used. Raw flags from the
 // advanced field ride along as `args`, which the wrapper appends LAST on the
@@ -1416,6 +1625,11 @@ function readRenderOptions() {
 // never bogs down the live preview.
 function collectOptions() {
   const opts = readRenderOptions();
+  if (finalRenderOnce) {
+    finalRenderOnce = false;
+    opts.quality = 9;
+    opts.antialias = 0.05;
+  }
   widthInput.value = String(opts.width);
   heightInput.value = String(opts.height);
   opts.files = assetDrop.assetFiles(); // undefined when no assets are loaded; the wrapper skips it
@@ -1428,12 +1642,21 @@ for (const el of [
   heightInput,
   qualitySelect,
   antialiasSelect,
+  draftSelect,
   threadsInput,
   framesInput,
   fpsInput,
 ]) {
   el.addEventListener('change', scheduleSave);
 }
+
+// A new draft edge makes the last preview the wrong size: clear the "already
+// attempted this source" guard so the unchanged scene re-drafts at the new
+// resolution (scheduleDraft self-guards on mode/live-off).
+draftSelect.addEventListener('change', () => {
+  lastDraftSource = null;
+  scheduleDraft();
+});
 
 // The raw-flags field is free text, so persist + re-sync the permalink as it is
 // typed (input, not just change-on-blur), matching the editor's live behavior.
@@ -1456,6 +1679,19 @@ function updateHintAspect() {
 widthInput.addEventListener('input', updateHintAspect);
 heightInput.addEventListener('input', updateHintAspect);
 updateHintAspect();
+
+// Swap width and height (portrait <-> landscape), then run the same handling
+// the inputs themselves are wired to: re-aspect the empty-state plate (their
+// input listener) and persist (their change listener). The next render/draft
+// reads the inputs fresh, so nothing else needs poking.
+const swapSizeBtn = /** @type {HTMLButtonElement} */ (document.getElementById('swap-size'));
+swapSizeBtn.addEventListener('click', () => {
+  const w = widthInput.value;
+  widthInput.value = heightInput.value;
+  heightInput.value = w;
+  updateHintAspect();
+  scheduleSave();
+});
 
 // ---- status line (role=status live region) ----
 // Busy-phase text updates are throttled to one per second (live-region
@@ -1616,7 +1852,7 @@ function resetLog() {
   logCommittedNode.data = '';
   logProgressNode.data = '';
   logHasProgressLine = false;
-  logSummary.textContent = 'render log';
+  setLogSummary('render log');
   // #log-details stays visible once shown (re-hiding would shift layout);
   // it unhides on the first line of the first render. Open/closed state is
   // never forced.
@@ -1627,9 +1863,13 @@ function logLineCount() {
   return text ? text.replace(/\n+$/, '').split('\n').length : 0;
 }
 
-function summaryWithCount(prefix) {
+// Write the log disclosure's summary as the label + dim count pair every other
+// disclosure on the page uses (scene params, history). `label` carries the
+// error variant ("render log · exit 1"); the count span holds the line tally.
+function setLogSummary(label) {
+  logLabel.textContent = label;
   const n = logLineCount();
-  return n ? `${prefix} (${n} lines)` : prefix;
+  logCount.textContent = n ? `(${n} lines)` : '';
 }
 
 // ---- image zoom (fit / 1:1) ----
@@ -1639,26 +1879,46 @@ function summaryWithCount(prefix) {
 
 let zoom1x = false;
 
+// Live drafts render downscaled (DRAFT_MAX_EDGE) but must not shrink the hero
+// plate: the page below would pump in height on every keystroke between a full
+// render and the next draft. The draft path holds #output at the full render's
+// display width (the upscale softness is the accepted trade); CSS
+// max-width:100% still clamps the held width to the plate. A full render
+// clears the hold, and 1:1 zoom suspends it (1:1 promises true device pixels,
+// which a held upscale would contradict).
+/** @type {number | null} */
+let heldWidth = null;
+
+function applyHeldWidth() {
+  output.style.width = heldWidth !== null && !zoom1x ? `${heldWidth}px` : '';
+}
+
 function updateZoomLabel() {
   if (output.hidden || !output.naturalWidth) {
     zoomBtn.hidden = true;
     return;
   }
-  zoomBtn.hidden = false;
   // aria-pressed exposes the toggle state (1:1 engaged) beyond the visible
   // label, which only some AT surfaces read aloud.
   zoomBtn.setAttribute('aria-pressed', String(zoom1x));
   if (zoom1x) {
+    zoomBtn.hidden = false;
     zoomBtn.textContent = '1:1';
-  } else {
-    const pct = Math.round((output.clientWidth / output.naturalWidth) * 100) || 100;
-    zoomBtn.textContent = `fit (${pct}%)`;
+    return;
   }
+  const pct = Math.round((output.clientWidth / output.naturalWidth) * 100) || 100;
+  // At 100% "fit" IS 1:1, so the toggle would be a no-op; hide the chip rather
+  // than dangle a dead control. It returns once the ratio diverges (a bigger
+  // render, a narrower pane, or a held draft upscale). The image click still
+  // toggles, harmlessly, for pointer users.
+  zoomBtn.hidden = pct === 100;
+  zoomBtn.textContent = `fit (${pct}%)`;
 }
 
 function toggleZoom() {
   zoom1x = !zoom1x;
   output.classList.toggle('zoom-1x', zoom1x);
+  applyHeldWidth(); // 1:1 suspends a draft's footprint hold; fit restores it
   updateZoomLabel();
 }
 
@@ -1675,14 +1935,21 @@ function editorLineHeight() {
   return parseFloat(getComputedStyle(editor).lineHeight) || 19;
 }
 
+// Scroll line n toward the top of the view (two lines of context above it) and
+// resync the gutter/overlay/error-band. Shared by the error jump and the find
+// bar, so a find match and a blamed line land identically.
+function scrollEditorToLine(n) {
+  editor.scrollTop = Math.max(0, (n - 3) * editorLineHeight());
+  syncEditorScroll();
+}
+
 function selectEditorLine(n) {
   const lines = editor.value.split('\n');
   if (!(n >= 1 && n <= lines.length)) return;
   let start = 0;
   for (let i = 0; i < n - 1; i++) start += lines[i].length + 1;
   editor.setSelectionRange(start, start + lines[n - 1].length);
-  editor.scrollTop = Math.max(0, (n - 3) * editorLineHeight());
-  syncEditorScroll();
+  scrollEditorToLine(n);
 }
 
 // A persistent red band on the line a failed render blamed (the auto-jump only
@@ -1713,6 +1980,124 @@ function positionErrorLine() {
 // Re-jump to the blamed line when the error box is clicked (selectEditorLine
 // no-ops when there's no line, so the click is harmless without one).
 errorBox.addEventListener('click', () => selectEditorLine(errorLineNo));
+
+// ---- find + go-to-line (the #find-bar strip over the editor) ----
+// One bar, two modes: Ctrl/Cmd+F opens it as case-insensitive substring find
+// (Enter next / Shift+Enter previous, wrapping; the match is selected in the
+// textarea and scrolled into view), Ctrl/Cmd+G as go-to-line (Enter jumps via
+// selectEditorLine). Esc returns focus to the editor at the current match.
+// Focus stays in the bar while cycling, so Enter can never retrigger a render.
+// Editing the scene closes the bar (the match offsets would be stale).
+
+/** @type {'find' | 'goto'} */
+let findMode = 'find';
+/** @type {number[]} match start offsets in editor.value, ascending */
+let findMatches = [];
+let findIndex = -1;
+
+// Non-overlapping, case-insensitive substring match offsets.
+function findAllMatches(text, query) {
+  const out = [];
+  if (!query) return out;
+  const hay = text.toLowerCase();
+  const q = query.toLowerCase();
+  let i = hay.indexOf(q);
+  while (i !== -1) {
+    out.push(i);
+    i = hay.indexOf(q, i + q.length);
+  }
+  return out;
+}
+
+// The dim counter: "3/17" while finding (0/0 with no query or no hits), the
+// buffer's line count as the bounds hint while going to a line.
+function updateFindCount() {
+  if (findMode === 'goto') {
+    findCount.textContent = `${editor.value.split('\n').length} lines`;
+  } else {
+    findCount.textContent = findMatches.length ? `${findIndex + 1}/${findMatches.length}` : '0/0';
+  }
+}
+
+// Select the current match in the textarea (visible once focus returns there)
+// and scroll its line into view; the bar keeps focus while cycling.
+function selectFindMatch() {
+  const start = findMatches[findIndex];
+  editor.setSelectionRange(start, start + findInput.value.length);
+  scrollEditorToLine(editor.value.slice(0, start).split('\n').length);
+  updateFindCount();
+}
+
+// Recompute the match set for the current query, restarting from the first
+// match at/after the editor caret (so reopening find resumes near the user's
+// place rather than at the top of a long scene).
+function refreshFind() {
+  findMatches = findAllMatches(editor.value, findInput.value);
+  if (!findMatches.length) {
+    findIndex = -1;
+    updateFindCount();
+    return;
+  }
+  const caret = editor.selectionStart;
+  const ahead = findMatches.findIndex((s) => s >= caret);
+  findIndex = ahead === -1 ? 0 : ahead;
+  selectFindMatch();
+}
+
+function stepFind(dir) {
+  if (!findMatches.length) return;
+  findIndex = (findIndex + dir + findMatches.length) % findMatches.length;
+  selectFindMatch();
+}
+
+function commitGoto() {
+  const n = parseInt(findInput.value, 10);
+  closeFind(true);
+  // selectEditorLine ignores an out-of-range line, so junk input just closes.
+  if (Number.isInteger(n)) selectEditorLine(n);
+}
+
+/** @param {'find' | 'goto'} mode */
+function openFind(mode) {
+  // Reopening the already-showing mode keeps the query (Ctrl+F again just
+  // refocuses); switching modes or opening fresh starts blank.
+  if (findBar.hidden || findMode !== mode) {
+    findMode = mode;
+    findInput.value = '';
+    findInput.placeholder = mode === 'goto' ? 'go to line' : 'find';
+    findBar.hidden = false;
+    findMatches = [];
+    findIndex = -1;
+    updateFindCount();
+  }
+  findInput.focus();
+  findInput.select();
+}
+
+// Close the bar; `focusEditor` hands focus back (Esc, go-to-line commit). The
+// editor-input path passes false so closing never yanks focus mid-keystroke.
+function closeFind(focusEditor) {
+  if (findBar.hidden) return;
+  findBar.hidden = true;
+  if (focusEditor) editor.focus();
+}
+
+findInput.addEventListener('input', () => {
+  if (findMode === 'find') refreshFind();
+  else updateFindCount();
+});
+
+findInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (findMode === 'goto') commitGoto();
+    else stepFind(e.shiftKey ? -1 : 1);
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    e.stopPropagation(); // closing the bar must not also abort a render
+    closeFind(true); // back to the editor, caret on the current match
+  }
+});
 
 // ---- render ----
 
@@ -1774,10 +2159,14 @@ let engineSeen = false;
 
 // One image-swap path shared by the explicit render and the live draft: a
 // single lastUrl revoke, and the zoom label recomputes off the #output 'load'
-// listener.
-function showImage(blobUrl, alt) {
+// listener. `holdWidth` (drafts only) pins the display width so the downscaled
+// preview keeps the full render's footprint; full renders omit it, restoring
+// natural sizing.
+function showImage(blobUrl, alt, holdWidth = null) {
   if (lastUrl) URL.revokeObjectURL(lastUrl);
   lastUrl = blobUrl;
+  heldWidth = holdWidth;
+  applyHeldWidth();
   output.src = blobUrl;
   output.hidden = false;
   playerCanvas.hidden = true;
@@ -1795,7 +2184,13 @@ function showImage(blobUrl, alt) {
 const DRAFT_DEBOUNCE_MIN_MS = 250;
 const DRAFT_DEBOUNCE_MAX_MS = 2000;
 const DRAFT_DEBOUNCE_FACTOR = 0.75;
-const DRAFT_MAX_EDGE = 320; // longest draft edge in px (downscaled fast preview)
+
+// Longest draft edge in px (the downscaled fast preview), from the advanced
+// "draft" select (256/320/512, default 320; persisted via CONTROL_FIELDS like
+// quality/antialias). A select always has a numeric option chosen.
+function draftMaxEdge() {
+  return Number(draftSelect.value);
+}
 
 let draftTimer = null; // pending debounce timeout, or null
 let draftCtl = null; // AbortController for the in-flight DRAFT, or null
@@ -1824,12 +2219,12 @@ function computeDraftDebounce() {
 }
 
 // Fast + clearly lower-res than the full Render: antialias always off and the
-// longest edge capped to DRAFT_MAX_EDGE, aspect ratio preserved so the draft
+// longest edge capped to draftMaxEdge(), aspect ratio preserved so the draft
 // composition matches the eventual full render. Reads (never writes) the inputs
 // so a mid-type width/height isn't clobbered.
 function draftOptions() {
   const { width, height, quality, threads } = readRenderOptions();
-  const s = Math.min(1, DRAFT_MAX_EDGE / Math.max(width, height));
+  const s = Math.min(1, draftMaxEdge() / Math.max(width, height));
   return {
     width: Math.max(8, Math.round(width * s)),
     height: Math.max(8, Math.round(height * s)),
@@ -1880,7 +2275,9 @@ async function runDraft(src) {
     errorBox.hidden = true;
     errorBox.textContent = '';
     errorBox.classList.remove('draft');
-    showImage(blobUrl, `live draft, ${sceneName()}, ${dims}`);
+    // Hold the draft at the FULL render's target width (re-read at swap time so
+    // a width edit mid-draft lands), keeping the plate footprint stable.
+    showImage(blobUrl, `live draft, ${sceneName()}, ${dims}`, readRenderOptions().width);
     downloadBtn.hidden = true; // the preview is low-res, not a downloadable full render
     setStatus(`live draft · ${dims}`, 'draft');
   } catch (err) {
@@ -1932,10 +2329,16 @@ async function startRender() {
     return;
   }
   // Bail while busy or non-isolated (first-visit SW install window: the
-  // banner is visible and the page will reload itself once installed).
-  if (abortCtl || isBusy()) return;
+  // banner is visible and the page will reload itself once installed). The
+  // pendingFull return above deliberately KEEPS finalRenderOnce armed (the
+  // restarted render is the same user intent); these dead ends disarm it.
+  if (abortCtl || isBusy()) {
+    finalRenderOnce = false;
+    return;
+  }
   if (!crossOriginIsolated) {
     isoWarning.hidden = false;
+    finalRenderOnce = false;
     return;
   }
 
@@ -2012,7 +2415,7 @@ async function startRender() {
 
     setStatus(doneLine(elapsedMs, opts), 'done');
     recordHistory(renderedSource); // a milestone worth remembering: this scene just rendered
-    logSummary.textContent = summaryWithCount('render log');
+    setLogSummary('render log');
     if (!matchMedia('(min-width: 900px)').matches) {
       // Wait for the intrinsic size: block:'nearest' measures the box, and an
       // undecoded blob img is still 0px tall, which reads as "already in
@@ -2047,10 +2450,9 @@ async function startRender() {
         markErrorLine(Number(lineMatch[1]));
         selectEditorLine(Number(lineMatch[1]));
       }
-      logSummary.textContent =
-        err instanceof PovrayError
-          ? summaryWithCount(`render log · exit ${err.exitCode}`)
-          : summaryWithCount('render log');
+      setLogSummary(
+        err instanceof PovrayError ? `render log · exit ${err.exitCode}` : 'render log'
+      );
     }
   } finally {
     abortCtl = null;
@@ -2154,7 +2556,7 @@ async function runAnimateRender() {
     player.load(result, fps);
     refreshPlate();
     setStatus(animDoneLine(result.elapsedMs, opts, frames), 'done');
-    logSummary.textContent = summaryWithCount('render log');
+    setLogSummary('render log');
     if (!matchMedia('(min-width: 900px)').matches) {
       playerCanvas.scrollIntoView({ block: 'nearest' });
     }
@@ -2177,10 +2579,9 @@ async function runAnimateRender() {
         markErrorLine(Number(lineMatch[1]));
         selectEditorLine(Number(lineMatch[1]));
       }
-      logSummary.textContent =
-        err instanceof PovrayError
-          ? summaryWithCount(`render log · exit ${err.exitCode}`)
-          : summaryWithCount('render log');
+      setLogSummary(
+        err instanceof PovrayError ? `render log · exit ${err.exitCode}` : 'render log'
+      );
     }
   } finally {
     abortCtl = null;
@@ -2215,6 +2616,13 @@ function createPlayer() {
   let rafHandle = null;
   let lastAdvance = 0;
 
+  // One merged readout ("7 / 24 · 12 fps"): frame position and playback rate
+  // share the span (the status line's · convention) so the two values can't
+  // run together as one garbled number string.
+  function updateReadout() {
+    frameReadout.textContent = `${bitmaps.length ? idx + 1 : 0} / ${bitmaps.length} · ${fps} fps`;
+  }
+
   function draw(i) {
     idx = i;
     ctx.drawImage(bitmaps[i], 0, 0);
@@ -2222,7 +2630,7 @@ function createPlayer() {
     // aria-valuetext so a screen reader announces the 1-based "frame 2 of 3"
     // that matches the visible readout, not the raw 0-indexed slider value.
     scrubber.setAttribute('aria-valuetext', `frame ${i + 1} of ${bitmaps.length}`);
-    frameReadout.textContent = `${i + 1} / ${bitmaps.length}`;
+    updateReadout();
   }
 
   function setPlayLabel() {
@@ -2286,7 +2694,7 @@ function createPlayer() {
 
   function setFps(n) {
     fps = n;
-    fpsReadout.textContent = `${n} fps`;
+    updateReadout();
   }
 
   function setLoop(on) {
@@ -2471,6 +2879,12 @@ function setMode(next) {
   clearTimeout(draftTimer);
   draftTimer = null;
   mode = next;
+  // The log + stat chips narrate the OTHER mode's last render; left visible
+  // they read as describing the new plate (a still's "render log" lingering
+  // under an empty animate plate). Hide both; the next render's first log
+  // line / stats repopulate and re-reveal them.
+  logDetails.hidden = true;
+  statsList.hidden = true;
   applyMode();
   // Re-derive the footer so it agrees with the new plate. Without this #status
   // keeps the prior mode's text (a "live draft · WxH" line lingering in animate
@@ -2490,7 +2904,15 @@ function syncStatusToPlate() {
   if (mode === 'animate') {
     setStatus(player.hasFrames() ? 'animation ready' : 'no render yet', 'idle');
   } else {
-    setStatus(hasStillImage ? 'render ready' : 'no render yet', 'idle');
+    // Name the artifact + its dims (the done-line convention): a bare "render
+    // ready" is ambiguous with "the renderer is ready". naturalWidth stays
+    // honest even when a held draft is displayed upscaled.
+    setStatus(
+      hasStillImage
+        ? `still ready · ${output.naturalWidth}×${output.naturalHeight}`
+        : 'no render yet',
+      'idle'
+    );
   }
 }
 
@@ -2502,10 +2924,32 @@ function applyMode() {
   refreshPlate();
 }
 
+// The hint's still copy is the first-run onboarding sentence (from the
+// markup). In animate mode the plate can sit empty MID-session (frames only
+// exist after an explicit Render), where that copy would misread as a reset;
+// the empty animate plate instead says what Render will do, quoting the live
+// frames input.
+const stillHintCopy = plateHint.textContent;
+
+function updatePlateHint() {
+  if (mode === 'animate' && !player.hasFrames()) {
+    const n = parseInt(framesInput.value, 10);
+    const frames = Number.isNaN(n) ? 24 : clamp(n, 1, 240);
+    plateHint.textContent = `Render to ray-trace ${frames} frames of this scene.`;
+  } else {
+    plateHint.textContent = stillHintCopy;
+  }
+}
+
+// The animate empty-state hint quotes the frame count; keep it current while
+// the user dials frames in before the first animation render.
+framesInput.addEventListener('input', updatePlateHint);
+
 // Show the right thing in #output-plate for the current mode: the player
 // canvas (animate, once frames exist), the still image (still, once rendered),
 // or the empty-state hint.
 function refreshPlate() {
+  updatePlateHint();
   if (mode === 'animate') {
     output.hidden = true;
     const showPlayer = player.hasFrames();
@@ -2526,6 +2970,81 @@ modeAnimateBtn.addEventListener('click', () => setMode('animate'));
 // liveDraft, so it rides in saveState but NOT the share URL): a power user opens
 // it once and it stays open across renders and reloads.
 advanced.addEventListener('toggle', scheduleSave);
+
+// ---- draggable editor/output split ----
+// #split-handle is the 8px grid column between the panes at the two-column
+// breakpoint (display:none below it, so none of this can fire on mobile). A
+// pointer drag, Arrow keys (WAI-ARIA window-splitter), or a saved state set
+// --split on <main> as the editor pane's fr count; double-click or Home resets
+// to the 50/50 default. Persisted via saveState like advancedOpen/liveDraft.
+
+// The editor pane's share of the row, 0..1; the default split is an even half.
+function splitFraction() {
+  return splitFr === null ? 0.5 : splitFr / (1 + splitFr);
+}
+
+// Write splitFr onto <main> (null clears back to the stylesheet's 1fr default)
+// and mirror the percentage into the separator's aria-valuenow.
+function applySplit() {
+  if (splitFr === null) mainEl.style.removeProperty('--split');
+  else mainEl.style.setProperty('--split', `${splitFr}fr`);
+  splitHandle.setAttribute('aria-valuenow', String(Math.round(splitFraction() * 100)));
+}
+
+// Set the split from a pane fraction (null = reset), clamped to the 20%..80%
+// drag bounds, then persist. The fr count is rounded so the saved blob and the
+// inline style stay short.
+/** @param {number | null} f */
+function setSplitFraction(f) {
+  if (f === null) {
+    splitFr = null;
+  } else {
+    const bounded = clamp(f, SPLIT_MIN_FRACTION, SPLIT_MAX_FRACTION);
+    splitFr = Math.round((bounded / (1 - bounded)) * 1000) / 1000;
+  }
+  applySplit();
+  scheduleSave();
+}
+
+let splitDragging = false;
+splitHandle.addEventListener('pointerdown', (e) => {
+  splitDragging = true;
+  splitHandle.setPointerCapture(e.pointerId);
+  e.preventDefault(); // no text selection / focus scroll while dragging
+});
+splitHandle.addEventListener('pointermove', (e) => {
+  if (!splitDragging) return;
+  // The fraction is the pointer's x within main's content box (the grid area
+  // the two panes + handle actually divide).
+  const rect = mainEl.getBoundingClientRect();
+  const cs = getComputedStyle(mainEl);
+  const left = rect.left + parseFloat(cs.paddingLeft);
+  const width = rect.width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  setSplitFraction((e.clientX - left) / width);
+});
+const endSplitDrag = () => {
+  splitDragging = false;
+};
+splitHandle.addEventListener('pointerup', endSplitDrag);
+splitHandle.addEventListener('pointercancel', endSplitDrag);
+splitHandle.addEventListener('dblclick', () => setSplitFraction(null));
+
+// Keyboard splitter (the handle is tabbable): Arrows nudge 2% per press, Home
+// resets to the even split, matching the WAI-ARIA window-splitter pattern.
+splitHandle.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowLeft') {
+    e.preventDefault();
+    setSplitFraction(splitFraction() - 0.02);
+  } else if (e.key === 'ArrowRight') {
+    e.preventDefault();
+    setSplitFraction(splitFraction() + 0.02);
+  } else if (e.key === 'Home') {
+    e.preventDefault();
+    setSplitFraction(null);
+  }
+});
+
+applySplit(); // reflect the restored (or default) split
 
 // Undo a scene replacement: put the stashed (pre-replace) scene back.
 restoreBtn.addEventListener('click', restoreScene);
@@ -2715,6 +3234,12 @@ if (permalinkPayload) {
   decodeState(permalinkPayload).then((state) => {
     if (state) {
       hydrateFromState(state);
+      // Same contract as the ?gist path: a shared link is a "show me this
+      // scene" deep link, so the recipient lands on the finished render (at
+      // the link's full settings), not a low-res draft. startRender supersedes
+      // the draft hydrateFromState just scheduled and self-guards on busy /
+      // non-isolated, so it is safe to fire right after.
+      startRender();
     } else if (gistParam) {
       loadGistScene(gistParam);
     } else {
@@ -2794,14 +3319,103 @@ stopBtn.addEventListener('click', () => {
   }
 });
 
+// ---- keyboard-shortcuts overlay ----
+// A plain dialog panel listing every binding, toggled by ? (when focus isn't in
+// a typing surface) or the footer hint; Esc or ? closes. No backdrop/trap: the
+// panel is static reference text, so plain show/hide with a focus handoff (the
+// panel on open, the opener back on close) covers the dialog contract.
+
+const shortcutsPanel = document.getElementById('shortcuts');
+const shortcutsHint = /** @type {HTMLButtonElement} */ (document.getElementById('shortcuts-hint'));
+/** @type {Element | null} */
+let shortcutsReturnFocus = null;
+
+function openShortcuts() {
+  shortcutsReturnFocus = document.activeElement;
+  shortcutsPanel.hidden = false;
+  shortcutsPanel.focus();
+}
+
+function closeShortcuts() {
+  shortcutsPanel.hidden = true;
+  if (shortcutsReturnFocus instanceof HTMLElement) shortcutsReturnFocus.focus();
+  shortcutsReturnFocus = null;
+}
+
+function toggleShortcuts() {
+  if (shortcutsPanel.hidden) openShortcuts();
+  else closeShortcuts();
+}
+shortcutsHint.addEventListener('click', toggleShortcuts);
+
+// True when `el` is a typing surface, where a bare `?` must stay a character
+// (the editor, the example search, the flags field, the number inputs...).
+function isTextField(el) {
+  return (
+    el instanceof HTMLInputElement ||
+    el instanceof HTMLTextAreaElement ||
+    el instanceof HTMLSelectElement
+  );
+}
+
+// Ctrl/Cmd+S: flush the debounced persistence first (the freshest text is what
+// downloads AND what survives a tab close right after), then save the scene as
+// a .pov. Same revoke-after-grace pattern as the player exports (the synthetic
+// click navigates synchronously; the timeout frees the blob).
+function downloadScene() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  saveState();
+  syncPermalinkHash();
+  const url = URL.createObjectURL(new Blob([editor.value], { type: 'text/plain' }));
+  triggerDownload(url, 'scene.pov');
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+// True when the editor's find/go-to-line chords should engage: focus is in the
+// editor, already in the find bar, or nowhere in particular (the body). In any
+// other field the browser's own Ctrl/Cmd+F stays untouched.
+function findScopeOk(target) {
+  return target === editor || target === document.body || findBar.contains(target);
+}
+
 // Document-level shortcuts: Ctrl/Cmd+Enter renders from anywhere (startRender
-// guards on busy), Escape aborts an in-flight render.
+// guards on busy), +Shift arms the one-shot final-quality override first.
+// Escape closes the shortcuts overlay when it's open, else the find bar, else
+// aborts an in-flight render. Ctrl/Cmd+F finds in the scene and Ctrl/Cmd+G
+// goes to a line (both editor-scoped, see findScopeOk), Ctrl/Cmd+S downloads
+// the scene, Ctrl/Cmd+K opens the example browser, and ? toggles the
+// shortcuts overlay.
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+  const mod = e.ctrlKey || e.metaKey;
+  if (e.key === 'Enter' && mod) {
     e.preventDefault();
+    if (e.shiftKey) finalRenderOnce = true;
     startRender();
   } else if (e.key === 'Escape') {
-    abortCtl?.abort();
+    if (!shortcutsPanel.hidden) closeShortcuts();
+    else if (!findBar.hidden) closeFind(false);
+    else abortCtl?.abort();
+  } else if ((e.key === 'f' || e.key === 'F') && mod && !e.shiftKey && !e.altKey) {
+    if (!findScopeOk(e.target)) return; // leave the browser's find alone elsewhere
+    e.preventDefault();
+    openFind('find');
+  } else if ((e.key === 'g' || e.key === 'G') && mod && !e.shiftKey && !e.altKey) {
+    if (!findScopeOk(e.target)) return;
+    e.preventDefault();
+    openFind('goto');
+  } else if ((e.key === 's' || e.key === 'S') && mod && !e.shiftKey && !e.altKey) {
+    e.preventDefault();
+    downloadScene();
+  } else if ((e.key === 'k' || e.key === 'K') && mod && !e.shiftKey && !e.altKey) {
+    // Leave the chord alone while another popover/overlay owns the screen (the
+    // browser already showing included: re-opening would reset its state).
+    if (!exampleBrowser.hidden || !shortcutsPanel.hidden || isCompleteOpen()) return;
+    e.preventDefault();
+    openBrowser();
+  } else if (e.key === '?' && !mod && !e.altKey && !isTextField(e.target)) {
+    e.preventDefault();
+    toggleShortcuts();
   }
 });
 

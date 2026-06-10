@@ -28,6 +28,7 @@ function clampInt(v, lo, hi) {
  * @property {string} [height]
  * @property {string} [quality]
  * @property {string} [antialias]
+ * @property {string} [draft]
  * @property {string} [threads]
  * @property {string} [mode]
  * @property {string} [frames]
@@ -69,6 +70,10 @@ export function parseRenderParams(search) {
   if (q !== null) out.quality = q;
   const aa = pick('antialias', 'aa');
   if (aa !== null) out.antialias = aa;
+  // Live-draft preview edge, validated against its <select> options like the two
+  // above (full-name only; 'd' would read ambiguously next to w/h).
+  const draft = pick('draft');
+  if (draft !== null) out.draft = draft;
 
   // Raw extra flags (matches the saved-state + permalink field set), passed
   // through verbatim like quality/antialias.

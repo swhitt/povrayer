@@ -21,6 +21,7 @@ export const CONTROL_FIELDS = [
   { key: 'height', kind: 'text', allowEmpty: false },
   { key: 'quality', kind: 'select' },
   { key: 'antialias', kind: 'select' },
+  { key: 'draft', kind: 'select' },
   { key: 'threads', kind: 'text', allowEmpty: true },
   { key: 'flags', kind: 'text', allowEmpty: true },
   { key: 'frames', kind: 'int', min: 1, max: 240 },

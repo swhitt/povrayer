@@ -156,8 +156,15 @@ header h1 {
   white-space: nowrap;
 }
 
+/* Shared by both pages; the REPL nav holds a bordered button (source toggle)
+   next to an underlined link, which need a defined gap to read as siblings
+   rather than a collision. Flex centering also keeps the 28px button and the
+   one-line link on a common vertical axis. */
 header nav {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 /* Brand mark: a ray-traced sphere. The only circle in the interface. */
@@ -357,8 +364,9 @@ summary:focus-visible,
 
 /* A pressed toggle inverts to a light fill (see .toggle-btn[aria-pressed='true']
    below), so the accent-gold ring all but vanishes on it (~1:1). Mirror the CTA
-   treatment with the dark ink ring (~14:1 on the light fill). still/live/loop
-   all default to pressed, so this is the ring keyboard users actually land on. */
+   treatment with the dark ink ring (~14:1 on the light fill). still/loop default
+   to pressed, so this is the ring keyboard users actually land on. (#live-toggle
+   opts back into the gold ring: its quiet on-state keeps the dark bg.) */
 .toggle-btn[aria-pressed='true']:focus-visible {
   outline-color: var(--accent-ink);
 }
@@ -536,14 +544,17 @@ body.ui main > * {
   z-index: 20;
   display: flex;
   flex-direction: column;
-  max-height: min(60vh, 460px);
+  /* The px cap is tuned so the DEFAULT list (one expanded category of five
+     scenes) cuts off at a row border instead of mid-glyph; other expansion
+     states still clip mid-row, which the strong .ex-attr edge absorbs. */
+  max-height: min(60vh, 448px);
   background: var(--panel);
   border: 1px solid var(--border-strong);
 }
 
 #example-search {
   flex: none;
-  margin: 6px;
+  margin: 8px; /* the popover's 8px rhythm (.ex-attr, .ex-empty), not a one-off 6px */
 }
 
 #example-listbox {
@@ -665,14 +676,18 @@ body.ui main > * {
   padding: 8px;
 }
 
-/* Footer: attribution text + the lone accent link (links are already accent). */
+/* Footer: attribution text + the lone accent link (links are already accent).
+   The top edge is --border-strong, not the row hairline: the max-height'd list
+   usually clips a row mid-glyph right above it, and a strong boundary makes
+   that cut read as "panel ends here, more scrolls beneath" rather than a
+   rendering bug. (No shadow/fade: the rendered image owns the only shadow.) */
 .ex-attr {
   flex: none;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   padding: 8px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-strong);
   color: var(--dim);
   font-size: var(--fs-out);
 }
@@ -787,6 +802,37 @@ body.ui main > * {
   font: inherit; /* override the <code> UA monospace */
   white-space: pre;
   will-change: transform; /* compositor layer: the scroll-sync translate is GPU-only */
+}
+
+/* Find / go-to-line bar: a slim strip pinned over the editor's top edge inside
+   #editor-stack. Same opaque-panel treatment as the other editor overlays
+   (--panel fill, strong hairline, square, no shadow); z-index clears the
+   textarea (1) and the completion popup (5). The dim counter ("3/17") is the
+   only chrome beside the input. */
+#find-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border-strong);
+}
+
+#find-input {
+  flex: 1;
+  min-width: 0;
+}
+
+#find-count {
+  flex: none;
+  color: var(--dim);
+  font-size: var(--fs-out);
+  font-variant-numeric: tabular-nums;
 }
 
 /* The error-line marker: a full-width red-tinted band behind the colored text at
@@ -1025,15 +1071,17 @@ body.ui main > * {
   font-variant-numeric: tabular-nums;
 }
 
-/* Auto-sliders for `#declare NAME = <number>` params. The range control is the
-   one place a slider's filled track reads as a value affordance, so it borrows
-   the accent via accent-color (the same family as the progress bar), and nothing
-   else here does. Names dim, values tabular like the rest of the readouts. The
-   left indent reinforces "these belong to the scene above, not the toolbar". */
+/* Auto-sliders for `#declare NAME = <number>` params. The ranges take the same
+   grey hand-built treatment as the player scrubber (see .scrubber): three gold
+   tracks sitting right above the Render button would dilute the accent census.
+   Names dim, values tabular like the rest of the readouts. The left indent
+   reinforces "these belong to the scene above, not the toolbar". The wide 24px
+   column gap keeps each trailing reset ↺ visually owned by ITS slider instead
+   of floating between it and the next row's label. */
 #sliders {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 16px;
+  gap: 8px 24px;
   margin-top: 10px;
   padding-left: 12px;
 }
@@ -1050,8 +1098,7 @@ body.ui main > * {
 }
 
 .slider-row input[type='range'] {
-  width: 120px;
-  accent-color: var(--accent);
+  width: 120px; /* appearance/track/thumb come from the shared .scrubber rules */
 }
 
 .slider-value {
@@ -1097,6 +1144,15 @@ body.ui main > * {
   width: 4.5em;
 }
 
+/* frames/fps cap at 3 digits (max 240 / 60), so the shared 4.5em sized for the
+   4-digit dimension fields is dead air here, and in animate mode that slack is
+   what tips the toolbar into a second wrap row at ~1440px. The #controls scope
+   is for specificity only (it must outrank the [type='number'] rule above). */
+#controls #frames,
+#controls #fps {
+  width: 3.5em;
+}
+
 /* "size  512 × 384": width and height read as one dimension control, not two
    stray fields. The dim label leads, the dim × ties the pair, tighter inner gap
    than the inter-group rhythm so it groups optically. */
@@ -1110,6 +1166,13 @@ body.ui main > * {
 
 .ctl-x {
   color: var(--dim);
+}
+
+/* Width/height swap: the standard secondary button slimmed to a glyph chip, so
+   the size pair still reads as one dimension control with a small action on its
+   tail rather than three peer fields. */
+#swap-size {
+  padding: 0 7px;
 }
 
 /* Cluster the controls into legible groups (mode/behavior, dimensions,
@@ -1213,6 +1276,16 @@ body.ui main > * {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+/* Per-entry line delta vs the current editor text ("+2 −5", or "current"),
+   pinned to the row's right edge in the same dim numeric treatment as the
+   timestamp. ui.js recomputes it when the panel (re)opens, not per keystroke. */
+.history-delta {
+  flex: none;
+  margin-left: auto;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
 }
 
 /* The flags field stretches to the editor width: long +flag strings need room,
@@ -1450,6 +1523,33 @@ body.ui[data-mode='animate'] .still-only {
   color: var(--text);
 }
 
+/* live-draft is a persistent PREFERENCE, not one side of the still/animate
+   mutex, and it defaults on: with the inverted fill the toolbar opened showing
+   two bright slabs of equal weight. The on-state here is the quiet tier (bright
+   border + bold text on transparent), leaving the solid invert to mean "the
+   selected mode segment" alone. */
+#live-toggle[aria-pressed='true'] {
+  background: transparent;
+  border-color: var(--text);
+  color: var(--text);
+  font-weight: 700;
+}
+
+/* The transparent on-state keeps the dark bg, so the gold focus ring stays
+   visible; undo the pressed-toggle ink-ring override (ink would vanish here). */
+#live-toggle[aria-pressed='true']:focus-visible {
+  outline-color: var(--accent);
+}
+
+/* The generic button:hover invert would flash the exact bright slab the quiet
+   on-state avoids (reading as "about to flip OFF" at full mode-segment weight).
+   The row-tint grey keeps hover feedback in the quiet tier. */
+#live-toggle[aria-pressed='true']:hover:not(:disabled) {
+  background: var(--border);
+  border-color: var(--text);
+  color: var(--text);
+}
+
 /* The player canvas is the animate-mode hero, drawn into the same #output-plate
    (mat + shadow) the still image uses. Scales down to fit like #output. */
 #player-canvas {
@@ -1467,13 +1567,22 @@ body.ui[data-mode='animate'] .still-only {
   margin-bottom: 16px; /* clears the plate shadow, like .meta-row */
 }
 
-/* Scrubber: a 2px track echoing the progress bar, with a small square grey
-   thumb (no rounded corners, no accent). The base input:focus accent ring
-   still applies. Shared (.scrubber, not #scrubber) so the REPL's inline player
-   range gets the same de-accented treatment instead of the OS-blue default. */
-.scrubber {
-  flex: 1;
-  min-width: 8em;
+/* Hold the width across the Play/Pause label flip (sized to "Pause", the wider
+   label) so the flex-1 scrubber beside it doesn't jiggle on every toggle. Same
+   move as #copy-link-btn's "Copied" hold. */
+#play-btn {
+  min-width: 5.5em;
+}
+
+/* Hand-built range treatment: a 2px track echoing the progress bar, with a
+   small square grey thumb (no rounded corners, no accent). The base
+   input:focus accent ring still applies. Shared by the player scrubbers
+   (.scrubber, not #scrubber, so the REPL's inline player range matches) AND
+   the scene-param sliders: every range control in the app is grey, square,
+   accent-free (identity rule 1: the accent census doesn't include sliders).
+   Layout (flex/width) stays per-context below. */
+.scrubber,
+.slider-row input[type='range'] {
   height: 28px;
   padding: 0;
   background: transparent;
@@ -1483,17 +1592,25 @@ body.ui[data-mode='animate'] .still-only {
   appearance: none;
 }
 
-.scrubber::-webkit-slider-runnable-track {
+.scrubber {
+  flex: 1;
+  min-width: 8em;
+}
+
+.scrubber::-webkit-slider-runnable-track,
+.slider-row input[type='range']::-webkit-slider-runnable-track {
   height: 2px;
   background: var(--border-strong);
 }
 
-.scrubber::-moz-range-track {
+.scrubber::-moz-range-track,
+.slider-row input[type='range']::-moz-range-track {
   height: 2px;
   background: var(--border-strong);
 }
 
-.scrubber::-webkit-slider-thumb {
+.scrubber::-webkit-slider-thumb,
+.slider-row input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
   width: 10px;
@@ -1503,7 +1620,8 @@ body.ui[data-mode='animate'] .still-only {
   border: none;
 }
 
-.scrubber::-moz-range-thumb {
+.scrubber::-moz-range-thumb,
+.slider-row input[type='range']::-moz-range-thumb {
   width: 10px;
   height: 16px;
   background: var(--text);
@@ -1750,9 +1868,46 @@ body.source-open #repl-source {
 
 /* ---- responsive ---- */
 
+/* Editor/output splitter handle: an 8px grid column between the panes, shown
+   only at the two-column breakpoint (below it the panes stack and #split-handle
+   is display:none). The visible mark is a centered 2px hairline; the full 8px
+   strip is the hit/drag target. Focus keeps the global ring (it's a tabbable
+   separator); hover/drag brighten the line one step, never the accent. */
+#split-handle {
+  display: none;
+}
+
 @media (min-width: 900px) {
   body.ui main {
-    grid-template-columns: 1fr 1fr;
+    /* The middle 8px column is #split-handle; --split (an fr count set inline
+       by ui.js, default 1fr = 50/50) sizes the editor pane against the output
+       pane's 1fr. The minmax floors keep both panes usable at any split. */
+    grid-template-columns: minmax(320px, var(--split, 1fr)) 8px minmax(320px, 1fr);
+    column-gap: 8px; /* 8 + 8 + 8: the divider owns the inter-pane gutter */
+  }
+
+  #split-handle {
+    display: block;
+    position: relative;
+    cursor: col-resize;
+    /* touch-action none so a stray touch drag on the handle resizes instead of
+       scrolling the page out from under the pointer capture. */
+    touch-action: none;
+  }
+
+  #split-handle::before {
+    content: '';
+    position: absolute;
+    left: 3px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--border);
+  }
+
+  #split-handle:hover::before,
+  #split-handle:focus-visible::before {
+    background: var(--border-strong);
   }
 
   /* Two-column only: the status stays a single aligned row whose top edge
@@ -1763,6 +1918,14 @@ body.source-open #repl-source {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  /* Stop exists because the toolbar Cancel is easy to miss on a phone mid-
+     render (see #stop-btn). In two-column both controls sit on screen at once,
+     so showing both reads as two different actions. Exactly one stop control
+     per viewport: Cancel here, Stop below the breakpoint. */
+  #stop-btn {
+    display: none;
   }
 }
 
@@ -2173,4 +2336,80 @@ body.source-open #repl-source {
   .help dl.help-grid dd {
     margin: 0 0 6px 12px;
   }
+}
+
+/* ---- keyboard-shortcuts overlay (UI page) --------------------------------
+   The example-popover panel language verbatim: opaque --panel, one strong
+   hairline, square corners, no shadow (the rendered image keeps the page's
+   only shadow). Lives at file end like the :help card: purely additive. */
+
+/* <kbd> chips (the overlay rows + the footer hint): bordered, square,
+   chrome-sized, --border-strong like every other control boundary. */
+kbd {
+  font-family: inherit;
+  font-size: var(--fs-chrome);
+  border: 1px solid var(--border-strong);
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
+/* Fixed + centered; z-index clears the example popover (z-index: 20). The
+   max-height + scroll keeps every binding reachable on a short viewport. */
+#shortcuts {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 30;
+  width: min(92vw, 560px);
+  max-height: min(80vh, 600px);
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  padding: 16px;
+}
+
+/* Quiet section head, same uppercase-dim treatment as the category heads. */
+#shortcuts h2 {
+  margin: 0 0 12px;
+  font-size: var(--fs-body);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+}
+
+.shortcuts-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 16px;
+  margin: 0;
+  font-size: var(--fs-out);
+  line-height: 1.5;
+}
+
+.shortcuts-list dt {
+  white-space: nowrap;
+}
+
+.shortcuts-list dd {
+  margin: 0;
+  color: var(--dim);
+  align-self: center;
+}
+
+/* Footer hint: link-shaped (no box) but dim, not accent; the kbd chip carries
+   the visual weight, so the hint reads as chrome, not a navigation link. */
+#shortcuts-hint {
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--dim);
+  font-size: inherit;
+}
+
+#shortcuts-hint:hover:not(:disabled) {
+  background: none;
+  color: var(--text);
 }

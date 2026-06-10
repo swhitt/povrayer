@@ -11,10 +11,10 @@ const byKey = Object.fromEntries(CONTROL_FIELDS.map((f) => [f.key, f]));
 const yes = () => true;
 const no = () => false;
 
-test('schema covers exactly the eight persisted controls, once each', () => {
+test('schema covers exactly the nine persisted controls, once each', () => {
   assert.deepEqual(
     CONTROL_FIELDS.map((f) => f.key),
-    ['width', 'height', 'quality', 'antialias', 'threads', 'flags', 'frames', 'fps']
+    ['width', 'height', 'quality', 'antialias', 'draft', 'threads', 'flags', 'frames', 'fps']
   );
 });
 
@@ -36,6 +36,8 @@ test('coerceSaved: non-string values are rejected for text/select', () => {
 test('coerceSaved: selects pass only when the option exists', () => {
   assert.equal(coerceSaved(byKey.quality, '5', yes), '5');
   assert.equal(coerceSaved(byKey.antialias, 'weird', no), null);
+  assert.equal(coerceSaved(byKey.draft, '256', yes), '256');
+  assert.equal(coerceSaved(byKey.draft, '999', no), null);
 });
 
 test('coerceSaved: allowEmpty governs whether "" is kept', () => {

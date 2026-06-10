@@ -20,6 +20,7 @@
  * @property {string} antialias
  * @property {string} threads
  * @property {string} [flags] raw POV-Ray flags; optional so links predating the field still decode
+ * @property {string} [draft] live-draft preview edge; optional so links predating the field still decode
  * @property {'still' | 'animate'} mode
  * @property {string} frames
  * @property {string} fps
