@@ -38,6 +38,7 @@ const exampleTrigger = document.getElementById('example-trigger');
 const exampleTriggerText = document.getElementById('example-trigger-text');
 const exampleBrowser = document.getElementById('example-browser');
 const exampleSearch = /** @type {HTMLInputElement} */ (document.getElementById('example-search'));
+const exampleClear = /** @type {HTMLButtonElement} */ (document.getElementById('example-clear'));
 const exampleListbox = document.getElementById('example-listbox');
 const exampleEmpty = document.getElementById('example-empty');
 const exampleAttrText = document.querySelector('#example-attribution .ex-attr-text');
@@ -531,6 +532,7 @@ function setActive(item) {
 function renderList() {
   const q = exampleSearch.value.trim().toLowerCase();
   const searching = q !== '';
+  exampleClear.hidden = !searching;
   let anyMatch = false;
   for (const g of exampleGroups) {
     let groupHasMatch = false;
@@ -614,6 +616,15 @@ exampleSearch.addEventListener('input', () => {
   // (a head would never commit, so default the active item to an option).
   setActive(visibleOptions()[0] ?? null);
 });
+
+exampleClear.addEventListener('mousedown', (e) => e.preventDefault());
+exampleClear.addEventListener('click', () => {
+  exampleSearch.value = '';
+  renderList();
+  setActive(visibleOptions()[0] ?? null);
+  exampleSearch.focus();
+});
+
 exampleSearch.addEventListener('keydown', (e) => {
   const items = navItems();
   const idx = items.indexOf(activeItem);

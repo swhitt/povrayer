@@ -730,10 +730,18 @@ try {
     'open focuses search, marks the loaded option active, shows the CC0 attribution with hidden link'
   );
 
+  const modelingNames = await page.evaluate(async () => {
+    const { groupByCategory } = await import('/examples.js');
+    return groupByCategory()
+      .find((g) => g.key === 'modeling')
+      .items.map((e) => e.name);
+  });
+  const modelingCount = modelingNames.length;
+
   // open-collapses-others: the accordion opens COMPACT. Only the loaded scene's
   // category (Solid Modeling) is expanded; every other category is collapsed, so
-  // the panel shows five rows, not a 29-row wall. Each head carries a scene-count
-  // chip matching its category size.
+  // the panel shows that category's rows, not a full-library wall. Each head
+  // carries a scene-count chip matching its category size.
   assert.deepEqual(
     await page.evaluate(() => ({
       expanded: [...document.querySelectorAll('.ex-group-head')]
@@ -745,7 +753,7 @@ try {
     })),
     {
       expanded: ['exgrp-modeling'],
-      visible: ['csg-die', 'steinmetz', 'lathe-vase', 'prism-lantern', 'sweep-knot'],
+      visible: modelingNames,
     },
     'opening collapses every category except the loaded scene’s (compact panel)'
   );
@@ -788,16 +796,42 @@ try {
   // handler's non-navigation default arms.
   await page.type('#example-search', 'modeling');
   await page.waitForFunction(
-    () =>
-      [...document.querySelectorAll('.ex-option')].filter((o) => !o.hidden).length === 5 &&
+    (count) =>
+      [...document.querySelectorAll('.ex-option')].filter((o) => !o.hidden).length === count &&
       document.getElementById('exgrp-implicit').parentElement.hidden,
-    null,
+    modelingCount,
     { timeout: 5_000 }
   );
   assert.deepEqual(
     await visibleNames(),
-    ['csg-die', 'steinmetz', 'lathe-vase', 'prism-lantern', 'sweep-knot'],
+    modelingNames,
     'filtering "modeling" shows exactly the Solid Modeling group'
+  );
+  assert.equal(
+    await page.evaluate(() => document.getElementById('example-clear').hidden),
+    false,
+    'typing a filter shows the clear button'
+  );
+  await page.click('#example-clear');
+  await page.waitForFunction(
+    (count) =>
+      document.getElementById('example-search').value === '' &&
+      document.getElementById('example-clear').hidden &&
+      [...document.querySelectorAll('.ex-option')].filter((o) => !o.hidden).length === count,
+    modelingCount,
+    { timeout: 5_000 }
+  );
+  assert.deepEqual(
+    await visibleNames(),
+    modelingNames,
+    'clear restores the compact unfiltered list'
+  );
+  await page.type('#example-search', 'modeling');
+  await page.waitForFunction(
+    (count) =>
+      [...document.querySelectorAll('.ex-option')].filter((o) => !o.hidden).length === count,
+    modelingCount,
+    { timeout: 5_000 }
   );
   assert.equal(await groupHidden('modeling'), false, 'the matched group stays visible');
   assert.equal(await groupHidden('implicit'), true, 'an unmatched group head hides');
@@ -834,12 +868,12 @@ try {
   // its five rows show, and csg-die is the active row.
   await page.fill('#example-search', '');
   await page.waitForFunction(
-    () =>
-      [...document.querySelectorAll('.ex-option')].filter((o) => !o.hidden).length === 5 &&
+    (count) =>
+      [...document.querySelectorAll('.ex-option')].filter((o) => !o.hidden).length === count &&
       document.getElementById('exgrp-modeling').getAttribute('aria-expanded') === 'true' &&
       document.getElementById('exgrp-implicit').getAttribute('aria-expanded') === 'false' &&
       document.querySelector('.ex-option.is-active')?.dataset.name === 'csg-die',
-    null,
+    modelingCount,
     { timeout: 5_000 }
   );
 
@@ -898,7 +932,7 @@ try {
   assert.equal(await visibleCount(), 0, 'collapsing the only expanded category hides every row');
   await page.keyboard.press('ArrowRight'); // collapsed head -> expand
   assert.equal(await headExpanded('modeling'), 'true', 'ArrowRight expands a collapsed head');
-  assert.equal(await visibleCount(), 5, 'expanding restores the category rows');
+  assert.equal(await visibleCount(), modelingCount, 'expanding restores the category rows');
   await page.keyboard.press('ArrowDown'); // head -> csg-die
   await page.keyboard.press('ArrowRight'); // ArrowRight on a row is a no-op
   assert.equal(await activeName(), 'csg-die', 'ArrowRight on a row does nothing');

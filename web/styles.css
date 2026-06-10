@@ -552,9 +552,33 @@ body.ui main > * {
   border: 1px solid var(--border-strong);
 }
 
-#example-search {
+.ex-search-row {
   flex: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  gap: 6px;
   margin: 8px; /* the popover's 8px rhythm (.ex-attr, .ex-empty), not a one-off 6px */
+}
+
+#example-search {
+  width: 100%;
+  min-width: 0;
+}
+
+#example-clear {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--dim);
+  font-size: var(--fs-ui);
+  line-height: 1;
+}
+
+#example-clear:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
 }
 
 #example-listbox {

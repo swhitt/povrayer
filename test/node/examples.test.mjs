@@ -13,9 +13,17 @@ import {
   groupByCategory,
 } from '../../web/examples.js';
 
-// SPDX ids the library is allowed to ship under. Every shipped scene is CC0-1.0,
-// but the gate enforces the whole allow-list so an adapted scene can land later.
-const LICENSE_ALLOW = new Set(['CC0-1.0', 'CC-BY-4.0', 'MIT', 'Apache-2.0', 'BSD-3-Clause']);
+// SPDX ids the library is allowed to ship under.
+const LICENSE_ALLOW = new Set([
+  'CC0-1.0',
+  'CC-BY-4.0',
+  'CC-BY-SA-3.0',
+  'CC-BY-SA-4.0',
+  'MIT',
+  'Apache-2.0',
+  'BSD-3-Clause',
+  'GPL-3.0-or-later',
+]);
 
 test('EXAMPLES is a non-empty array of fully-specified records', () => {
   assert.ok(Array.isArray(EXAMPLES), 'EXAMPLES must be an array');

@@ -44,21 +44,24 @@
           </button>
 
           <div id="example-browser" hidden>
-            <input
-              id="example-search"
-              type="search"
-              role="combobox"
-              aria-expanded="true"
-              aria-controls="example-listbox"
-              aria-activedescendant=""
-              aria-autocomplete="list"
-              aria-label="filter examples"
-              placeholder="filter examples…"
-              autocomplete="off"
-              autocapitalize="off"
-              autocorrect="off"
-              spellcheck="false"
-            />
+            <div class="ex-search-row">
+              <input
+                id="example-search"
+                type="search"
+                role="combobox"
+                aria-expanded="true"
+                aria-controls="example-listbox"
+                aria-activedescendant=""
+                aria-autocomplete="list"
+                aria-label="filter examples"
+                placeholder="filter examples…"
+                autocomplete="off"
+                autocapitalize="off"
+                autocorrect="off"
+                spellcheck="false"
+              />
+              <button id="example-clear" type="button" aria-label="clear filter" hidden>x</button>
+            </div>
 
             <div id="example-listbox" role="listbox" aria-label="example scenes">
               <!-- ui.js generates one .ex-group per CATEGORIES entry, in order. -->
