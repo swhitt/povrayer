@@ -1,12 +1,9 @@
 #!/bin/sh
-# Pre-push gate: format, lint, wrapper types, the full render suite, and the
-# 100% coverage check. Slow but authoritative, the last line before code leaves
-# the machine. Mirrors CI's lint job (format + eslint + tsc) so a push whose
-# pre-commit was bypassed (--no-verify, an amend/rebase, a hook-skipping GUI)
-# can't slip a formatting or type error through to CI.
-#
-# `npm run coverage` runs the ENTIRE suite (node + browser) under c8, so it
-# doubles as the full `npm test` run; coverage:check then enforces 100%.
+# Pre-push gate: the fast static checks only (format, lint, wrapper types). The
+# full render suite + 100% coverage gate live in CI (ci.yml), which is the
+# authoritative last word; duplicating them here made every push take minutes.
+# These three catch the common mistakes (formatting, lint, type errors) in a
+# couple of seconds, before code reaches CI.
 set -e
 
 say() { printf '\npre-push: %s\n' "$1"; }
@@ -19,18 +16,5 @@ npm run lint
 
 say 'tsc --noEmit (wrapper)'
 npm run typecheck
-
-# checkJs over the first-party plain JS (JSDoc types). Lives here, not in
-# pre-commit, because it resolves the built wrapper's types from dist/ (the
-# .d.ts shims + test imports), which pre-commit doesn't guarantee but this gate
-# does (the coverage run below needs dist too). Mirrors CI's build-test job.
-say 'tsc --noEmit (first-party JS, checkJs)'
-npm run typecheck:js
-
-say 'full suite + merged coverage (node + browser)'
-npm run coverage
-
-say 'coverage gate (100% first-party)'
-npm run coverage:check
 
 say 'ok'
