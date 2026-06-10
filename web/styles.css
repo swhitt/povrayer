@@ -284,6 +284,26 @@ button:disabled {
   cursor: default;
 }
 
+/* A button that reads as a link (the restore-scene undo sits inline in a dim
+   note). Gold like a link, no border/fill, no tap-target growth, so it flows
+   inline rather than rendering as a grey box. Accent-on-links is sanctioned
+   (identity rule 1). */
+.linkish {
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.linkish:hover:not(:disabled) {
+  background: none;
+  color: var(--accent);
+  text-decoration: none;
+}
+
 /* Primary action: the only filled-accent, only uppercase element. */
 #render-btn,
 #run-btn {

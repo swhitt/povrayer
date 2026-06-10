@@ -72,6 +72,8 @@ const assetNote = document.getElementById('asset-note');
 const slidersPanel = document.getElementById('sliders');
 const sceneParams = /** @type {HTMLDetailsElement} */ (document.getElementById('scene-params'));
 const sceneParamsCount = document.getElementById('scene-params-count');
+const restoreNote = document.getElementById('restore-note');
+const restoreBtn = document.getElementById('restore-btn');
 const advanced = /** @type {HTMLDetailsElement} */ (document.getElementById('advanced'));
 const gutter = document.getElementById('gutter');
 const liveToggle = document.getElementById('live-toggle');
@@ -116,7 +118,6 @@ const exportBtn = /** @type {HTMLButtonElement} */ (document.getElementById('exp
 const exportFormat = /** @type {HTMLSelectElement} */ (document.getElementById('export-format'));
 
 const STORAGE_KEY = 'povrayer.ui.v1';
-const STASH_KEY = 'povrayer.ui.stash';
 
 // 'still' renders a single frame; 'animate' drives POV-Ray's clock loop and
 // plays the frames back in #player-canvas. Restored from saved state below.
@@ -441,10 +442,7 @@ function selectExample(name) {
   lastLoadedSource = source;
   applyExampleClock(record); // BEFORE scheduleDraft
   setTriggerLabel(name); // trigger text + data-name + re-mark loaded option
-  renderGutter();
-  paintHighlight();
-  scheduleSave();
-  scheduleDraft();
+  reflectSceneReplaced();
 }
 
 // ---- example-browser interaction (open/filter/navigate/select/close) ----
@@ -715,6 +713,7 @@ function syncEditorScroll() {
 }
 editor.addEventListener('scroll', syncEditorScroll);
 editor.addEventListener('input', () => {
+  restoreNote.hidden = true; // a fresh edit supersedes the restore-a-replaced-scene offer
   renderGutter();
   paintHighlight();
   refreshComplete(false);
@@ -1115,14 +1114,37 @@ function showDropNote(skipped) {
   }
 }
 
-// Stash the current scene as the single recovery copy before it's replaced
-// (shared with the example-browser replace flow).
+// One in-session recovery copy of the scene the user had edited, kept so a
+// replace (example switch or scene drop) past the confirm() is still undoable.
+let stashedScene = '';
+
+// Capture the about-to-be-replaced scene and reveal the restore affordance. The
+// copy lives in memory only (the undo is for the current session, and the note
+// clears on the next edit), so there's no localStorage to leave behind.
 function stashScene() {
-  try {
-    localStorage.setItem(STASH_KEY, editor.value);
-  } catch {
-    // best-effort stash
-  }
+  stashedScene = editor.value;
+  restoreNote.hidden = false;
+}
+
+// Restore the stashed scene and dismiss the note. Wired to the restore link.
+function restoreScene() {
+  editor.value = stashedScene;
+  restoreNote.hidden = true;
+  reflectSceneReplaced();
+}
+
+// Reflect a wholesale, programmatic replacement of the editor text (example
+// switch, scene drop, permalink hydrate, restore): repaint the gutter/overlay,
+// rebuild the scene-params panel for the NEW source, and reschedule save+draft.
+// Direct keystrokes go through the input handler, which runs the same set; this
+// is the path for the cases that assign editor.value (no input event fires, so
+// the panel would otherwise show the previous scene's params).
+function reflectSceneReplaced() {
+  renderGutter();
+  paintHighlight();
+  buildSliders();
+  scheduleSave();
+  scheduleDraft();
 }
 
 // Insert text at the caret, advancing past it, and resync the overlay/gutter and
@@ -1152,10 +1174,7 @@ async function handleDrop(fileList) {
       if (confirm(`Replace the scene with ${file.name}?`)) {
         stashScene();
         editor.value = text;
-        renderGutter();
-        paintHighlight();
-        scheduleSave();
-        scheduleDraft();
+        reflectSceneReplaced();
       }
       continue;
     }
@@ -2518,6 +2537,9 @@ modeAnimateBtn.addEventListener('click', () => setMode('animate'));
 // it once and it stays open across renders and reloads.
 advanced.addEventListener('toggle', scheduleSave);
 
+// Undo a scene replacement: put the stashed (pre-replace) scene back.
+restoreBtn.addEventListener('click', restoreScene);
+
 // Live-draft toggle: reflect the restored state, then flip + persist on click.
 // Turning it on schedules a draft; turning it off cancels any pending/in-flight
 // draft (no accent: it's the quiet grey .toggle-btn invert).
@@ -2590,10 +2612,7 @@ function hydrateFromState(state) {
   // A permalink replaces "what counts as the loaded scene": clear the example
   // dirty-baseline so the next example switch doesn't treat this as example text.
   lastLoadedSource = state.source;
-  renderGutter();
-  paintHighlight();
-  scheduleSave();
-  scheduleDraft();
+  reflectSceneReplaced();
 }
 
 // ---- load a scene from a GitHub gist (?gist=<id>) -------------------------

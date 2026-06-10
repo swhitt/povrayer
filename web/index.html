@@ -123,6 +123,12 @@
         </div>
         <!-- Transient feedback for a drop that couldn't be imported. -->
         <p id="asset-note" class="asset-note" role="status" aria-live="polite" hidden></p>
+        <!-- Undo offer shown after an example/drop replaces an edited scene; ui.js
+             reveals it on replace and hides it on the next edit or on restore. -->
+        <p id="restore-note" class="asset-note" role="status" aria-live="polite" hidden>
+          replaced your scene
+          <button id="restore-btn" type="button" class="linkish">restore</button>
+        </p>
         <!-- Scene params: auto-generated sliders, one per top-level
              `#declare NAME = <number>`. A labeled disclosure so the scene's own
              knobs read as scene CONTENT, set apart from the app's render settings

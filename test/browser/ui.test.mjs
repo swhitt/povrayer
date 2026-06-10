@@ -1046,40 +1046,46 @@ try {
   );
   assert.equal(await triggerName(), 'blobs', 'a rejected switch must not change the loaded scene');
 
-  // Edited editor + confirm() accepted -> stash the edit, load the new example.
+  // Edited editor + confirm() accepted -> stash the edit (in memory), offer to
+  // restore it, and load the new example.
   await page.evaluate(() => {
     window.confirm = () => true;
   });
   await switchExample('glass');
-  assert.equal(
-    await page.evaluate(() => localStorage.getItem('povrayer.ui.stash')),
-    'EDITED scene one',
-    'an accepted example switch must stash the replaced edit'
-  );
   assert.notEqual(
     await editorValue(),
     'EDITED scene one',
     'an accepted example switch must replace the editor with the new example'
   );
-
-  // Accepted switch while localStorage.setItem throws: the stash write is
-  // best-effort, so the catch swallows it and the example still loads.
-  await page.fill('#editor', 'EDITED scene two');
-  await page.evaluate(() => {
-    window.__origSetItem = localStorage.setItem.bind(localStorage);
-    localStorage.setItem = () => {
-      throw new Error('storage blocked');
-    };
-  });
-  await switchExample('blobs');
-  assert.notEqual(
-    await editorValue(),
-    'EDITED scene two',
-    'a stash-write failure must not block the example switch'
+  assert.equal(
+    await page.evaluate(() => document.getElementById('restore-note').hidden),
+    false,
+    'an accepted switch offers to restore the replaced edit'
   );
-  await page.evaluate(() => {
-    localStorage.setItem = window.__origSetItem;
-  });
+
+  // Clicking restore brings the replaced edit back and dismisses the offer.
+  await page.click('#restore-btn');
+  assert.equal(await editorValue(), 'EDITED scene one', 'restore puts the replaced edit back');
+  assert.equal(
+    await page.evaluate(() => document.getElementById('restore-note').hidden),
+    true,
+    'restoring dismisses the offer'
+  );
+
+  // A fresh edit (not a restore) also dismisses a pending restore offer.
+  await page.fill('#editor', 'EDITED scene two');
+  await switchExample('blobs'); // accepted -> stashes again, re-shows the offer
+  assert.equal(
+    await page.evaluate(() => document.getElementById('restore-note').hidden),
+    false,
+    'a second accepted switch re-offers restore'
+  );
+  await page.fill('#editor', 'typing past the offer');
+  assert.equal(
+    await page.evaluate(() => document.getElementById('restore-note').hidden),
+    true,
+    'a fresh edit dismisses the restore offer'
+  );
 
   // --- editor mechanics: Tab indent/outdent, Escape trap, scroll, blur -------
   const setEditor = (value, a, b) =>
@@ -3301,9 +3307,15 @@ try {
     { timeout: 5_000 }
   );
   assert.equal(
-    await page.evaluate(() => localStorage.getItem('povrayer.ui.stash')),
+    await page.evaluate(() => document.getElementById('restore-note').hidden),
+    false,
+    'an accepted .pov replace offers to restore the prior scene'
+  );
+  await page.click('#restore-btn');
+  assert.equal(
+    await page.evaluate(() => document.getElementById('editor').value),
     beforeReplace,
-    'an accepted .pov replace stashes the prior scene for recovery'
+    'restoring after a .pov replace brings the prior scene back'
   );
 
   // A drop with the caret MID-line prefixes a newline so the declare lands on its
