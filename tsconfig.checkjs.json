@@ -50,6 +50,7 @@
     "web/ui.js",
     "web/repl.js",
     "web/anim-export.js",
+    "web/asset-drop.js",
     "web/render-client.js",
     "web/highlight.js",
     "web/sdl-strip.js",
