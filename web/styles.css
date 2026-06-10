@@ -975,6 +975,13 @@ body.ui main > * {
   font-size: var(--fs-out);
 }
 
+/* The restore-scene note borrows .asset-note's layout but NOT its --error red:
+   a replace is undoable, not a failure, so the text is the quiet --dim (the gold
+   sits only on the `restore` link, per the accent census). */
+#restore-note {
+  color: var(--dim);
+}
+
 .asset-note[hidden] {
   display: none;
 }

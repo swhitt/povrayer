@@ -11,6 +11,8 @@
 import { classifyAsset, assetSnippet, safeName, uniqueName } from './assets.js';
 
 /**
+ * Self-queries its DOM contract from the page: #editor-wrap (drop target),
+ * #asset-chips + #assets (the staged-asset strip), and #asset-note (skip feedback).
  * @param {{ insertSnippet: (text: string) => void, replaceScene: (text: string) => void }} hooks
  * @returns {{ assetFiles: () => Record<string, Uint8Array | string> | undefined }}
  */
