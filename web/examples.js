@@ -47,6 +47,39 @@ export const RENDER_TIERS = [
   { key: 'heavy', label: 'Heavy', quality: '8' },
 ];
 
+export const FEATURED_EXAMPLE_NAMES = [
+  'csg-die',
+  'steinmetz',
+  'lathe-vase',
+  'sourced-pawns',
+  'sourced-bezier',
+  'sweep-knot',
+  'menger-sponge',
+  'blobs',
+  'sourced-quartic-helix',
+  'julia-fractal',
+  'helix',
+  'materials',
+  'normal-study',
+  'sourced-biscuit',
+  'glass',
+  'sourced-wineglass',
+  'sourced-magglass',
+  'sourced-diffract',
+  'cornell-mood',
+  'soft-shadow-colonnade',
+  'sourced-soft-light',
+  'sunset-sea',
+  'sourced-mist',
+  'heightfield-dunes',
+  'focal-marbles',
+  'sourced-fisheye',
+  'orbit-moons',
+  'sourced-vector-rotation',
+  'pulse-grid',
+];
+const FEATURED_EXAMPLE_SET = new Set(FEATURED_EXAMPLE_NAMES);
+
 const EXAMPLE_META = {
   'csg-die': { difficulty: 'intro', renderTier: 'fast' },
   'sunset-sea': { difficulty: 'intro', renderTier: 'fast' },
@@ -97,11 +130,29 @@ const EXAMPLE_META = {
   'sourced-endless-knot': { difficulty: 'advanced', renderTier: 'fast' },
   'sourced-alexander-horned': { difficulty: 'advanced', renderTier: 'fast' },
   'sourced-diffract': { difficulty: 'intro', renderTier: 'instant' },
+  'sourced-pawns': { difficulty: 'intro', renderTier: 'fast' },
+  'sourced-biscuit': { difficulty: 'intro', renderTier: 'instant' },
+  'sourced-bwstripe': { difficulty: 'intro', renderTier: 'instant' },
+  'sourced-mist': { difficulty: 'intermediate', renderTier: 'fast' },
+  'sourced-fisheye': { difficulty: 'intermediate', renderTier: 'fast' },
+  'sourced-panoramic-camera': { difficulty: 'intermediate', renderTier: 'fast' },
+  'sourced-magglass': { difficulty: 'intermediate', renderTier: 'fast' },
+  'sourced-crystal': { difficulty: 'intermediate', renderTier: 'fast' },
+  'sourced-soft-light': { difficulty: 'intro', renderTier: 'fast' },
+  'sourced-laser': { difficulty: 'intermediate', renderTier: 'instant' },
+  'sourced-bezier': { difficulty: 'intermediate', renderTier: 'fast' },
+  'sourced-quartic-helix': { difficulty: 'advanced', renderTier: 'fast' },
+  'sourced-folium': { difficulty: 'advanced', renderTier: 'fast' },
+  'sourced-vector-rotation': { difficulty: 'intro', renderTier: 'instant' },
+  'sourced-camera-flythrough': { difficulty: 'intermediate', renderTier: 'instant' },
+  'sourced-glass-chess': { difficulty: 'intermediate', renderTier: 'fast' },
+  'sourced-area-light-grid': { difficulty: 'intro', renderTier: 'fast' },
 };
 
 const addExampleMetadata = (ex) => ({
   ...ex,
   ...EXAMPLE_META[ex.name],
+  featured: FEATURED_EXAMPLE_SET.has(ex.name),
   thumbnail: `example-thumbnails/${ex.name}.png`,
 });
 
@@ -2330,6 +2381,7 @@ cylinder { < PitchB, 0, -0.3>, < PitchB, 0, 2.8>, 0.40 texture { AxleTex } }
 ];
 
 export const EXAMPLES = CORE_EXAMPLES.map(addExampleMetadata);
+export const FEATURED_EXAMPLES = FEATURED_EXAMPLE_NAMES.map((name) => getExampleRecord(name));
 
 // FROZEN contract: both ui.js and repl.js depend on this exact signature.
 export function getExample(name) {
@@ -2342,13 +2394,23 @@ export function getExampleRecord(name) {
   return EXAMPLES.find((e) => e.name === name);
 }
 
-// Scenes grouped in CATEGORIES order for the browser. Branch-free on purpose:
+// Scenes grouped in CATEGORIES order for the gallery / docs. Branch-free on purpose:
 // no `.length` filter (a dead false-arm under the 100% gate, since the node
 // test guarantees every category has at least one member).
-export function groupByCategory() {
+export function groupAllByCategory() {
   return CATEGORIES.map((c) => ({
     key: c.key,
     label: c.label,
     items: EXAMPLES.filter((e) => e.category === c.key),
+  }));
+}
+
+// Featured subset for the compact dropdown. Gallery-only examples still load
+// through getExampleRecord()/getExample(); this just keeps the picker curated.
+export function groupByCategory() {
+  return CATEGORIES.map((c) => ({
+    key: c.key,
+    label: c.label,
+    items: FEATURED_EXAMPLES.filter((e) => e.category === c.key),
   }));
 }

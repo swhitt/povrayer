@@ -7,17 +7,21 @@ import assert from 'node:assert/strict';
 
 import {
   EXAMPLES,
+  FEATURED_EXAMPLE_NAMES,
+  FEATURED_EXAMPLES,
   CATEGORIES,
   DIFFICULTIES,
   RENDER_TIERS,
   getExample,
   getExampleRecord,
+  groupAllByCategory,
   groupByCategory,
 } from '../../web/examples.js';
 
 // SPDX ids the library is allowed to ship under.
 const LICENSE_ALLOW = new Set([
   'CC0-1.0',
+  'CC-BY-3.0',
   'CC-BY-4.0',
   'CC-BY-SA-3.0',
   'CC-BY-SA-4.0',
@@ -126,6 +130,32 @@ test('csg-die leads (the UI default first impression)', () => {
   assert.equal(EXAMPLES[0].name, 'csg-die');
 });
 
+test('featured examples are a curated ordered subset of the full catalog', () => {
+  assert.ok(Array.isArray(FEATURED_EXAMPLE_NAMES), 'featured names must be an array');
+  assert.ok(FEATURED_EXAMPLE_NAMES.length > 0, 'featured names must not be empty');
+  assert.equal(
+    new Set(FEATURED_EXAMPLE_NAMES).size,
+    FEATURED_EXAMPLE_NAMES.length,
+    'featured names must be unique'
+  );
+  assert.deepEqual(
+    FEATURED_EXAMPLES.map((ex) => ex.name),
+    FEATURED_EXAMPLE_NAMES,
+    'FEATURED_EXAMPLES must preserve FEATURED_EXAMPLE_NAMES order'
+  );
+  for (const ex of FEATURED_EXAMPLES) {
+    assert.equal(getExampleRecord(ex.name), ex, `featured record ${ex.name} must be in EXAMPLES`);
+    assert.equal(ex.featured, true, `featured record ${ex.name} must carry featured:true`);
+  }
+  for (const ex of EXAMPLES) {
+    assert.equal(
+      ex.featured,
+      FEATURED_EXAMPLE_NAMES.includes(ex.name),
+      `featured flag mismatch (${ex.name})`
+    );
+  }
+});
+
 test('CATEGORIES keys are unique and each homes at least one scene', () => {
   const keys = CATEGORIES.map((c) => c.key);
   assert.equal(new Set(keys).size, keys.length, 'duplicate category key(s)');
@@ -137,6 +167,13 @@ test('CATEGORIES keys are unique and each homes at least one scene', () => {
       members.length >= 1,
       `category '${c.key}' has no scenes (the UI builds an empty group head)`
     );
+  }
+});
+
+test('featured categories keep the compact dropdown useful', () => {
+  for (const c of CATEGORIES) {
+    const members = FEATURED_EXAMPLES.filter((e) => e.category === c.key);
+    assert.ok(members.length >= 1, `category '${c.key}' has no featured scenes`);
   }
 });
 
@@ -168,8 +205,8 @@ test('metadata taxonomies are unique and fully represented', () => {
   }
 });
 
-test('groupByCategory mirrors CATEGORIES order and partitions every scene', () => {
-  const groups = groupByCategory();
+test('groupAllByCategory mirrors CATEGORIES order and partitions every scene', () => {
+  const groups = groupAllByCategory();
   assert.deepEqual(
     groups.map((g) => g.key),
     CATEGORIES.map((c) => c.key),
@@ -183,6 +220,26 @@ test('groupByCategory mirrors CATEGORIES order and partitions every scene', () =
   // Sum of group sizes equals the library size: nothing misfiled or dropped.
   const sum = groups.reduce((acc, g) => acc + g.items.length, 0);
   assert.equal(sum, EXAMPLES.length, 'group items must partition EXAMPLES exactly');
+});
+
+test('groupByCategory mirrors CATEGORIES order and partitions featured scenes', () => {
+  const groups = groupByCategory();
+  assert.deepEqual(
+    groups.map((g) => g.key),
+    CATEGORIES.map((c) => c.key),
+    'featured groups must be in CATEGORIES order'
+  );
+  assert.deepEqual(
+    groups.map((g) => g.label),
+    CATEGORIES.map((c) => c.label),
+    'featured group labels must mirror CATEGORIES'
+  );
+  const sum = groups.reduce((acc, g) => acc + g.items.length, 0);
+  assert.equal(
+    sum,
+    FEATURED_EXAMPLES.length,
+    'featured group items must partition featured scenes'
+  );
 });
 
 test('getExample returns the matching source for every known name', () => {

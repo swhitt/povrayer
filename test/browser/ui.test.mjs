@@ -849,7 +849,7 @@ try {
     null,
     { timeout: 5_000 }
   );
-  assert.ok((await visibleNames()).includes('isosurface'), 'expanding a head reveals its rows');
+  assert.ok((await visibleNames()).includes('blobs'), 'expanding a head reveals its rows');
   assert.equal(await activeDesc(), 'exgrp-implicit', 'a head click ropes the roving onto the head');
   assert.equal(await headExpanded('modeling'), 'true', 'toggling one head leaves the others alone');
   await page.click('#exgrp-implicit');
@@ -858,7 +858,7 @@ try {
     null,
     { timeout: 5_000 }
   );
-  assert.ok(!(await visibleNames()).includes('isosurface'), 'a second click collapses the head');
+  assert.ok(!(await visibleNames()).includes('blobs'), 'a second click collapses the head');
 
   // search auto-expand: while the filter is non-empty, collapse state is ignored.
   // Typing "modeling" surfaces the whole Solid Modeling group (every row matches
@@ -1333,6 +1333,35 @@ try {
     { timeout: 5_000 }
   );
   assert.equal(await triggerName(), 'sourced-wineglass', 'clicking a gallery card loads it');
+
+  await page.click('#gallery-btn');
+  await page.fill('#gallery-search', 'crystal cluster');
+  await page.click('.gallery-card[data-name="sourced-crystal"]');
+  await page.waitForFunction(
+    () =>
+      document.getElementById('gallery').hidden &&
+      document.getElementById('example-trigger').dataset.name === 'sourced-crystal',
+    null,
+    { timeout: 5_000 }
+  );
+  await openBrowser();
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      active: document.querySelector('.ex-option.is-active')?.dataset.name ?? null,
+      loaded: document.querySelector('.ex-option[data-loaded="true"]')?.dataset.name ?? null,
+      attr: document.querySelector('#example-attribution .ex-attr-text').textContent,
+      source: document.querySelector('#example-attribution .ex-attr-src').href,
+    })),
+    {
+      active: null,
+      loaded: null,
+      attr: 'by Dan Farmer · CC-BY-3.0',
+      source:
+        'https://github.com/POV-Ray/povray/blob/master/distribution/scenes/interior/crystal.pov',
+    },
+    'a gallery-only selection can reopen the compact picker without a featured row'
+  );
+  await page.keyboard.press('Escape');
 
   // Pristine editor (=== the loaded scene) switches with no confirm.
   await switchExample('blobs');

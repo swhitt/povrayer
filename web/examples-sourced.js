@@ -1,5 +1,8 @@
 // Sourced POV-Ray SDL scene adaptations kept separate from the in-house examples.
 // Imported by examples.js so the public EXAMPLES order and API stay unchanged.
+const officialSceneUrl = (path) =>
+  `https://github.com/POV-Ray/povray/blob/master/distribution/scenes/${path}`;
+
 export const SOURCED_EXAMPLES = [
   {
     name: 'sourced-chess2',
@@ -702,6 +705,505 @@ cylinder { <-2.4, 1.0, -0.35>, <-0.42, 1.0, -0.12>, 0.025 pigment { color rgb <1
   #end
   cylinder { <0.42, 1.0, -0.12>, <2.35, Y, 0.2>, 0.017
     pigment { color rgb Col } finish { emission 0.55 diffuse 0 } no_shadow }
+#end
+`,
+  },
+  {
+    name: 'sourced-pawns',
+    title: 'Pawns row (CC-BY-SA sample adaptation)',
+    category: 'modeling',
+    tags: ['pawns', 'lathe', 'chess', 'depth', 'sample'],
+    description: 'A staggered row of glossy lathe-modeled pawns recedes into soft light',
+    author: 'Douglas Otwell',
+    sourceUrl: officialSceneUrl('advanced/pawns.pov'),
+    license: 'CC-BY-SA-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's pawns.pov sample by Douglas Otwell.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <3.8, 2.2, -6.2> look_at <0.2, 0.75, 0.1> angle 38 }
+light_source { <-4, 6, -4> color rgb <1.15, 1.05, 0.88> area_light x*2, y*2, 3, 3 adaptive 1 }
+light_source { <4, 2, -3> color rgb <0.25, 0.35, 0.55> shadowless }
+plane { y, 0 pigment { checker color rgb <0.06,0.065,0.075>, color rgb <0.75,0.72,0.66> scale 0.55 }
+  finish { diffuse 0.45 specular 0.35 reflection { 0.04, 0.16 } } }
+
+#declare PawnTex = texture { pigment { color rgb <0.92, 0.82, 0.58> } finish { specular 0.7 roughness 0.015 reflection 0.1 } }
+#macro Pawn(Pos, S)
+  union {
+    sphere { <0, 1.05, 0>, 0.22 }
+    cone { <0, 0.3, 0>, 0.28, <0, 0.95, 0>, 0.12 }
+    torus { 0.22, 0.035 translate y*0.28 }
+    cylinder { <0,0,0>, <0,0.12,0>, 0.32 }
+    texture { PawnTex }
+    scale S translate Pos
+  }
+#end
+#for (I, -3, 3)
+  Pawn(<I*0.58, 0, 0.22*I>, 0.78 + 0.03*I)
+#end
+`,
+  },
+  {
+    name: 'sourced-biscuit',
+    title: 'Biscuit material study (CC-BY-SA sample adaptation)',
+    category: 'texturing',
+    tags: ['cookie', 'texture', 'crackle', 'crumb', 'sample'],
+    description: 'Procedural crumbs and chocolate chips show layered material noise',
+    author: 'Fabien Mosen',
+    sourceUrl: officialSceneUrl('advanced/biscuit.pov'),
+    license: 'CC-BY-SA-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's biscuit.pov sample by Fabien Mosen.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <0, 3.2, -5.0> look_at <0, 0.15, 0> angle 42 }
+light_source { <-3, 5, -4> color rgb <1.1, 0.95, 0.72> area_light x*2, y*2, 3, 3 adaptive 1 }
+plane { y, -0.08 pigment { color rgb <0.045, 0.04, 0.036> } finish { specular 0.25 roughness 0.03 } }
+
+#declare BiscuitTex = texture {
+  pigment { bozo color_map { [0 rgb <0.72,0.48,0.24>] [0.5 rgb <0.95,0.74,0.42>] [1 rgb <0.45,0.25,0.12>] } scale 0.28 turbulence 0.8 }
+  normal { bumps 0.12 scale 0.08 }
+  finish { diffuse 0.82 specular 0.12 roughness 0.08 }
+}
+cylinder { <0,-0.03,0>, <0,0.10,0>, 1.55 texture { BiscuitTex } scale <1.15,1,0.82> }
+#for (I, 0, 27)
+  #declare A = I*137.5;
+  #declare R = 0.25 + 1.12*mod(I*0.37, 1);
+  sphere { <R*cos(radians(A))*1.15, 0.14, R*sin(radians(A))*0.82>, 0.09
+    pigment { color rgb <0.12,0.06,0.03> } finish { specular 0.18 roughness 0.04 } }
+#end
+`,
+  },
+  {
+    name: 'sourced-bwstripe',
+    title: 'Black-white stripe illusion (CC-BY-SA sample adaptation)',
+    category: 'generative',
+    tags: ['stripe', 'moire', 'pattern', 'optical', 'sample'],
+    description: 'Offset striped slabs create a simple high-contrast optical rhythm',
+    author: 'Rune S. Johansen',
+    sourceUrl: officialSceneUrl('advanced/bwstripe.pov'),
+    license: 'CC-BY-SA-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's bwstripe.pov sample by Rune S. Johansen.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <0, 2.4, -6> look_at <0, 0.5, 0> angle 42 }
+light_source { <-3, 5, -4> color rgb 1.2 }
+plane { y, -0.05 pigment { color rgb <0.04,0.045,0.05> } finish { reflection { 0.03, 0.12 } } }
+
+#macro StripeWall(Z, Tilt)
+  union {
+    #for (I, -12, 12)
+      box { <I*0.18, 0, -0.02>, <I*0.18 + 0.09, 1.9, 0.02>
+        pigment { color rgb ((mod(I,2)=0) ? <1,1,1> : <0,0,0>) } }
+    #end
+    rotate y*Tilt translate <0,0,Z>
+  }
+#end
+object { StripeWall(0.15, -9) }
+object { StripeWall(0.55, 9) translate y*0.08 }
+`,
+  },
+  {
+    name: 'sourced-mist',
+    title: 'Mist valley (CC-BY-SA sample adaptation)',
+    category: 'environment',
+    tags: ['mist', 'fog', 'terrain', 'atmosphere', 'sample'],
+    description: 'Layered ridges fade into a compact ground-fog atmosphere study',
+    author: 'POV-Ray sample scene authors',
+    sourceUrl: officialSceneUrl('advanced/mist.pov'),
+    license: 'CC-BY-SA-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's mist.pov sample.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <0, 1.2, -6.2> look_at <0, 0.9, 2.4> angle 48 }
+sky_sphere { pigment { gradient y color_map { [0 rgb <0.78,0.84,0.9>] [1 rgb <0.18,0.27,0.42>] } } }
+light_source { <-4, 6, -2> color rgb <1,0.86,0.65> }
+fog { distance 5 color rgb <0.72,0.78,0.82> fog_type 2 fog_offset 0.05 fog_alt 0.7 }
+plane { y, 0 pigment { color rgb <0.19,0.24,0.2> } normal { bumps 0.16 scale 0.7 } }
+#macro Ridge(Z, H, C)
+  height_field { function 64, 64 { 0.5 + 0.18*sin(x*9+Z) + 0.12*sin(y*15-Z) } smooth
+    scale <7,H,2.5> translate <-3.5,0,Z> pigment { color rgb C } finish { diffuse 0.8 } }
+#end
+Ridge(1.0, 0.9, <0.18,0.30,0.20>)
+Ridge(2.8, 1.2, <0.12,0.22,0.22>)
+Ridge(4.8, 1.5, <0.08,0.13,0.20>)
+`,
+  },
+  {
+    name: 'sourced-fisheye',
+    title: 'Fisheye camera room (CC-BY sample adaptation)',
+    category: 'camera',
+    tags: ['camera', 'fisheye', 'lens', 'grid', 'sample'],
+    description: 'A fisheye view bends a gridded room into a compact lens demo',
+    author: 'Fabien Mosen / Friedrich A. Lohmueller',
+    sourceUrl: officialSceneUrl('camera/fisheye.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's camera/fisheye.pov sample by Fabien Mosen.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { fisheye location <0, 1.15, -3.4> look_at <0, 0.85, 0.2> angle 150 }
+light_source { <0, 3.8, -2.5> color rgb 1.1 }
+plane { y, 0 pigment { checker color rgb <0.05,0.05,0.055>, color rgb <0.82,0.82,0.78> scale 0.45 } }
+plane { z, 2.4 pigment { checker color rgb <0.16,0.22,0.32>, color rgb <0.5,0.62,0.78> scale 0.5 } finish { diffuse 0.75 } }
+#for (X, -2, 2)
+  cylinder { <X,0,0>, <X,1.8,0>, 0.06 pigment { color rgb <1,0.72,0.2> } finish { specular 0.4 } }
+#end
+sphere { <0,0.45,0.4>, 0.45 pigment { color rgb <0.8,0.04,0.08> } finish { specular 0.55 reflection 0.08 } }
+`,
+  },
+  {
+    name: 'sourced-panoramic-camera',
+    title: 'Panoramic camera ring (CC-BY sample adaptation)',
+    category: 'camera',
+    tags: ['camera', 'panoramic', 'ring', 'lens', 'sample'],
+    description: 'Repeated pillars wrap around a panoramic camera demonstration',
+    author: 'Fabien Mosen / Friedrich A. Lohmueller',
+    sourceUrl: officialSceneUrl('camera/panoramic.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's camera/panoramic.pov sample by Fabien Mosen.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { panoramic location <0, 1.25, 0> look_at <0, 1.2, 1> angle 120 }
+light_source { <0, 5, 0> color rgb 1.15 }
+plane { y, 0 pigment { color rgb <0.035,0.04,0.045> } finish { reflection { 0.05, 0.18 } } }
+#for (I, 0, 15)
+  #declare A = radians(I*360/16);
+  cylinder { <2.2*cos(A),0,2.2*sin(A)>, <2.2*cos(A),1.8,2.2*sin(A)>, 0.08
+    pigment { color rgb <0.25+0.04*I,0.55,0.85-0.03*I> } finish { specular 0.35 } }
+#end
+torus { 1.25, 0.035 pigment { color rgb <1,0.8,0.24> } finish { emission 0.2 specular 0.4 } }
+`,
+  },
+  {
+    name: 'sourced-magglass',
+    title: 'Magnifying glass (CC-BY sample adaptation)',
+    category: 'optics',
+    tags: ['magnifier', 'glass', 'refraction', 'checker', 'sample'],
+    description: 'A simple lens magnifies a checker pattern through refraction',
+    author: 'POV-Ray sample scene authors',
+    sourceUrl: officialSceneUrl('interior/magglass.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's interior/magglass.pov sample.
+#version 3.8;
+global_settings { assumed_gamma 1.0 max_trace_level 8 }
+
+camera { location <0, 2.0, -5> look_at <0, 0.55, 0> angle 40 }
+light_source { <-3, 5, -4> color rgb <1.1,1.0,0.85> area_light x*2, y*2, 3, 3 adaptive 1 }
+plane { y, 0 pigment { checker color rgb <0.06,0.06,0.07>, color rgb <0.86,0.84,0.76> scale 0.25 }
+  finish { specular 0.25 } }
+torus { 0.78, 0.045 rotate x*90 translate <0,0.72,0> pigment { color rgb <0.75,0.78,0.82> } finish { metallic specular 0.7 reflection 0.15 } }
+sphere { <0,0.72,0>, 0.72 scale <1,1,0.16>
+  pigment { color rgbf <0.92,0.98,1,0.86> }
+  finish { diffuse 0.02 specular 0.9 reflection { 0.04,0.22 } }
+  interior { ior 1.52 } }
+cylinder { <0.62,0.22,0>, <1.55,-0.6,0>, 0.065 pigment { color rgb <0.22,0.13,0.05> } finish { specular 0.35 } }
+`,
+  },
+  {
+    name: 'sourced-crystal',
+    title: 'Crystal cluster (CC-BY sample adaptation)',
+    category: 'optics',
+    tags: ['crystal', 'refraction', 'glass', 'prism', 'sample'],
+    description: 'Low-poly refractive crystals catch colored highlights on a dark floor',
+    author: 'Dan Farmer',
+    sourceUrl: officialSceneUrl('interior/crystal.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's interior/crystal.pov sample by Dan Farmer.
+#version 3.8;
+global_settings { assumed_gamma 1.0 max_trace_level 10 }
+
+camera { location <3.2, 2.0, -5.0> look_at <0, 0.65, 0> angle 38 }
+light_source { <-4, 5, -4> color rgb <1,0.9,0.75> }
+light_source { <3, 2, -3> color rgb <0.25,0.45,0.9> shadowless }
+plane { y, 0 pigment { color rgb <0.02,0.022,0.028> } finish { reflection { 0.08,0.28 } specular 0.45 roughness 0.01 } }
+#declare CrystalTex = texture { pigment { color rgbf <0.76,0.93,1,0.78> } finish { diffuse 0.02 specular 1 roughness 0.003 reflection { 0.06,0.28 } } }
+#macro Crystal(Pos, S, Rot)
+  cone { <0,0,0>, 0.32, <0,1.4,0>, 0.08 rotate Rot scale S translate Pos texture { CrystalTex } interior { ior 1.55 } }
+#end
+Crystal(<-0.45,0,0>, <1,1,1>, <0,0,-8>)
+Crystal(<0.15,0,-0.15>, <0.8,0.85,0.8>, <0,20,10>)
+Crystal(<0.55,0,0.2>, <0.7,0.7,0.7>, <0,-18,-7>)
+`,
+  },
+  {
+    name: 'sourced-soft-light',
+    title: 'Soft light comparison (CC-BY sample adaptation)',
+    category: 'lighting',
+    tags: ['area-light', 'shadow', 'sphere', 'softness', 'sample'],
+    description: 'Area-light shadows soften across a row of matte spheres',
+    author: 'Steve Anger',
+    sourceUrl: officialSceneUrl('lights/soft.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's lights/soft.pov sample by Steve Anger.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <0, 2.6, -6> look_at <0, 0.65, 0> angle 42 }
+light_source { <-3, 5, -4> color rgb 1.15 area_light x*3, z*3, 4, 4 adaptive 1 jitter }
+plane { y, 0 pigment { color rgb <0.72,0.74,0.76> } finish { diffuse 0.65 specular 0.12 } }
+plane { z, 2.2 pigment { color rgb <0.16,0.18,0.22> } finish { diffuse 0.8 } }
+#for (I, -2, 2)
+  sphere { <I*0.7,0.45,0>, 0.42 pigment { color rgb <0.25+0.12*I,0.42,0.78-0.08*I> } finish { diffuse 0.7 specular 0.25 } }
+#end
+`,
+  },
+  {
+    name: 'sourced-laser',
+    title: 'Laser beam (CC-BY sample adaptation)',
+    category: 'lighting',
+    tags: ['laser', 'beam', 'emission', 'optics', 'sample'],
+    description: 'A glowing red beam crosses mirrors in a tiny dark optical bench',
+    author: 'Dan Farmer',
+    sourceUrl: officialSceneUrl('lights/laser.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's lights/laser.pov sample by Dan Farmer.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <0, 2.0, -5.2> look_at <0, 0.75, 0> angle 40 }
+background { color rgb <0.004,0.005,0.008> }
+light_source { <-2, 4, -3> color rgb <0.25,0.28,0.35> }
+plane { y, 0 pigment { color rgb <0.014,0.015,0.018> } finish { reflection { 0.05,0.2 } } }
+cylinder { <-2.2,0.75,-0.25>, <2.0,0.75,0.1>, 0.025 pigment { color rgb <1,0.04,0.02> } finish { emission 0.7 diffuse 0 } no_shadow }
+box { <-2.5,0.55,-0.45>, <-2.15,0.95,-0.05> pigment { color rgb <0.45,0.02,0.02> } finish { emission 0.2 specular 0.4 } }
+#for (I, -1, 1)
+  box { <-0.08,0.2,-0.4>, <0.08,1.2,0.4> rotate y*(35+I*25) translate <I*1.0,0,0>
+    pigment { color rgb <0.75,0.82,0.95> } finish { reflection { 0.35,0.85 } specular 0.9 roughness 0.004 } }
+#end
+`,
+  },
+  {
+    name: 'sourced-bezier',
+    title: 'Bezier patch sail (CC-BY sample adaptation)',
+    category: 'modeling',
+    tags: ['bezier', 'patch', 'surface', 'control', 'sample'],
+    description: 'A bicubic patch bends like a small glossy sail under studio light',
+    author: 'Alexander Enzmann',
+    sourceUrl: officialSceneUrl('objects/bezier.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's objects/bezier.pov sample by Alexander Enzmann.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <3.0,2.2,-4.6> look_at <0,0.65,0> angle 36 }
+light_source { <-3,5,-4> color rgb <1.1,1.0,0.85> area_light x*2, y*2, 3, 3 adaptive 1 }
+plane { y, -0.05 pigment { color rgb <0.04,0.045,0.052> } finish { reflection { 0.04,0.16 } specular 0.25 } }
+bicubic_patch {
+  type 1 flatness 0.01 u_steps 4 v_steps 4
+  <-1,0,0>, <-0.3,0.8,0.2>, <0.35,0.2,-0.25>, <1,0.7,0>
+  <-1,0.35,0.6>, <-0.3,1.2,0.35>, <0.35,0.55,-0.1>, <1,0.9,0.45>
+  <-1,0.8,0.2>, <-0.3,1.55,0.1>, <0.35,0.85,0.25>, <1,1.25,0.1>
+  <-1,1.1,-0.15>, <-0.3,1.8,0.3>, <0.35,1.2,0.0>, <1,1.55,-0.2>
+  pigment { color rgb <0.1,0.58,0.92> } finish { specular 0.75 roughness 0.01 reflection 0.08 }
+}
+`,
+  },
+  {
+    name: 'sourced-quartic-helix',
+    title: 'Quartic helix (CC-BY sample adaptation)',
+    category: 'implicit',
+    tags: ['quartic', 'helix', 'math', 'surface', 'sample'],
+    description: 'A compact quartic-inspired helix wraps around a polished axis',
+    author: 'Alexander Enzmann',
+    sourceUrl: officialSceneUrl('objects/quartic/helix.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's objects/quartic/helix.pov sample by Alexander Enzmann.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <3.2, 2.2, -5> look_at <0, 0.8, 0> angle 36 }
+light_source { <-4, 5, -4> color rgb <1.05,0.95,0.8> area_light x*2, y*2, 3, 3 adaptive 1 }
+plane { y, -1.05 pigment { color rgb <0.025,0.026,0.032> } finish { reflection { 0.06,0.24 } specular 0.35 } }
+#declare HTex = texture { pigment { color rgb <0.9,0.18,0.35> } finish { specular 0.75 roughness 0.012 reflection 0.08 } }
+#for (I, 0, 95)
+  #declare T = I/95*720;
+  #declare Y = -0.75 + I/95*2.9;
+  sphere { <0.72*cos(radians(T)), Y, 0.72*sin(radians(T))>, 0.105 texture { HTex } }
+#end
+cylinder { <0,-0.9,0>, <0,2.35,0>, 0.035 pigment { color rgb <0.8,0.85,0.9> } finish { metallic specular 0.6 } }
+`,
+  },
+  {
+    name: 'sourced-folium',
+    title: 'Folium loop (CC-BY sample adaptation)',
+    category: 'implicit',
+    tags: ['quartic', 'folium', 'math', 'loop', 'sample'],
+    description: 'A folium-inspired loop of spheres draws an algebraic curve in space',
+    author: 'Alexander Enzmann',
+    sourceUrl: officialSceneUrl('objects/quartic/folium.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's objects/quartic/folium.pov sample by Alexander Enzmann.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <0, 2.3, -5.4> look_at <0, 0.55, 0> angle 38 }
+light_source { <-3, 5, -4> color rgb <1.1,0.95,0.78> }
+plane { y, -0.9 pigment { color rgb <0.035,0.038,0.044> } finish { reflection { 0.05,0.18 } } }
+#declare FTex = texture { pigment { color rgb <0.18,0.85,0.62> } finish { specular 0.65 roughness 0.014 reflection 0.06 } }
+#for (I, 0, 119)
+  #declare T = radians(I*360/120);
+  #declare R = 1.25*sin(2*T);
+  sphere { <R*cos(T), 0.15 + 0.5*sin(T), R*sin(T)*0.65>, 0.075 texture { FTex } }
+#end
+sphere { <0,0.15,0>, 0.18 pigment { color rgb <1,0.85,0.18> } finish { emission 0.1 specular 0.5 } }
+`,
+  },
+  {
+    name: 'sourced-vector-rotation',
+    title: 'Vector rotation demo (CC-BY-SA sample adaptation)',
+    category: 'motion',
+    tags: ['animation', 'vector', 'rotation', 'arrows', 'sample'],
+    description: 'Clock-driven arrows rotate around a central axis for a clean motion demo',
+    author: 'Chris Young',
+    sourceUrl: officialSceneUrl('animations/vect1/vect1.pov'),
+    license: 'CC-BY-SA-3.0',
+    animated: true,
+    frames: 36,
+    fps: 18,
+    source: `// Adapted from POV-Ray's animations/vect1/vect1.pov sample by Chris Young.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <3.4,2.6,-5.2> look_at <0,0.45,0> angle 40 }
+light_source { <-4,5,-4> color rgb 1.15 }
+plane { y, -0.05 pigment { color rgb <0.04,0.045,0.05> } finish { reflection { 0.04,0.16 } } }
+cylinder { <0,0,0>, <0,1.7,0>, 0.025 pigment { color rgb <0.85,0.85,0.9> } }
+#macro Arrow(A, Col)
+  union {
+    cylinder { <0,0.7,0>, <1.2,0.7,0>, 0.04 }
+    cone { <1.2,0.7,0>, 0.12, <1.55,0.7,0>, 0 }
+    pigment { color rgb Col } finish { specular 0.45 }
+    rotate y*A
+  }
+#end
+Arrow(clock*360, <1,0.1,0.05>)
+Arrow(clock*360+120, <0.1,0.7,1>)
+Arrow(clock*360+240, <0.35,1,0.25>)
+`,
+  },
+  {
+    name: 'sourced-camera-flythrough',
+    title: 'Camera fly-through (CC-BY-SA sample adaptation)',
+    category: 'motion',
+    tags: ['animation', 'camera', 'flythrough', 'path', 'sample'],
+    description: 'The camera glides along a short path through colored columns',
+    author: 'Dieter Bayer',
+    sourceUrl: officialSceneUrl('animations/camera2/camera2.pov'),
+    license: 'CC-BY-SA-3.0',
+    animated: true,
+    frames: 48,
+    fps: 24,
+    source: `// Adapted from POV-Ray's animations/camera2/camera2.pov sample by Dieter Bayer.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+#declare CamZ = -5 + clock*5.5;
+camera { location <1.6*sin(clock*2*pi), 1.2, CamZ> look_at <0, 0.75, 0.2+CamZ> angle 42 }
+light_source { <0,5,-3> color rgb 1.1 }
+plane { y, 0 pigment { checker color rgb <0.04,0.045,0.05>, color rgb <0.28,0.30,0.34> scale 0.8 } }
+#for (I, -3, 5)
+  cylinder { <-1.2,0,I>, <-1.2,1.8,I>, 0.12 pigment { color rgb <0.2+0.08*I,0.55,0.9> } finish { specular 0.35 } }
+  cylinder { < 1.2,0,I>, < 1.2,1.8,I>, 0.12 pigment { color rgb <0.9,0.35+0.05*I,0.18> } finish { specular 0.35 } }
+#end
+`,
+  },
+  {
+    name: 'sourced-glass-chess',
+    title: 'Glass chess piece (CC-BY-SA sample adaptation)',
+    category: 'optics',
+    tags: ['glass', 'chess', 'refraction', 'lathe', 'sample'],
+    description: 'A single refractive chess piece stands on a dark checker floor',
+    author: 'Ingo Janssen',
+    sourceUrl: officialSceneUrl('advanced/glasschess/glasschess.pov'),
+    license: 'CC-BY-SA-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's glasschess.pov sample by Ingo Janssen.
+#version 3.8;
+global_settings { assumed_gamma 1.0 max_trace_level 12 }
+
+camera { location <3, 2.2, -5.2> look_at <0, 0.85, 0> angle 36 }
+light_source { <-4, 6, -4> color rgb <1.15,1.05,0.9> area_light x*2, y*2, 3, 3 adaptive 1 }
+plane { y, 0 pigment { checker color rgb <0.03,0.032,0.038>, color rgb <0.8,0.82,0.84> scale 0.45 }
+  finish { reflection { 0.08,0.24 } specular 0.5 roughness 0.01 } }
+#declare GlassPiece = texture { pigment { color rgbf <0.86,0.96,1,0.8> } finish { diffuse 0.02 specular 0.95 roughness 0.004 reflection { 0.05,0.32 } } }
+union {
+  cylinder { <0,0,0>, <0,0.16,0>, 0.42 }
+  cone { <0,0.16,0>, 0.26, <0,0.9,0>, 0.16 }
+  sphere { <0,1.12,0>, 0.27 }
+  torus { 0.24, 0.035 translate y*0.84 }
+  texture { GlassPiece } interior { ior 1.52 }
+}
+`,
+  },
+  {
+    name: 'sourced-area-light-grid',
+    title: 'Area light grid (CC-BY sample adaptation)',
+    category: 'lighting',
+    tags: ['area-light', 'grid', 'shadow', 'sample'],
+    description: 'A visible grid of area-light samples casts soft block shadows',
+    author: 'POV-Ray sample scene authors',
+    sourceUrl: officialSceneUrl('lights/arealit1.pov'),
+    license: 'CC-BY-3.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `// Adapted from POV-Ray's lights/arealit1.pov sample.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+
+camera { location <3.2,2.4,-5> look_at <0,0.55,0> angle 38 }
+light_source { <-3,5,-3> color rgb 1.1 area_light x*2, z*2, 3, 3 adaptive 1 jitter }
+plane { y, 0 pigment { color rgb <0.72,0.72,0.68> } finish { diffuse 0.7 specular 0.12 } }
+box { <-0.55,0,-0.55>, <0.55,0.85,0.55> pigment { color rgb <0.2,0.48,0.82> } finish { specular 0.35 } }
+#for (X, -1, 1)
+  #for (Z, -1, 1)
+    sphere { <-3+X,5,-3+Z>, 0.055 pigment { color rgb <1,0.9,0.6> } finish { emission 0.4 diffuse 0 } no_shadow }
+  #end
 #end
 `,
   },

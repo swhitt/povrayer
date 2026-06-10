@@ -191,6 +191,7 @@ const tierByKey = (key) => RENDER_TIERS.find((tier) => tier.key === key);
 const categoryLabelByKey = (key) => CATEGORIES.find((item) => item.key === key).label;
 const LICENSE_BUCKET = {
   'CC0-1.0': 'cc0',
+  'CC-BY-3.0': 'share-alike',
   'CC-BY-4.0': 'share-alike',
   'CC-BY-SA-3.0': 'share-alike',
   'CC-BY-SA-4.0': 'share-alike',
@@ -369,7 +370,7 @@ const DEFAULT_EXAMPLE = EXAMPLES[0].name;
 let selectedExample = DEFAULT_EXAMPLE;
 
 function hasExample(name) {
-  return EXAMPLES.some((e) => e.name === name);
+  return getExampleRecord(name) !== undefined;
 }
 
 // Per-row byline for an example option. The popover footer (.ex-attr) already
@@ -872,10 +873,11 @@ function openBrowser() {
   // Open COMPACT: collapse every category except the loaded scene's, so its
   // rows are the only ones showing and the panel isn't a 29-row wall.
   const loaded = document.getElementById(`ex-opt-${selectedExample}`);
-  const loadedGroup = groupFor(loaded);
-  for (const g of exampleGroups) g.collapsed = g !== loadedGroup;
+  const loadedGroup = loaded ? groupFor(loaded) : null;
+  for (const g of exampleGroups) g.collapsed = loadedGroup ? g !== loadedGroup : true;
   renderList();
-  setActive(loaded); // open focused on the loaded scene (scrolls it into view)
+  setActive(loaded ?? null); // gallery-only scenes have no featured row to focus
+  if (!loaded) updateAttribution(getExampleRecord(selectedExample));
   exampleSearch.focus();
 }
 
