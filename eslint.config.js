@@ -18,6 +18,8 @@ export default [
     // - coverage/**: generated reports
     ignores: [
       'dist/**',
+      '_site/**', // assembled deploy output (dist/ + web/, see tools/assemble-site.mjs)
+      '.vercel/**', // Vercel CLI local state + prebuilt output
       'node_modules/**',
       'coverage/**',
       '.playwright-cli/**',

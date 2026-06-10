@@ -1,0 +1,57 @@
+name: vercel
+on:
+  # Mirror pages.yml: deploy only after the build-test + coverage job on main has
+  # gone green, so a red build never reaches production. Runs in parallel with the
+  # Pages deploy (povrayer.com is served by Vercel; Pages mirrors at the github.io
+  # subpath), and reuses the same gated, exact-commit checkout.
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One production deploy at a time; let an in-flight deploy finish.
+concurrency:
+  group: vercel-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # workflow_run fires on every ci completion (success or failure); only deploy
+    # on success. A manual workflow_dispatch has no run to gate on, so allow it.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Deploy the exact commit ci tested: workflow_run otherwise defaults to
+          # the default-branch HEAD, which can drift past the triggering run.
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+      - uses: docker/setup-buildx-action@v4
+      - name: Build wasm artifact
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: artifact
+          outputs: type=local,dest=dist
+          # Read-only on the gha cache that ci.yml populates (it owns cache-to);
+          # a warm cache makes this a few seconds. The buildCommand in vercel.json
+          # (tools/assemble-site.mjs) needs dist/ to exist, so this runs first.
+          cache-from: type=gha
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Install Vercel CLI
+        run: npm i -g vercel@latest
+      - name: Pull Vercel project settings (production)
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Build (assembles _site from dist/ + web/ via buildCommand)
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Deploy prebuilt to production
+        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}

@@ -20,3 +20,10 @@ src/index.js
 # Test output (rendered PNGs from CLI/docker runs against the fixtures)
 test/fixtures/*.png
 test-output/
+
+# Assembled Vercel static output (dist/ + web/, built by tools/assemble-site.mjs)
+/_site/
+
+# Vercel CLI local state + prebuilt output
+.vercel/
+.vercel

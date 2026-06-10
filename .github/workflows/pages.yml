@@ -45,8 +45,9 @@ jobs:
           # only reads it, so a main push reuses the layers ci just wrote.
       - name: Assemble site (dist + web, flat)
         # Flat layout: web/'s relative URLs (./index.js, ./coi-serviceworker.js, ...)
-        # must resolve next to the dist artifacts on both the custom domain root
-        # and the fallback /povrayer/ Pages subpath. web/CNAME deploys with this.
+        # must resolve next to the dist artifacts at the /povrayer/ Pages subpath.
+        # The custom domain (povrayer.com) is served by Vercel, not Pages, so there
+        # is no CNAME file here; Pages serves at swhitt.github.io/povrayer/.
         run: |
           mkdir -p _site
           cp -R dist/* _site/
