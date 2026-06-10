@@ -1208,10 +1208,65 @@ try {
   // Pristine editor (=== the loaded scene) switches with no confirm.
   await switchExample('blobs');
   assert.ok((await editorValue()).length > 0, 'switching example should load its source');
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      state: document.getElementById('scene-dirty').textContent,
+      dirty: document.getElementById('scene-dirty').dataset.dirty,
+      resetDisabled: document.getElementById('reset-scene-btn').disabled,
+    })),
+    { state: 'current', dirty: 'false', resetDisabled: true },
+    'a freshly loaded example is marked current and cannot be reset'
+  );
+
+  // Editor affordances: a typed edit flips the dirty state, Copy Scene copies
+  // the raw source, Reset restores the loaded example through the same undoable
+  // replacement path as a drop/history load, and Restore brings the edit back.
+  await page.fill('#editor', 'EDITED scene one');
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      state: document.getElementById('scene-dirty').textContent,
+      dirty: document.getElementById('scene-dirty').dataset.dirty,
+      resetDisabled: document.getElementById('reset-scene-btn').disabled,
+    })),
+    { state: 'modified', dirty: 'true', resetDisabled: false },
+    'editing marks the scene modified and enables reset'
+  );
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.click('#copy-scene-btn');
+  await page.waitForFunction(
+    () => document.getElementById('copy-scene-btn').textContent === 'Copied'
+  );
+  assert.equal(
+    await page.evaluate(() => navigator.clipboard.readText()),
+    'EDITED scene one',
+    'Copy Scene copies the editor source'
+  );
+  await page.click('#reset-scene-btn');
+  assert.notEqual(
+    await editorValue(),
+    'EDITED scene one',
+    'Reset restores the loaded example source'
+  );
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      state: document.getElementById('scene-dirty').textContent,
+      dirty: document.getElementById('scene-dirty').dataset.dirty,
+      resetDisabled: document.getElementById('reset-scene-btn').disabled,
+      restoreHidden: document.getElementById('restore-note').hidden,
+    })),
+    { state: 'current', dirty: 'false', resetDisabled: true, restoreHidden: false },
+    'reset returns to current and offers restore'
+  );
+  await page.click('#restore-btn');
+  assert.equal(await editorValue(), 'EDITED scene one', 'restore after reset brings the edit back');
+  assert.equal(
+    await page.evaluate(() => document.getElementById('scene-dirty').textContent),
+    'modified',
+    'restoring the edit marks the scene modified again'
+  );
 
   // Edited editor + confirm() rejected -> keep the edit, the panel still closes,
   // and the loaded scene is unchanged. (selectExample dirty-guard reject arm.)
-  await page.fill('#editor', 'EDITED scene one');
   await page.evaluate(() => {
     window.confirm = () => false;
   });
@@ -4192,6 +4247,12 @@ try {
     await page.evaluate(() => fetch(window.__sceneUrls[0]).then((r) => r.text())),
     DOWNLOAD_SCENE,
     'the downloaded blob carries the editor text'
+  );
+  await page.click('#download-scene-btn');
+  assert.deepEqual(
+    await page.evaluate(() => window.__dl),
+    ['scene.pov', 'scene.pov'],
+    'the visible Download .pov button uses the same scene download path'
   );
   // setEditor never fired input, so only downloadScene's saveState flush can
   // have put this text into the saved blob.

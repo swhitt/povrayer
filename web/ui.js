@@ -60,6 +60,12 @@ const exampleAttrText = document.querySelector('#example-attribution .ex-attr-te
 const exampleAttrSrc = /** @type {HTMLAnchorElement} */ (
   document.querySelector('#example-attribution .ex-attr-src')
 );
+const sceneDirty = /** @type {HTMLElement} */ (document.getElementById('scene-dirty'));
+const resetSceneBtn = /** @type {HTMLButtonElement} */ (document.getElementById('reset-scene-btn'));
+const copySceneBtn = /** @type {HTMLButtonElement} */ (document.getElementById('copy-scene-btn'));
+const downloadSceneBtn = /** @type {HTMLButtonElement} */ (
+  document.getElementById('download-scene-btn')
+);
 const editor = /** @type {HTMLTextAreaElement} */ (document.getElementById('editor'));
 const editorCode = document.getElementById('editor-code');
 const editorStack = document.getElementById('editor-stack');
@@ -526,6 +532,21 @@ function selectExample(name) {
   reflectSceneReplaced();
 }
 
+function sceneIsDirty() {
+  return editor.value !== lastLoadedSource;
+}
+
+function canResetScene() {
+  return lastLoadedSource !== '' && sceneIsDirty();
+}
+
+function updateSceneActions() {
+  const dirty = sceneIsDirty();
+  sceneDirty.textContent = dirty ? 'modified' : 'current';
+  sceneDirty.dataset.dirty = String(dirty);
+  resetSceneBtn.disabled = !canResetScene();
+}
+
 // ---- example-browser interaction (open/filter/navigate/select/close) ----
 
 // Visible (non-collapsed, non-filtered-out) options in render order. A collapsed
@@ -848,11 +869,13 @@ editor.addEventListener('input', () => {
   paintHighlight();
   refreshComplete(false);
   buildSliders();
+  updateSceneActions();
   scheduleSave();
   scheduleDraft();
 });
 renderGutter();
 paintHighlight();
+updateSceneActions();
 
 // ---- editor Tab handling (Esc then Tab moves focus, per the title hint) ----
 // setRangeText keeps the native undo stack intact.
@@ -1370,8 +1393,14 @@ function reflectSceneReplaced() {
   renderGutter();
   paintHighlight();
   buildSliders();
+  updateSceneActions();
   scheduleSave();
   scheduleDraft();
+}
+
+function resetSceneToExample() {
+  if (!canResetScene()) return;
+  replaceScene(lastLoadedSource);
 }
 
 // Replace the whole scene with `text`, stashing the outgoing one first so the swap
@@ -3241,6 +3270,30 @@ async function copyPermalink() {
   }
 }
 copyLinkBtn.addEventListener('click', copyPermalink);
+
+let copySceneLabelTimer = null;
+/** @param {string} label */
+function flashCopySceneLabel(label) {
+  clearTimeout(copySceneLabelTimer);
+  copySceneBtn.textContent = label;
+  copySceneLabelTimer = setTimeout(() => {
+    copySceneBtn.textContent = 'Copy Scene';
+  }, 1200);
+}
+
+async function copySceneSource() {
+  try {
+    await navigator.clipboard.writeText(editor.value);
+    flashCopySceneLabel('Copied');
+  } catch {
+    /* c8 ignore next 2 -- clipboard.writeText rejects only on denied permission / insecure contexts the COOP/COEP test page can't reach */
+    flashCopySceneLabel('Copy failed');
+  }
+}
+
+copySceneBtn.addEventListener('click', copySceneSource);
+resetSceneBtn.addEventListener('click', resetSceneToExample);
+downloadSceneBtn.addEventListener('click', downloadScene);
 
 // Read-only test-observability probe (no behaviour; the app never reads it).
 // Surfaces the button label + current hash so the browser coverage suite can

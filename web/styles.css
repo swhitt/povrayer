@@ -534,6 +534,30 @@ body.ui main > * {
   color: var(--dim);
 }
 
+#scene-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.scene-dirty {
+  color: var(--dim);
+  font-size: var(--fs-chrome);
+  min-width: 5.5em;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.scene-dirty[data-dirty='true'] {
+  color: var(--text);
+}
+
+#copy-scene-btn {
+  min-width: 8.5em;
+}
+
 /* Opaque popover panel: strong hairline, square, no shadow. z-index clears the
    textarea's z-index:1. */
 #example-browser {
