@@ -1,8 +1,8 @@
 // Lightweight, text-only scene history: a capped, consecutively-deduped list of
 // scene-source snapshots taken at explicit-render milestones (never per keystroke,
 // never on the live draft), so a user can jump back to a previously rendered
-// version. Pure and DOM-free, the caller supplies `now` and owns storage + DOM, so
-// it node-tests to 100%. Text only by design (no thumbnails) to stay lightweight.
+// version. Pure and DOM-free: callers supply `now`, storage, and any DOM rendering,
+// so it node-tests to 100%. Text only by design (no thumbnails) to stay lightweight.
 
 /** @typedef {{ t: number, source: string }} Snapshot */
 
@@ -20,6 +20,40 @@
 export function addSnapshot(list, source, now, max) {
   if (list[0] && list[0].source === source) return list;
   return [{ t: now, source }, ...list].slice(0, max);
+}
+
+/**
+ * Load history snapshots from best-effort string storage. Malformed JSON starts
+ * fresh, and mixed arrays keep only records that match the snapshot shape.
+ * @param {{ getItem(key: string): string | null }} storage
+ * @param {string} key
+ * @returns {Snapshot[]}
+ */
+export function loadSnapshots(storage, key) {
+  try {
+    const raw = JSON.parse(storage.getItem(key) || '[]');
+    return Array.isArray(raw)
+      ? raw.filter((e) => e && typeof e.source === 'string' && typeof e.t === 'number')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Persist history snapshots to best-effort string storage.
+ * @param {{ setItem(key: string, value: string): void }} storage
+ * @param {string} key
+ * @param {Snapshot[]} list
+ * @returns {boolean} true when storage accepted the write
+ */
+export function saveSnapshots(storage, key, list) {
+  try {
+    storage.setItem(key, JSON.stringify(list));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

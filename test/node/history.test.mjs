@@ -4,7 +4,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { addSnapshot, snapshotPreview, relativeTime, lineDelta } from '../../web/history.js';
+import {
+  addSnapshot,
+  loadSnapshots,
+  saveSnapshots,
+  snapshotPreview,
+  relativeTime,
+  lineDelta,
+} from '../../web/history.js';
 
 test('addSnapshot prepends newest-first', () => {
   const a = addSnapshot([], 'one', 1000, 20);
@@ -34,6 +41,66 @@ test('addSnapshot caps the list at max, dropping the oldest', () => {
   assert.equal(list.length, 20);
   assert.equal(list[0].source, 'v24'); // newest kept
   assert.equal(list.at(-1).source, 'v5'); // v0..v4 dropped
+});
+
+test('loadSnapshots keeps only well-formed snapshot records', () => {
+  const storage = {
+    getItem(key) {
+      assert.equal(key, 'history');
+      return JSON.stringify([
+        { source: 'ok', t: 1000 },
+        { source: 'missing time' },
+        { source: 42, t: 2000 },
+        null,
+        { source: 'also ok', t: 3000, extra: true },
+      ]);
+    },
+  };
+  assert.deepEqual(loadSnapshots(storage, 'history'), [
+    { source: 'ok', t: 1000 },
+    { source: 'also ok', t: 3000, extra: true },
+  ]);
+});
+
+test('loadSnapshots falls back to an empty list for absent or invalid storage data', () => {
+  assert.deepEqual(loadSnapshots({ getItem: () => null }, 'history'), []);
+  assert.deepEqual(loadSnapshots({ getItem: () => '{' }, 'history'), []);
+  assert.deepEqual(loadSnapshots({ getItem: () => '{"source":"not an array"}' }, 'history'), []);
+  assert.deepEqual(
+    loadSnapshots(
+      {
+        getItem() {
+          throw new Error('storage denied');
+        },
+      },
+      'history'
+    ),
+    []
+  );
+});
+
+test('saveSnapshots writes JSON and reports best-effort storage failures', () => {
+  let written = '';
+  const storage = {
+    setItem(key, value) {
+      assert.equal(key, 'history');
+      written = value;
+    },
+  };
+  assert.equal(saveSnapshots(storage, 'history', [{ source: 'scene', t: 123 }]), true);
+  assert.equal(written, '[{"source":"scene","t":123}]');
+  assert.equal(
+    saveSnapshots(
+      {
+        setItem() {
+          throw new Error('quota');
+        },
+      },
+      'history',
+      []
+    ),
+    false
+  );
 });
 
 test('snapshotPreview uses the first non-blank line, comment marker stripped', () => {

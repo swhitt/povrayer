@@ -55,6 +55,7 @@
     "web/asset-drop.js",
     "web/coi.js",
     "web/live-draft.js",
+    "web/render-feedback.js",
     "web/render-client.js",
     "web/highlight.js",
     "web/sdl-strip.js",

@@ -52,6 +52,7 @@ const FILES = [
   { path: 'web/sliders.js', browser: true },
   { path: 'web/settings.js', browser: true },
   { path: 'web/history.js', browser: true },
+  { path: 'web/render-feedback.js', browser: true },
   { path: 'web/render-client.js', browser: true },
   { path: 'web/sdl-validate.js', browser: true },
   { path: 'web/permalink.js', browser: true },

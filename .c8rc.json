@@ -68,6 +68,7 @@
     "web/repl.js",
     "web/anim-export.js",
     "web/asset-drop.js",
+    "web/render-feedback.js",
     "web/render-client.js",
     "dist/povray.mjs",
     "dist/index.d.ts",

@@ -26,7 +26,14 @@ import { parseFlags } from './flags.js';
 import { formatStats } from './stats.js';
 import { buildPool, complete, applyCompletion, signatureText } from './complete.js';
 import { createAssetDrop } from './asset-drop.js';
-import { addSnapshot, snapshotPreview, relativeTime, lineDelta } from './history.js';
+import {
+  addSnapshot,
+  loadSnapshots,
+  saveSnapshots,
+  snapshotPreview,
+  relativeTime,
+  lineDelta,
+} from './history.js';
 import { parseDeclaredNumbers, numberTokenAt, scrubStep, formatScrubbed } from './sliders.js';
 import { CONTROL_FIELDS, coerceSaved, coerceParam, coerceHydrate } from './settings.js';
 import { triggerDownload } from './anim-export.js';
@@ -34,6 +41,7 @@ import { createPlayer } from './player.js';
 import { ensureCrossOriginIsolation } from './coi.js';
 import { createLiveDraftController } from './live-draft.js';
 import { matchesExampleFilters as recordMatchesFilters } from './example-filters.js';
+import { createRenderFeedback } from './render-feedback.js';
 
 const isoWarning = document.getElementById('iso-warning');
 ensureCrossOriginIsolation({ warningEl: isoWarning });
@@ -1641,26 +1649,7 @@ const assetDrop = createAssetDrop({
 // keystroke or the live draft), deduped + capped, persisted in its own localStorage
 // key. Loading a version replaces the scene (undoable via the restore note).
 /** @type {import('./history.js').Snapshot[]} */
-let sceneHistory = loadHistory();
-
-function loadHistory() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
-    return Array.isArray(raw)
-      ? raw.filter((e) => e && typeof e.source === 'string' && typeof e.t === 'number')
-      : [];
-  } catch {
-    return []; // malformed JSON: start fresh, history is best-effort
-  }
-}
-
-function saveHistory() {
-  try {
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(sceneHistory));
-  } catch {
-    // Storage blocked or full: history is best-effort, like the main save.
-  }
-}
+let sceneHistory = loadSnapshots(localStorage, HISTORY_KEY);
 
 // Snapshot `source` as a new version, unless it duplicates the newest one. Returns
 // early (no save/re-render) on a dedup so a re-render of the same text is free.
@@ -1668,7 +1657,7 @@ function recordHistory(source) {
   const next = addSnapshot(sceneHistory, source, Date.now(), HISTORY_MAX);
   if (next === sceneHistory) return;
   sceneHistory = next;
-  saveHistory();
+  saveSnapshots(localStorage, HISTORY_KEY, sceneHistory);
   renderHistory();
 }
 
@@ -2005,220 +1994,32 @@ swapSizeBtn.addEventListener('click', () => {
   scheduleSave();
 });
 
-// ---- status line (role=status live region) ----
-// Busy-phase text updates are throttled to one per second (live-region
-// hygiene); terminal states flush immediately and cancel any pending update.
-
-let statusTimer = null;
-let statusLastAt = 0;
-let statusPending = null;
-
-function setStatus(text, state) {
-  if (statusTimer) {
-    clearTimeout(statusTimer);
-    statusTimer = null;
-  }
-  statusPending = null;
-  status.textContent = text;
-  status.dataset.state = state;
-  statusLastAt = performance.now();
-  syncSpinner();
-  applyTabState();
-}
-
-function setBusyStatus(text) {
-  status.dataset.state = 'busy';
-  syncSpinner();
-  const now = performance.now();
-  if (now - statusLastAt >= 1000) {
-    status.textContent = text;
-    statusLastAt = now;
-    return;
-  }
-  statusPending = text;
-  if (!statusTimer) {
-    statusTimer = setTimeout(
-      () => {
-        statusTimer = null;
-        if (statusPending !== null) {
-          status.textContent = statusPending;
-          statusPending = null;
-          statusLastAt = performance.now();
-        }
-      },
-      1000 - (now - statusLastAt)
-    );
-  }
-}
-
-// The spinner mirrors "a render is actually in flight". An explicit render holds
-// data-state 'busy' for its whole duration; a live draft holds 'draft', but that
-// state also describes a *settled* draft (the resting "preview ready · WxH" line),
-// so the draft case keys on the in-flight controller, not the state. Once both
-// clear, the spinner hides. The prominent #stop-btn rides the SAME signal (its
-// click handler near the bottom stops whatever is in flight), so the spinner and
-// the stop control always agree on "something is rendering".
-function syncSpinner() {
-  const inFlight = status.dataset.state === 'busy' || liveDraftController.isDrafting();
-  statusSpinner.hidden = !inFlight;
-  stopBtn.hidden = !inFlight;
-}
-
-// ---- render-state tab chrome (favicon + title) ----
-// An explicit render runs 5-15s+, exactly when a tinkerer tabs away, so the
-// tab itself carries the state: the brand-orb favicon's gold core dims to
-// --dim grey while a render is in flight (gold = the instrument is ready,
-// the one sanctioned accent use), and the title narrates busy and, while the
-// tab is hidden, the done/error payoff. Inline data URIs only (COEP-safe, no
-// fetch); both variants come from one template so the resting icon stays
-// byte-identical to the markup's.
-
 const faviconLink = /** @type {HTMLLinkElement} */ (document.querySelector('link[rel="icon"]'));
-const BASE_TITLE = document.title;
-/** @param {string} core hex (no #) for the orb's bright core stop */
-const orbIcon = (core) =>
-  `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3CradialGradient id='g' cx='.33' cy='.28' r='.75'%3E%3Cstop offset='0' stop-color='%23fff'/%3E%3Cstop offset='.38' stop-color='%23${core}'/%3E%3Cstop offset='.78' stop-color='%2315151a'/%3E%3C/radialGradient%3E%3Ccircle cx='8' cy='8' r='8' fill='url(%23g)'/%3E%3C/svg%3E`;
-const ORB_READY = orbIcon('ffd23f'); // --accent
-const ORB_BUSY = orbIcon('98a1ab'); // --dim
-
-// Recomputed from the status line's state on every setStatus AND on every
-// visibilitychange: returning to a tab that finished while hidden restores
-// the resting title without any one-shot flag to strand.
-function applyTabState() {
-  const state = status.dataset.state;
-  faviconLink.href = state === 'busy' ? ORB_BUSY : ORB_READY;
-  if (state === 'busy') {
-    document.title = 'rendering… · povrayer';
-  } else if (document.hidden && (state === 'done' || state === 'error')) {
-    // Finished while hidden: surface the payoff/error line where the user
-    // can actually see it (the tab strip).
-    document.title = `${status.textContent} · povrayer`;
-  } else {
-    document.title = BASE_TITLE;
-  }
-}
-document.addEventListener('visibilitychange', applyTabState);
-
-// ---- progress bar ----
-// Indeterminate sweep from render start. The bar only leaves the sweep once
-// percent events are actually streaming: a single early percent (radiosity
-// scenes flush one pretrace, 0% or 1%) would otherwise pin a frozen sliver for
-// the whole trace, which reads as hung, worse than the honest sweep. So the
-// first percent only primes; the second (and beyond) drives the determinate
-// width. Percents from interleaved render threads regress, hence the monotonic
-// clamp. With the current dist artifact percent arrives in one burst at trace
-// completion, so most renders sweep the whole way and never go determinate.
-
-let progressPct = -1; // last confirmed percent; -1 until streaming is confirmed
-let progressPrimed = false; // a first percent event has arrived this render
-
-function progressStart() {
-  progressPct = -1;
-  progressPrimed = false;
-  progressBar.classList.add('indeterminate');
-  progressBar.classList.remove('determinate');
-  progressBar.style.removeProperty('--pct');
-  progressBar.hidden = false;
-}
-
-function progressPercent(p) {
-  if (!progressPrimed) {
-    progressPrimed = true;
-    return; // one lone percent never leaves the sweep; wait for a second
-  }
-  /* c8 ignore start -- the dist normally emits one progress burst per render, so a second percent (the determinate path) is not reliably reachable; ignored to keep the gate deterministic */
-  if (!(p > progressPct)) return; // monotonic within a render
-  progressPct = p;
-  progressBar.classList.remove('indeterminate');
-  progressBar.classList.add('determinate');
-  progressBar.style.setProperty('--pct', String(p));
-  /* c8 ignore stop -- closes the ignore block opened above */
-}
-
-function progressStop() {
-  progressBar.hidden = true;
-  progressBar.classList.remove('indeterminate', 'determinate');
-  progressBar.style.removeProperty('--pct');
-  progressPct = -1;
-  progressPrimed = false;
-}
-
-// ---- log: committed lines plus one overwritable trailing progress line ----
-// The trailing line emulates the terminal \r-overwrite: hundreds of percent
-// segments collapse into a single visible line, zero information loss.
-
-// Two text nodes: committed lines grow append-only (appendData preserves the
-// reader's scroll position and text selection), and the trailing progress
-// line is the only node whose data gets replaced. Autoscroll follows the
-// tail only while the reader is already pinned at the bottom; scrolling up
-// to read detaches it until they scroll back down.
-const logCommittedNode = document.createTextNode('');
-const logProgressNode = document.createTextNode('');
-log.append(logCommittedNode, logProgressNode);
-let logHasProgressLine = false;
-
-function logPinned() {
-  return log.scrollTop + log.clientHeight >= log.scrollHeight - 8;
-}
-
-function refreshLogScroll(wasPinned) {
-  if (wasPinned) log.scrollTop = log.scrollHeight;
-  if (logDetails.hidden) logDetails.hidden = false;
-}
-
-function appendLogLine(text) {
-  const pinned = logPinned();
-  if (logHasProgressLine) {
-    logCommittedNode.appendData(logProgressNode.data + '\n');
-    logProgressNode.data = '';
-    logHasProgressLine = false;
-  }
-  logCommittedNode.appendData(text + '\n');
-  refreshLogScroll(pinned);
-}
-
-function setProgressLine(text) {
-  const pinned = logPinned();
-  logProgressNode.data = text;
-  logHasProgressLine = true;
-  refreshLogScroll(pinned);
-}
-
-function commitProgressLine() {
-  /* c8 ignore start -- the shipped dist always emits render-statistics lines after the final progress event, so appendLogLine commits the pending progress line first; this standalone commit never sees one pending */
-  if (logHasProgressLine) {
-    const pinned = logPinned();
-    logCommittedNode.appendData(logProgressNode.data + '\n');
-    logProgressNode.data = '';
-    logHasProgressLine = false;
-    refreshLogScroll(pinned);
-  }
-  /* c8 ignore stop -- closes the ignore block opened above */
-}
-
-function resetLog() {
-  logCommittedNode.data = '';
-  logProgressNode.data = '';
-  logHasProgressLine = false;
-  setLogSummary('render log');
-  // #log-details stays visible once shown (re-hiding would shift layout);
-  // it unhides on the first line of the first render. Open/closed state is
-  // never forced.
-}
-
-function logLineCount() {
-  const text = log.textContent;
-  return text ? text.replace(/\n+$/, '').split('\n').length : 0;
-}
-
-// Write the log disclosure's summary as the label + dim count pair every other
-// disclosure on the page uses (scene params, history). `label` carries the
-// error variant ("render log · exit 1"); the count span holds the line tally.
-function setLogSummary(label) {
-  logLabel.textContent = label;
-  const n = logLineCount();
-  logCount.textContent = n ? `(${n} lines)` : '';
-}
+const {
+  setStatus,
+  setBusyStatus,
+  syncSpinner,
+  progressStart,
+  progressPercent,
+  progressDeterminate,
+  progressStop,
+  appendLogLine,
+  setProgressLine,
+  commitProgressLine,
+  resetLog,
+  setLogSummary,
+} = createRenderFeedback({
+  status,
+  statusSpinner,
+  stopBtn,
+  progressBar,
+  log,
+  logDetails,
+  logLabel,
+  logCount,
+  faviconLink,
+  isDrafting: () => liveDraftController.isDrafting(),
+});
 
 // ---- image zoom (fit / 1:1 / 4x) ----
 // The meta-row button is the accessible path; clicking the image is the
@@ -2863,9 +2664,9 @@ async function startRender() {
         if (ctl.signal.aborted) return; // never overwrite 'cancelled'
         engineSeen = true;
         if (ev.kind === 'progress') {
-          progressPercent(ev.percent);
+          const pct = progressPercent(ev.percent);
           setProgressLine(ev.text);
-          if (progressPct >= 0) setBusyStatus(`rendering… ${progressPct}%`);
+          if (pct >= 0) setBusyStatus(`rendering… ${pct}%`);
         } else if (ev.kind === 'line') {
           if (!tracing && /^==== \[Rendering/.test(ev.text)) {
             tracing = true;
@@ -2968,14 +2769,6 @@ function collectAnimOptions() {
 // done in 1.84s · 256×192 · 12 frames
 function animDoneLine(elapsedMs, opts, frameCount) {
   return `done in ${(elapsedMs / 1000).toFixed(2)}s · ${opts.width}×${opts.height} · ${frameCount} frames`;
-}
-
-// Drive the bar as a determinate fraction (used for per-frame progress in
-// animate mode, where completed frames are the meaningful unit).
-function progressDeterminate(pct) {
-  progressBar.classList.remove('indeterminate');
-  progressBar.classList.add('determinate');
-  progressBar.style.setProperty('--pct', String(pct));
 }
 
 async function runAnimateRender() {
