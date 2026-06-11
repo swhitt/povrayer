@@ -234,7 +234,7 @@ try {
   await page.fill('#flags', ''); // clear so later renders see the default opts again
 
   // Cancel path: start a deliberately slow render (big frame, tight AA),
-  // abort it, and require the 'cancelled' status. Only the AbortError branch
+  // abort it, and require the 'render cancelled' status. Only the AbortError branch
   // sets that text, so this proves cancellation actually rejects the render.
   await page.fill('#width', '1024');
   await page.fill('#height', '768');
@@ -249,7 +249,7 @@ try {
   await page.waitForSelector('#progress', { state: 'visible', timeout: 10_000 });
   await page.click('#cancel-btn');
   await page.waitForFunction(
-    () => document.getElementById('status').textContent === 'cancelled',
+    () => document.getElementById('status').textContent === 'render cancelled',
     null,
     { timeout: 30_000 }
   );
@@ -307,7 +307,7 @@ try {
   );
   await page.click('#stop-btn');
   await page.waitForFunction(
-    () => document.getElementById('status').textContent === 'cancelled',
+    () => document.getElementById('status').textContent === 'render cancelled',
     null,
     { timeout: 30_000 }
   );
@@ -658,6 +658,8 @@ try {
       hidden: document.getElementById('gallery').hidden,
       focused: document.activeElement?.id,
       search: document.getElementById('gallery-search').value,
+      license: document.getElementById('gallery-license').value,
+      clearHidden: document.getElementById('gallery-clear').hidden,
       empty: document.getElementById('gallery-empty').hidden,
       browser: document.getElementById('example-trigger').getAttribute('aria-expanded'),
       shortcuts: document.getElementById('shortcuts').hidden,
@@ -1160,6 +1162,71 @@ try {
     document.getElementById('editor').value = getExample('orbit-moons');
   });
 
+  await switchExample('julia-fractal');
+  await page.waitForFunction(
+    () => {
+      const d = window.__liveDraftProbe();
+      return !d.pending && !d.inFlight;
+    },
+    null,
+    { timeout: 5_000 }
+  );
+  assert.deepEqual(
+    await page.evaluate(async () => ({
+      trigger: document.getElementById('example-trigger').dataset.name,
+      busy: (await import('/render-client.js')).isBusy(),
+      pending: window.__liveDraftProbe().pending,
+      inFlight: window.__liveDraftProbe().inFlight,
+    })),
+    {
+      trigger: 'julia-fractal',
+      busy: false,
+      pending: false,
+      inFlight: false,
+    },
+    'a pristine heavy still example must not auto-preview'
+  );
+  const HEAVY_EDIT_SCENE = [
+    '#version 3.8;',
+    'global_settings { assumed_gamma 1.0 }',
+    'camera { location <0,0,-4> look_at 0 }',
+    'light_source { <2,4,-3> rgb 1 }',
+    'sphere { 0, 1 pigment { rgb <1,0,0> } }',
+    '',
+  ].join('\n');
+  await setSceneSource(HEAVY_EDIT_SCENE);
+  await page.waitForFunction(
+    () => {
+      const d = window.__liveDraftProbe();
+      return (
+        document.getElementById('status').dataset.state === 'draft' &&
+        /^preview ready · /.test(document.getElementById('status').textContent) &&
+        !d.inFlight
+      );
+    },
+    null,
+    { timeout: 60_000 }
+  );
+  assert.equal(
+    await page.evaluate(() => window.__liveDraftProbe().inFlight),
+    false,
+    'editing a heavy still example allows live preview again'
+  );
+  await page.evaluate(async () => {
+    const { getExample } = await import('/examples.js');
+    const ed = document.getElementById('editor');
+    ed.value = getExample('julia-fractal');
+    ed.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.waitForFunction(
+    () => {
+      const d = window.__liveDraftProbe();
+      return !d.pending && !d.inFlight;
+    },
+    null,
+    { timeout: 5_000 }
+  );
+
   // Loading a STILL example must leave dialed-in frames/fps untouched (the
   // applyExampleClock early-return), and a manually-set quality must not be
   // overwritten by the example tier. This exercises the click-select path.
@@ -1336,15 +1403,40 @@ try {
     {
       hidden: true,
       focused: 'gallery-btn',
-      search: '',
+      search: 'sombrero',
+      license: 'gpl',
+      clearHidden: false,
       empty: false,
       browser: 'false',
       shortcuts: true,
     },
-    'Esc closes the gallery, resets filters, and returns focus'
+    'Esc closes the gallery, preserves filters, and returns focus'
   );
   await page.click('#gallery-btn');
-  assert.equal((await galleryState()).search, '', 'reopening starts with reset gallery filters');
+  assert.deepEqual(
+    await galleryState(),
+    {
+      hidden: false,
+      focused: 'gallery',
+      search: 'sombrero',
+      license: 'gpl',
+      clearHidden: false,
+      empty: false,
+      browser: 'false',
+      shortcuts: true,
+    },
+    'reopening keeps the gallery filters from the current session'
+  );
+  await page.click('#gallery-clear');
+  await page.waitForFunction(
+    () =>
+      document.getElementById('gallery-search').value === '' &&
+      document.getElementById('gallery-license').value === 'all' &&
+      document.getElementById('gallery-clear').hidden &&
+      document.getElementById('gallery-empty').hidden,
+    null,
+    { timeout: 5_000 }
+  );
   await page.fill('#gallery-search', 'wine glass');
   await page.click('.gallery-card[data-name="sourced-wineglass"]');
   await page.waitForFunction(
@@ -1951,6 +2043,86 @@ try {
     '2D canvas context unavailable',
     'createPlayer should fail early when a 2D canvas context is unavailable'
   );
+  await page.evaluate(async () => {
+    const { createPlayer } = await import('./player.js');
+    const originalMatchMedia = window.matchMedia;
+    const stubEl = () => {
+      const attrs = {};
+      return {
+        hidden: false,
+        textContent: '',
+        value: '0',
+        max: '0',
+        disabled: false,
+        addEventListener() {},
+        setAttribute(k, v) {
+          attrs[k] = v;
+        },
+        getAttribute(k) {
+          return attrs[k] ?? null;
+        },
+        querySelector() {
+          return null;
+        },
+      };
+    };
+    window.matchMedia = () => ({
+      matches: false,
+      media: '(prefers-reduced-motion: no-preference)',
+      onchange: null,
+      addListener() {},
+      removeListener() {},
+      addEventListener() {},
+      removeEventListener() {},
+      dispatchEvent() {
+        return false;
+      },
+    });
+    try {
+      const raw = new Uint8Array(1024 * 1024);
+      window.__playerRawFrameRef = new WeakRef(raw);
+      const player = createPlayer({
+        canvas: {
+          width: 0,
+          height: 0,
+          getContext: () => ({ drawImage() {} }),
+          setAttribute() {},
+        },
+        controls: stubEl(),
+        playButton: stubEl(),
+        scrubber: stubEl(),
+        frameReadout: stubEl(),
+        loopButton: stubEl(),
+        exportButton: stubEl(),
+        exportFormat: stubEl(),
+      });
+      window.__playerGcProbe = player;
+      player.load(
+        {
+          bitmaps: [{ width: 2, height: 2, close() {} }],
+          blobUrls: ['blob:povrayer-player-gc-probe'],
+          frames: [raw],
+        },
+        12
+      );
+      player.destroy();
+    } finally {
+      window.matchMedia = originalMatchMedia;
+    }
+  });
+  const gcSession = await page.context().newCDPSession(page);
+  await gcSession.send('HeapProfiler.collectGarbage');
+  await gcSession.send('HeapProfiler.collectGarbage');
+  await gcSession.detach();
+  assert.equal(
+    await page.evaluate(() => window.__playerRawFrameRef.deref() === undefined),
+    true,
+    'player.destroy should release its raw PNG frame references'
+  );
+  await page.evaluate(() => {
+    delete window.__playerRawFrameRef;
+    delete window.__playerGcProbe;
+  });
 
   // First animate render (3 frames, fresh page so engineSeen is false).
   await page.fill('#frames', '3');
@@ -2238,7 +2410,7 @@ try {
   await page.click('#mode-still'); // busy -> setMode returns, mode stays animate
   await page.click('#cancel-btn');
   await page.waitForFunction(
-    () => document.getElementById('status').textContent === 'cancelled',
+    () => document.getElementById('status').textContent === 'render cancelled',
     null,
     { timeout: 60_000 }
   );
@@ -2282,7 +2454,29 @@ try {
   await page.fill('#frames', '2');
   await page.evaluate(() => {
     window.__origCIB = window.createImageBitmap;
-    window.createImageBitmap = () => Promise.reject(new Error('bitmap boom'));
+    window.__origCreateObjectURL = URL.createObjectURL;
+    window.__origRevokeObjectURL = URL.revokeObjectURL;
+    window.__bitmapFailureCleanup = { created: [], revoked: [], closed: 0, calls: 0 };
+    URL.createObjectURL = (blob) => {
+      const url = window.__origCreateObjectURL.call(URL, blob);
+      window.__bitmapFailureCleanup.created.push(url);
+      return url;
+    };
+    URL.revokeObjectURL = (url) => {
+      window.__bitmapFailureCleanup.revoked.push(url);
+      return window.__origRevokeObjectURL.call(URL, url);
+    };
+    window.createImageBitmap = () => {
+      window.__bitmapFailureCleanup.calls += 1;
+      if (window.__bitmapFailureCleanup.calls === 1) {
+        return Promise.resolve({
+          close() {
+            window.__bitmapFailureCleanup.closed += 1;
+          },
+        });
+      }
+      return Promise.reject(new Error('bitmap boom'));
+    };
   });
   await page.click('#render-btn');
   await page.waitForFunction(
@@ -2295,9 +2489,33 @@ try {
     /exit \d+/,
     'a generic animate failure must not carry an exit code'
   );
+  const bitmapFailureCleanup = await page.evaluate(() => ({
+    created: window.__bitmapFailureCleanup.created,
+    revoked: window.__bitmapFailureCleanup.revoked,
+    closed: window.__bitmapFailureCleanup.closed,
+    calls: window.__bitmapFailureCleanup.calls,
+  }));
   await page.evaluate(() => {
     window.createImageBitmap = window.__origCIB;
+    URL.createObjectURL = window.__origCreateObjectURL;
+    URL.revokeObjectURL = window.__origRevokeObjectURL;
+    delete window.__origCIB;
+    delete window.__origCreateObjectURL;
+    delete window.__origRevokeObjectURL;
+    delete window.__bitmapFailureCleanup;
   });
+  assert.equal(bitmapFailureCleanup.created.length, 2, 'bitmap failure should create frame URLs');
+  assert.deepEqual(
+    [...bitmapFailureCleanup.revoked].sort(),
+    [...bitmapFailureCleanup.created].sort(),
+    'bitmap failure should revoke every frame URL it created'
+  );
+  assert.equal(
+    bitmapFailureCleanup.closed,
+    1,
+    'bitmap failure should close ImageBitmaps created before the rejection'
+  );
+  assert.equal(bitmapFailureCleanup.calls, 2, 'bitmap creation should be attempted for each frame');
 
   // Mode toggle + plate routing: switch to still (player pauses, image plate),
   // run a still render, then bounce animate<->still so refreshPlate routes both
@@ -2448,6 +2666,7 @@ try {
   // toward its 2s cap; a draft scheduled then fires a full ~2s later and can
   // linger into the next section, leaving a stray render in flight under an
   // assertion that expects idle. Flooring it keeps every fireDraft prompt.
+  let floorDraftSeq = 0;
   const floorDebounce = async () => {
     // Wait for a genuinely NEW draft image (the blob src changes), not just any
     // 320×240 'draft' state: a prior cornell draft already leaves status='draft'
@@ -2456,7 +2675,8 @@ try {
     // inflated, so a later busy-guard draft fired late and lingered in flight
     // under the isolation guard's idle assertion).
     const before = await page.evaluate(() => document.getElementById('output').src);
-    await typeScene(LIVE_SCENE);
+    floorDraftSeq += 1;
+    await typeScene(`${LIVE_SCENE}// floor debounce ${floorDraftSeq}\n`);
     await page.waitForFunction(
       (prev) => {
         const o = document.getElementById('output');
@@ -2562,8 +2782,8 @@ try {
   );
   assert.match(
     await page.evaluate(() => document.getElementById('status').textContent),
-    /draft preview · 320×240/,
-    'the draft preview status reads the downscaled dims in a muted state'
+    /preview ready · 320×240/,
+    'the preview status reads the downscaled dims in a muted state'
   );
   assert.equal(
     await page.evaluate(() => document.getElementById('download-btn').hidden),
@@ -2614,7 +2834,7 @@ try {
   );
   assert.match(
     await page.evaluate(() => document.getElementById('status').textContent),
-    /draft preview · error/,
+    /preview error/,
     'a draft error sets a muted preview-error status'
   );
   // A draft error is a POLITE live region (role swapped to status), so a screen
@@ -2902,15 +3122,15 @@ try {
   await page.click('#live-toggle'); // OFF mid-flight -> draftCtl?.abort() actually aborts
   assert.equal(await ariaPressed('live-toggle'), 'false', 'live toggles OFF again, mid-draft');
   // The footer was sitting in the 'draft' state, so toggling off neutralizes it
-  // to an idle auto-preview-off label rather than leaving the now-frozen preview
+  // to an idle preview-paused label rather than leaving the now-frozen preview
   // announced as active.
   assert.deepEqual(
     await page.evaluate(() => {
       const s = document.getElementById('status');
       return { text: s.textContent, state: s.dataset.state };
     }),
-    { text: 'auto preview off', state: 'idle' },
-    'toggling auto preview off from a draft footer must read clearly'
+    { text: 'preview paused', state: 'idle' },
+    'toggling auto preview off from a draft footer reads as preview paused'
   );
   await waitIdle();
 
@@ -2938,14 +3158,14 @@ try {
     'false',
     'stopping a live draft flips the live-draft toggle off (aria-pressed false)'
   );
-  // The footer neutralizes from the draft line to auto-preview-off (idle).
+  // The footer neutralizes from the draft line to preview-paused (idle).
   assert.deepEqual(
     await page.evaluate(() => {
       const s = document.getElementById('status');
       return { text: s.textContent, state: s.dataset.state };
     }),
-    { text: 'auto preview off', state: 'idle' },
-    'stopping a live draft reads as auto preview off'
+    { text: 'preview paused', state: 'idle' },
+    'stopping a live draft reads as preview paused'
   );
   // No re-fire: live is off, so the draft's backstop scheduleDraft early-returns.
   // Wait for idle, then prove nothing is pending/in flight and Stop hid.
@@ -4617,6 +4837,12 @@ try {
   await page.click('#shortcuts-hint');
   await page.keyboard.press('Control+k');
   assert.equal(await browserExpanded(), 'false', 'Ctrl+K is ignored under the shortcuts overlay');
+  await page.keyboard.press('Control+Shift+K');
+  assert.equal(
+    await page.evaluate(() => document.getElementById('gallery').hidden),
+    true,
+    'Ctrl+Shift+K is ignored under the shortcuts overlay'
+  );
   assert.equal((await shortcutsState()).hidden, false, 'the overlay survives the swallowed chord');
   await page.keyboard.press('Escape');
   // Guard: an open completion popup owns the keyboard. (This page is a fresh
@@ -4630,6 +4856,12 @@ try {
   assert.equal((await cmp()).hidden, false, 'the completion popup is open for the guard check');
   await page.keyboard.press('Control+k');
   assert.equal(await browserExpanded(), 'false', 'Ctrl+K is ignored while completion is open');
+  await page.keyboard.press('Control+Shift+K');
+  assert.equal(
+    await page.evaluate(() => document.getElementById('gallery').hidden),
+    true,
+    'Ctrl+Shift+K is ignored while completion is open'
+  );
   await page.keyboard.press('Escape'); // dismiss the popup
   // With nothing else open, Ctrl+K opens the example browser on the search box.
   await page.keyboard.press('Control+k');
@@ -4649,6 +4881,22 @@ try {
     'the swallowed re-open preserves the typed filter'
   );
   await page.keyboard.press('Escape'); // close the browser
+  await page.keyboard.press('Control+Shift+K');
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      hidden: document.getElementById('gallery').hidden,
+      focused: document.activeElement?.id,
+    })),
+    { hidden: false, focused: 'gallery' },
+    'Ctrl+Shift+K opens the gallery'
+  );
+  await page.keyboard.press('Control+Shift+K');
+  assert.equal(
+    await page.evaluate(() => document.getElementById('gallery').hidden),
+    false,
+    'a second Ctrl+Shift+K leaves the open gallery alone'
+  );
+  await page.keyboard.press('Escape');
 
   // -- Shift+Ctrl/Cmd+Enter: one-shot final-quality override -------------------------
   // The armed render runs at quality 9 + antialias 0.05 (visible in the download
@@ -4840,8 +5088,8 @@ try {
   await waitState('error');
   assert.deepEqual(
     await tabState(),
-    { title: 'error · povrayer', gold: true, dim: false },
-    'an error while hidden titles the tab "error" with the orb back to gold'
+    { title: 'render failed · povrayer', gold: true, dim: false },
+    'an error while hidden titles the tab "render failed" with the orb back to gold'
   );
   // A non-done/error state while still hidden rests the title (the mode switch
   // routes through setStatus with an idle state).

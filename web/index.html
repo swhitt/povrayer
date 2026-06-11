@@ -271,10 +271,13 @@
               id="render-btn"
               type="button"
               title="Ctrl/Cmd+Enter · Shift+Ctrl/Cmd+Enter renders once at final quality (q9, antialias 0.05)"
+              aria-keyshortcuts="Control+Enter Meta+Enter Control+Shift+Enter Meta+Shift+Enter"
             >
               Render
             </button>
-            <button id="cancel-btn" type="button" title="Esc" hidden>Cancel</button>
+            <button id="cancel-btn" type="button" title="Esc" aria-keyshortcuts="Escape" hidden>
+              Cancel
+            </button>
             <button
               id="copy-link-btn"
               type="button"
@@ -484,6 +487,8 @@
         <dd>download the scene as scene.pov</dd>
         <dt><kbd>Ctrl/Cmd</kbd> <kbd>K</kbd></dt>
         <dd>example browser</dd>
+        <dt><kbd>Shift</kbd> <kbd>Ctrl/Cmd</kbd> <kbd>K</kbd></dt>
+        <dd>example gallery</dd>
         <dt><kbd>Alt</kbd> <kbd>B</kbd> (hold)</dt>
         <dd>peek at the previous render (press-and-hold the image works too)</dd>
         <dt><kbd>?</kbd></dt>
@@ -529,6 +534,7 @@
           <option value="share-alike">share-alike</option>
           <option value="gpl">gpl</option>
         </select>
+        <button id="gallery-clear" type="button" hidden>Clear</button>
       </div>
       <div id="gallery-grid" aria-label="gallery examples"></div>
       <p id="gallery-empty" class="gallery-empty" hidden>no examples match</p>

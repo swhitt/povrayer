@@ -148,7 +148,21 @@ export async function renderAnimation(source, opts = {}) {
     const elapsedMs = performance.now() - start;
     const blobs = pngs.map((bytes) => new Blob([bytes], { type: 'image/png' }));
     const blobUrls = blobs.map((blob) => URL.createObjectURL(blob));
-    const bitmaps = await Promise.all(blobs.map((blob) => createImageBitmap(blob)));
+    const bitmapResults = await Promise.allSettled(
+      blobs.map((blob) => Promise.resolve().then(() => createImageBitmap(blob)))
+    );
+    const bitmapFailure = bitmapResults.find((result) => result.status === 'rejected');
+    if (bitmapFailure) {
+      for (const u of blobUrls) URL.revokeObjectURL(u);
+      for (const result of bitmapResults) {
+        if (result.status === 'fulfilled') result.value.close();
+      }
+      throw bitmapFailure.reason;
+    }
+    const bitmaps = bitmapResults.map((result) => {
+      if (result.status !== 'fulfilled') throw new Error('unreachable bitmap result');
+      return result.value;
+    });
     return { frames: pngs, blobUrls, bitmaps, elapsedMs, log: rawLines.join('\n') };
   } finally {
     busy = false;

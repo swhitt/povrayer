@@ -162,6 +162,7 @@ export function createPlayer(elements) {
     for (const b of bitmaps) b.close();
     urls = [];
     bitmaps = [];
+    pngFrames = [];
   }
 
   /** @param {AnimationResult} result @param {number} playbackFps */

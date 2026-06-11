@@ -69,6 +69,7 @@
     "web/url-params.js",
     "web/examples.js",
     "web/examples-sourced.js",
+    "web/example-filters.js",
     "src/cli.mjs",
     "test/**/*.mjs",
     "tools/**/*.mjs"

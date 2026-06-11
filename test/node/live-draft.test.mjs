@@ -147,6 +147,65 @@ test('cancel clears a pending schedule and aborts an active draft', async () => 
   assert.equal(h.controller.isDrafting(), false);
 });
 
+test('sourceChanged aborts an active draft and schedules the next source', async () => {
+  const pending = deferred();
+  let aborted = false;
+  const h = harness({
+    renderDraft: (_source, _options, signal) => {
+      signal.addEventListener(
+        'abort',
+        () => {
+          aborted = true;
+          pending.reject(new Error('aborted'));
+        },
+        { once: true }
+      );
+      return pending.promise;
+    },
+  });
+
+  h.controller.fire();
+  await tick();
+  h.setSource('box');
+  h.controller.sourceChanged();
+  await tick();
+
+  assert.equal(aborted, true);
+  assert.equal(h.controller.isDrafting(), false);
+  assert.equal(h.controller.probe().pending, true);
+  h.controller.cancel();
+});
+
+test('fire never overlaps active drafts', async () => {
+  const pending = deferred();
+  let aborted = false;
+  const h = harness({
+    renderDraft: (_source, _options, signal) => {
+      signal.addEventListener(
+        'abort',
+        () => {
+          aborted = true;
+          pending.reject(new Error('aborted'));
+        },
+        { once: true }
+      );
+      return pending.promise;
+    },
+  });
+
+  h.controller.fire();
+  await tick();
+  h.controller.fire();
+  assert.equal(aborted, false, 'same-source fire should keep the active draft');
+
+  h.setSource('box');
+  h.controller.fire();
+  await tick();
+
+  assert.equal(aborted, true, 'changed-source fire should abort the active draft');
+  assert.deepEqual(h.events, [['start', 'sphere', 64, 48], ['settled']]);
+});
+
 test('resetAttempted lets an unchanged source render again', async () => {
   const h = harness();
 

@@ -2630,7 +2630,7 @@ kbd {
 
 .gallery-filters {
   display: grid;
-  grid-template-columns: minmax(180px, 1.5fr) repeat(4, minmax(96px, 1fr));
+  grid-template-columns: minmax(180px, 1.5fr) repeat(4, minmax(96px, 1fr)) auto;
   gap: 6px;
 }
 

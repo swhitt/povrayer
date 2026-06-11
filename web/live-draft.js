@@ -52,6 +52,12 @@ export function createLiveDraftController(hooks) {
     timer = setTimeout(fire, debounceMs());
   }
 
+  function sourceChanged() {
+    if (!hooks.enabled()) return;
+    if (ctl) ctl.abort();
+    schedule();
+  }
+
   function fire() {
     timer = null;
     const source = hooks.readSource();
@@ -131,6 +137,7 @@ export function createLiveDraftController(hooks) {
 
   return {
     schedule,
+    sourceChanged,
     fire,
     requestFullRender,
     cancel,

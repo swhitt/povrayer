@@ -33,6 +33,7 @@ import { triggerDownload } from './anim-export.js';
 import { createPlayer } from './player.js';
 import { ensureCrossOriginIsolation } from './coi.js';
 import { createLiveDraftController } from './live-draft.js';
+import { matchesExampleFilters as recordMatchesFilters } from './example-filters.js';
 
 const isoWarning = document.getElementById('iso-warning');
 ensureCrossOriginIsolation({ warningEl: isoWarning });
@@ -73,6 +74,7 @@ const galleryTier = /** @type {HTMLSelectElement} */ (document.getElementById('g
 const galleryLicense = /** @type {HTMLSelectElement} */ (
   document.getElementById('gallery-license')
 );
+const galleryClear = /** @type {HTMLButtonElement} */ (document.getElementById('gallery-clear'));
 const galleryGrid = document.getElementById('gallery-grid');
 const galleryEmpty = document.getElementById('gallery-empty');
 const sceneDirty = /** @type {HTMLElement} */ (document.getElementById('scene-dirty'));
@@ -189,31 +191,6 @@ let activeItem = null;
 const labelByKey = (items, key) => items.find((item) => item.key === key).label;
 const tierByKey = (key) => RENDER_TIERS.find((tier) => tier.key === key);
 const categoryLabelByKey = (key) => CATEGORIES.find((item) => item.key === key).label;
-const LICENSE_BUCKET = {
-  'CC0-1.0': 'cc0',
-  'CC-BY-3.0': 'share-alike',
-  'CC-BY-4.0': 'share-alike',
-  'CC-BY-SA-3.0': 'share-alike',
-  'CC-BY-SA-4.0': 'share-alike',
-  MIT: 'share-alike',
-  'Apache-2.0': 'share-alike',
-  'BSD-3-Clause': 'share-alike',
-  'GPL-3.0-or-later': 'gpl',
-};
-
-function licenseBucket(ex) {
-  return LICENSE_BUCKET[ex.license];
-}
-
-function matchesFilterValues(ex, type, difficulty, tier, license) {
-  const typeMatch = type === 'all' || (type === 'animated' ? ex.animated : !ex.animated);
-  return (
-    typeMatch &&
-    (difficulty === 'all' || ex.difficulty === difficulty) &&
-    (tier === 'all' || ex.renderTier === tier) &&
-    (license === 'all' || licenseBucket(ex) === license)
-  );
-}
 
 // Render one .ex-group per CATEGORIES entry (in order) and one .ex-option per
 // scene. The head is a disclosure toggle (role=button + aria-expanded) carrying
@@ -433,6 +410,7 @@ function shouldAutoDraftExample(record) {
 
 function canAutoDraftCurrentScene() {
   const record = getExampleRecord(selectedExample);
+  if (record && sceneIsDirty()) return !record.animated;
   return !record || shouldAutoDraftExample(record);
 }
 
@@ -778,13 +756,12 @@ function resetExampleFilters() {
 }
 
 function matchesExampleFilters(ex) {
-  return matchesFilterValues(
-    ex,
-    exampleType.value,
-    exampleDifficulty.value,
-    exampleTier.value,
-    exampleLicense.value
-  );
+  return recordMatchesFilters(ex, {
+    type: exampleType.value,
+    difficulty: exampleDifficulty.value,
+    tier: exampleTier.value,
+    license: exampleLicense.value,
+  });
 }
 
 function resetGalleryFilters() {
@@ -795,18 +772,28 @@ function resetGalleryFilters() {
   galleryLicense.value = 'all';
 }
 
-function matchesGalleryFilters(ex) {
-  return matchesFilterValues(
-    ex,
-    galleryType.value,
-    galleryDifficulty.value,
-    galleryTier.value,
-    galleryLicense.value
+function hasGalleryFilters() {
+  return (
+    gallerySearch.value.trim() !== '' ||
+    galleryType.value !== 'all' ||
+    galleryDifficulty.value !== 'all' ||
+    galleryTier.value !== 'all' ||
+    galleryLicense.value !== 'all'
   );
+}
+
+function matchesGalleryFilters(ex) {
+  return recordMatchesFilters(ex, {
+    type: galleryType.value,
+    difficulty: galleryDifficulty.value,
+    tier: galleryTier.value,
+    license: galleryLicense.value,
+  });
 }
 
 function renderGallery() {
   const q = gallerySearch.value.trim().toLowerCase();
+  galleryClear.hidden = !hasGalleryFilters();
   let anyMatch = false;
   for (const { el, ex, haystack } of galleryCards) {
     const match = (q === '' || haystack.includes(q)) && matchesGalleryFilters(ex);
@@ -818,7 +805,6 @@ function renderGallery() {
 
 function openGallery() {
   closeBrowser(false);
-  resetGalleryFilters();
   renderGallery();
   galleryPanel.hidden = false;
   galleryPanel.focus();
@@ -826,7 +812,6 @@ function openGallery() {
 
 function closeGallery() {
   galleryPanel.hidden = true;
-  resetGalleryFilters();
   galleryBtn.focus();
 }
 
@@ -919,6 +904,11 @@ gallerySearch.addEventListener('input', renderGallery);
 for (const filter of [galleryType, galleryDifficulty, galleryTier, galleryLicense]) {
   filter.addEventListener('change', renderGallery);
 }
+galleryClear.addEventListener('click', () => {
+  resetGalleryFilters();
+  renderGallery();
+  gallerySearch.focus();
+});
 
 galleryGrid.addEventListener('click', (e) => {
   const target = /** @type {Element} */ (e.target);
@@ -1080,7 +1070,7 @@ editor.addEventListener('input', () => {
   buildSliders();
   updateSceneActions();
   scheduleSave();
-  scheduleDraft();
+  scheduleDraft({ sourceChanged: true });
 });
 renderGutter();
 paintHighlight();
@@ -2063,7 +2053,7 @@ function setBusyStatus(text) {
 
 // The spinner mirrors "a render is actually in flight". An explicit render holds
 // data-state 'busy' for its whole duration; a live draft holds 'draft', but that
-// state also describes a *settled* draft (the resting "draft preview · WxH" line),
+// state also describes a *settled* draft (the resting "preview ready · WxH" line),
 // so the draft case keys on the in-flight controller, not the state. Once both
 // clear, the spinner hides. The prominent #stop-btn rides the SAME signal (its
 // click handler near the bottom stops whatever is in flight), so the spinner and
@@ -2751,7 +2741,7 @@ function draftOptions() {
 }
 
 function draftStatus(dims) {
-  return `draft preview · ${dims}`;
+  return `preview ready · ${dims}`;
 }
 
 const liveDraftController = createLiveDraftController({
@@ -2789,7 +2779,7 @@ const liveDraftController = createLiveDraftController({
     errorBox.textContent = formatError(err);
     errorBox.classList.add('draft');
     errorBox.hidden = false;
-    setStatus('draft preview · error', 'draft');
+    setStatus('preview error', 'draft');
   },
   onSettled: syncSpinner,
   startFullRender: () => startRender(),
@@ -2801,12 +2791,13 @@ const liveDraftController = createLiveDraftController({
 /** @type {Window & { __liveDraftProbe?: () => unknown }} */ (window).__liveDraftProbe =
   liveDraftController.probe;
 
-function scheduleDraft() {
+function scheduleDraft({ sourceChanged = false } = {}) {
   if (!canAutoDraftCurrentScene()) {
     liveDraftController.cancel();
     return;
   }
-  liveDraftController.schedule();
+  if (sourceChanged) liveDraftController.sourceChanged();
+  else liveDraftController.schedule();
 }
 
 async function startRender() {
@@ -2919,9 +2910,9 @@ async function startRender() {
       output.classList.remove('stale');
       downloadBtn.classList.remove('stale');
       statsList.classList.remove('stale');
-      setStatus('cancelled', 'cancelled');
+      setStatus('render cancelled', 'cancelled');
     } else {
-      setStatus('error', 'error');
+      setStatus('render failed', 'error');
       const message = formatError(err);
       // An explicit Render failure is the loud, assertive case: clear any quiet
       // draft styling/role a prior live-draft error left behind so the box reads
@@ -3049,9 +3040,9 @@ async function runAnimateRender() {
   } catch (err) {
     commitProgressLine();
     if (isAbortError(err)) {
-      setStatus('cancelled', 'cancelled');
+      setStatus('render cancelled', 'cancelled');
     } else {
-      setStatus('error', 'error');
+      setStatus('render failed', 'error');
       const message = formatError(err);
       // Same as the still path: an explicit animate failure is the loud,
       // assertive error, never the quiet draft variant.
@@ -3106,7 +3097,7 @@ function setMode(next) {
   statsList.hidden = true;
   applyMode();
   // Re-derive the footer so it agrees with the new plate. Without this #status
-  // keeps the prior mode's text (a "draft preview · WxH" line lingering in animate
+  // keeps the prior mode's text (a "preview ready · WxH" line lingering in animate
   // where drafts are suppressed, or an animate "done … · N frames" line over a
   // single still). A still-mode draft, if it fires below, overrides this.
   syncStatusToPlate();
@@ -3283,16 +3274,16 @@ liveToggle.addEventListener('click', () => {
   setLiveTogglePressed(liveDraft);
   scheduleSave();
   if (liveDraft) {
-    if (status.dataset.state === 'idle' && status.textContent === 'auto preview off') {
+    if (status.dataset.state === 'idle' && status.textContent === 'preview paused') {
       syncStatusToPlate();
     }
     scheduleDraft();
   } else {
     liveDraftController.cancel();
-    // Drop the "draft preview · …" label so the now-frozen, editable preview isn't
+    // Drop the "preview ready · …" label so the now-frozen, editable preview isn't
     // still announced as live. Only when the footer is actually showing a draft
     // line (don't clobber a real render's done/error payoff).
-    if (status.dataset.state === 'draft') setStatus('auto preview off', 'idle');
+    if (status.dataset.state === 'draft') setStatus('preview paused', 'idle');
   }
 });
 // Seed the player fps from the (restored) input and route the plate for the
@@ -3545,9 +3536,9 @@ stopBtn.addEventListener('click', () => {
     liveDraftController.cancel();
     scheduleSave();
     // The stop button is only visible mid-draft, so the footer is in the
-    // 'draft' state here; drop the "draft preview · …" label so the now-frozen,
+    // 'draft' state here; drop the "preview ready · …" label so the now-frozen,
     // editable preview isn't still announced as live.
-    setStatus('auto preview off', 'idle');
+    setStatus('preview paused', 'idle');
   }
 });
 
@@ -3616,8 +3607,8 @@ function findScopeOk(target) {
 // Escape closes the shortcuts overlay when it's open, else the find bar, else
 // aborts an in-flight render. Ctrl/Cmd+F finds in the scene and Ctrl/Cmd+G
 // goes to a line (both editor-scoped, see findScopeOk), Ctrl/Cmd+S downloads
-// the scene, Ctrl/Cmd+K opens the example browser, and ? toggles the
-// shortcuts overlay.
+// the scene, Ctrl/Cmd+K opens the example browser, Shift+Ctrl/Cmd+K opens the
+// gallery, and ? toggles the shortcuts overlay.
 document.addEventListener('keydown', (e) => {
   const mod = e.ctrlKey || e.metaKey;
   if (e.key === 'Enter' && mod) {
@@ -3625,8 +3616,10 @@ document.addEventListener('keydown', (e) => {
     if (e.shiftKey) finalRenderOnce = true;
     startRender();
   } else if (e.key === 'Escape') {
-    if (!galleryPanel.hidden) closeGallery();
-    else if (!shortcutsPanel.hidden) closeShortcuts();
+    if (!galleryPanel.hidden) {
+      e.preventDefault();
+      closeGallery();
+    } else if (!shortcutsPanel.hidden) closeShortcuts();
     else if (!findBar.hidden) closeFind(false);
     else abortCtl?.abort();
   } else if ((e.key === 'f' || e.key === 'F') && mod && !e.shiftKey && !e.altKey) {
@@ -3640,6 +3633,16 @@ document.addEventListener('keydown', (e) => {
   } else if ((e.key === 's' || e.key === 'S') && mod && !e.shiftKey && !e.altKey) {
     e.preventDefault();
     downloadScene();
+  } else if ((e.key === 'k' || e.key === 'K') && mod && e.shiftKey && !e.altKey) {
+    if (
+      !exampleBrowser.hidden ||
+      !galleryPanel.hidden ||
+      !shortcutsPanel.hidden ||
+      isCompleteOpen()
+    )
+      return;
+    e.preventDefault();
+    openGallery();
   } else if ((e.key === 'k' || e.key === 'K') && mod && !e.shiftKey && !e.altKey) {
     // Leave the chord alone while another popover/overlay owns the screen (the
     // browser already showing included: re-opening would reset its state).
