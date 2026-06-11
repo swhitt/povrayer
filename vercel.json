@@ -4,7 +4,7 @@
   "outputDirectory": "_site",
   "framework": null,
   "cleanUrls": true,
-  "rewrites": [{ "source": "/x/:slug*", "destination": "/index.html" }],
+  "redirects": [{ "source": "/x/:id", "destination": "/?x=:id", "permanent": false }],
   "headers": [
     {
       "source": "/(.*)",

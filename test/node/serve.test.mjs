@@ -1,9 +1,10 @@
 // Node-side tests for the COOP/COEP static server (test/browser/serve.mjs).
 // The browser suites only ever drive the happy path (root + a handful of
 // assets), so these cover startServer's full surface: the cross-origin
-// isolation headers, every MIME branch, the percent-escape 400, the
-// traversal break, the octet-stream fallback, the 404, an explicit (non
-// -default) port, and close() including the already-closed reject path.
+// isolation headers, short-link redirects, every MIME branch, the percent-
+// escape 400, the traversal break, the octet-stream fallback, the 404, an
+// explicit (non-default) port, and close() including the already-closed reject
+// path.
 //
 // Everything runs in-process against startServer().url over fetch; no browser.
 import { test, before, after } from 'node:test';
@@ -34,6 +35,29 @@ test('serves / as index.html with the isolation headers and html mime', async ()
   assert.equal(res.headers.get('cross-origin-embedder-policy'), 'require-corp');
   assert.match(res.headers.get('content-type'), /text\/html/);
   assert.ok((await res.text()).length > 0, 'index.html should not be empty');
+});
+
+test('redirects /x/<id> to the root app URL with the id as ?x', async () => {
+  const res = await fetch(new URL('/x/demo', server.url), { redirect: 'manual' });
+  assert.equal(res.status, 307);
+  assert.equal(res.headers.get('location'), '/?x=demo');
+  await res.arrayBuffer();
+});
+
+test('direct /x/<id> navigation lands where relative assets resolve from /', async () => {
+  const res = await get('/x/demo');
+  assert.equal(res.status, 200);
+  assert.equal(new URL(res.url).pathname, '/');
+  assert.equal(new URL(res.url).search, '?x=demo');
+  assert.match(res.headers.get('content-type'), /text\/html/);
+  await res.arrayBuffer();
+
+  const cssUrl = new URL('./styles.css', res.url);
+  assert.equal(cssUrl.pathname, '/styles.css');
+  const css = await fetch(cssUrl);
+  assert.equal(css.status, 200);
+  assert.match(css.headers.get('content-type'), /^text\/css/);
+  await css.arrayBuffer();
 });
 
 test('maps each known extension to its content-type', async () => {

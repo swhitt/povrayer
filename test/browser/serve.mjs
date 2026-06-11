@@ -31,13 +31,24 @@ async function handle(req, res) {
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
 
+  let url;
   let pathname;
   try {
-    pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+    url = new URL(req.url, 'http://localhost');
+    pathname = decodeURIComponent(url.pathname);
   } catch {
     res.writeHead(400, { 'Content-Type': 'text/plain' }).end('bad request');
     return;
   }
+
+  const shortLink = /^\/x\/([^/]+)$/.exec(pathname);
+  if (shortLink) {
+    url.pathname = '/';
+    url.searchParams.set('x', shortLink[1]);
+    res.writeHead(307, { Location: `${url.pathname}${url.search}` }).end();
+    return;
+  }
+
   if (pathname.endsWith('/')) pathname += 'index.html';
 
   for (const root of ROOTS) {
