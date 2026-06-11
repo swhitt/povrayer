@@ -42,7 +42,7 @@ export const DIFFICULTIES = [
 ];
 
 export const RENDER_TIERS = [
-  { key: 'instant', label: 'Instant', quality: '3' },
+  { key: 'instant', label: 'Instant', quality: '7' },
   { key: 'fast', label: 'Fast', quality: '7' },
   { key: 'heavy', label: 'Heavy', quality: '8' },
 ];

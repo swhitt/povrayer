@@ -1131,7 +1131,7 @@ try {
       mode: 'still',
       frames: '24',
       fps: '24',
-      quality: '3',
+      quality: '7',
       focused: 'example-trigger',
       label: 'Orbit (two moons, clock-driven)',
       draftPending: false,

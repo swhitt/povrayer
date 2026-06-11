@@ -202,6 +202,10 @@ test('metadata taxonomies are unique and fully represented', () => {
     );
     assert.equal(typeof t.quality, 'string', `render tier quality must be a string (${t.key})`);
     assert.ok(t.quality.length > 0, `render tier quality must be non-empty (${t.key})`);
+    assert.ok(
+      Number(t.quality) >= 7,
+      `automatic render tier '${t.key}' must default to q7 or higher`
+    );
   }
 });
 
