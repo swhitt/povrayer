@@ -2519,6 +2519,12 @@ function draftMaxEdge() {
   return Number(draftSelect.value);
 }
 
+// Drafts also cap quality: q6+ ray features (reflection, refraction, radiosity)
+// dominate render time, which is wrong for an as-you-type preview. The full
+// Render keeps the selected quality. Auto quality (undefined) would otherwise
+// run at POV-Ray's default q9, so the cap applies there too.
+const DRAFT_MAX_QUALITY = 5;
+
 // Fast + clearly lower-res than the full Render: antialias always off and the
 // longest edge capped to draftMaxEdge(), aspect ratio preserved so the draft
 // composition matches the eventual full render. Reads (never writes) the inputs
@@ -2529,7 +2535,7 @@ function draftOptions() {
   return {
     width: Math.max(8, Math.round(width * s)),
     height: Math.max(8, Math.round(height * s)),
-    quality,
+    quality: Math.min(quality ?? Infinity, DRAFT_MAX_QUALITY),
     threads,
     antialias: false,
     files: assetDrop.assetFiles(), // staged dropped assets (undefined when none)
@@ -2543,7 +2549,10 @@ function draftStatus(dims) {
 const liveDraftController = createLiveDraftController({
   enabled: () => mode === 'still' && liveDraft && crossOriginIsolated,
   readSource: () => editor.value,
-  sourceReady: (source) => validateScene(source).ready,
+  // The auto-draft gate must live here, not just in scheduleDraft: the
+  // controller re-schedules itself after an aborted draft settles, and that
+  // internal path would otherwise auto-preview heavy/animated examples.
+  sourceReady: (source) => canAutoDraftCurrentScene() && validateScene(source).ready,
   explicitInFlight: () => abortCtl !== null,
   renderBusy: isBusy,
   draftOptions,

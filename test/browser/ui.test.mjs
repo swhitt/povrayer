@@ -1277,8 +1277,6 @@ try {
   // High-fidelity examples rely on ray features stripped by the old +Q5 tier:
   // glass loses refraction, and radiosity scenes lose their color bounce. When
   // quality is still automatic, selecting one should preselect the heavy tier.
-  // These drafts render at the preselected q7/q8 tiers, so settling can take
-  // tens of seconds on CI hardware; 60s matches the heavy-render waits above.
   await selAdvanced('#quality', '');
   await switchExample('glass');
   await page.waitForFunction(
@@ -1287,7 +1285,7 @@ try {
       return !d.pending && !d.inFlight;
     },
     null,
-    { timeout: 60_000 }
+    { timeout: 5_000 }
   );
   assert.equal(
     await page.evaluate(() => document.getElementById('quality').value),
@@ -1302,7 +1300,7 @@ try {
       return !d.pending && !d.inFlight;
     },
     null,
-    { timeout: 60_000 }
+    { timeout: 5_000 }
   );
   assert.equal(
     await page.evaluate(() => document.getElementById('quality').value),
@@ -1311,6 +1309,8 @@ try {
   );
   await selAdvanced('#quality', '');
   await switchExample('csg-die');
+  // Unlike the heavy examples above (which never auto-draft), this wait blocks
+  // on a real draft render completing, so it gets the long render timeout.
   await page.waitForFunction(
     () => {
       const d = window.__liveDraftProbe();
