@@ -1247,6 +1247,55 @@ try {
     'loading a still example must not touch frames/fps or an explicit quality'
   );
 
+  // High-fidelity examples rely on ray features stripped by the old +Q5 tier:
+  // glass loses refraction, and radiosity scenes lose their color bounce. When
+  // quality is still automatic, selecting one should preselect the heavy tier.
+  await selAdvanced('#quality', '');
+  await switchExample('glass');
+  await page.waitForFunction(
+    () => {
+      const d = window.__liveDraftProbe();
+      return !d.pending && !d.inFlight;
+    },
+    null,
+    { timeout: 5_000 }
+  );
+  assert.equal(
+    await page.evaluate(() => document.getElementById('quality').value),
+    '8',
+    'loading the glass example from auto quality selects the heavy tier'
+  );
+  await selAdvanced('#quality', '');
+  await switchExample('cornell-mood');
+  await page.waitForFunction(
+    () => {
+      const d = window.__liveDraftProbe();
+      return !d.pending && !d.inFlight;
+    },
+    null,
+    { timeout: 5_000 }
+  );
+  assert.equal(
+    await page.evaluate(() => document.getElementById('quality').value),
+    '8',
+    'loading the cornell radiosity example from auto quality selects the heavy tier'
+  );
+  await selAdvanced('#quality', '');
+  await switchExample('csg-die');
+  await page.waitForFunction(
+    () => {
+      const d = window.__liveDraftProbe();
+      return !d.pending && !d.inFlight;
+    },
+    null,
+    { timeout: 5_000 }
+  );
+  assert.equal(
+    await page.evaluate(() => document.getElementById('quality').value),
+    '7',
+    'loading a fast-tier example from auto quality selects q7'
+  );
+
   // A second trigger click closes an open panel (the toggle's close arm).
   await openBrowser();
   await page.click('#example-trigger');

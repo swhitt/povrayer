@@ -43,7 +43,7 @@ export const DIFFICULTIES = [
 
 export const RENDER_TIERS = [
   { key: 'instant', label: 'Instant', quality: '3' },
-  { key: 'fast', label: 'Fast', quality: '5' },
+  { key: 'fast', label: 'Fast', quality: '7' },
   { key: 'heavy', label: 'Heavy', quality: '8' },
 ];
 
@@ -90,10 +90,10 @@ const EXAMPLE_META = {
   'sunset-sea': { difficulty: 'intro', renderTier: 'fast' },
   isosurface: { difficulty: 'advanced', renderTier: 'heavy' },
   blobs: { difficulty: 'intro', renderTier: 'instant' },
-  glass: { difficulty: 'intermediate', renderTier: 'fast' },
+  glass: { difficulty: 'intermediate', renderTier: 'heavy' },
   materials: { difficulty: 'intro', renderTier: 'instant' },
   helix: { difficulty: 'intermediate', renderTier: 'instant' },
-  'cornell-mood': { difficulty: 'intermediate', renderTier: 'fast' },
+  'cornell-mood': { difficulty: 'intermediate', renderTier: 'heavy' },
   'focal-marbles': { difficulty: 'advanced', renderTier: 'fast' },
   'orbit-moons': { difficulty: 'intermediate', renderTier: 'instant' },
   'pulse-grid': { difficulty: 'intermediate', renderTier: 'instant' },
