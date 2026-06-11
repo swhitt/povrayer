@@ -68,13 +68,14 @@ function emitEvents(line, onEvent) {
  * Wraps render(). Throws synchronously if a render is already in flight
  * (callers gate on isBusy(), this is the backstop).
  *
- * opts: { width, height, quality, antialias, threads, files, args,
+ * opts: { width, height, quality, antialias, threads, files, args, keepBytes,
  * onProgress, onEvent, signal }. Everything except onEvent passes straight
  * through to the wrapper. onProgress keeps the old contract (every raw
  * output line); onEvent receives the normalized progress/line events
- * described at emitEvents.
+ * described at emitEvents. keepBytes defaults true for direct callers; app
+ * surfaces set it false when they only need the blob URL.
  *
- * Resolves { bytes: Uint8Array, blobUrl: string, elapsedMs: number, log }.
+ * Resolves { bytes?: Uint8Array, blobUrl: string, elapsedMs: number, log }.
  * `log` is the raw, unfiltered output text: the config-noise filter only
  * applies to events, and the REPL's `:log full` needs the real thing. The
  * caller owns blobUrl and must revoke it when replacing the image.
@@ -82,7 +83,7 @@ function emitEvents(line, onEvent) {
 export async function renderScene(source, opts = {}) {
   if (busy) throw new Error('render already in progress');
   busy = true;
-  const { onEvent, onProgress, ...rest } = opts;
+  const { onEvent, onProgress, keepBytes = true, ...rest } = opts;
   const rawLines = [];
   try {
     const start = performance.now();
@@ -96,7 +97,12 @@ export async function renderScene(source, opts = {}) {
     });
     const elapsedMs = performance.now() - start;
     const blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }));
-    return { bytes, blobUrl, elapsedMs, log: rawLines.join('\n') };
+    return {
+      ...(keepBytes ? { bytes } : {}),
+      blobUrl,
+      elapsedMs,
+      log: rawLines.join('\n'),
+    };
   } finally {
     busy = false;
   }
@@ -108,16 +114,18 @@ export async function renderScene(source, opts = {}) {
  * (still and animated renders never overlap), and stays DOM-free: it produces
  * playback assets but mounts nothing.
  *
- * opts: { width, height, quality, antialias, threads, files, args, signal,
+ * opts: { width, height, quality, antialias, threads, files, args, signal, keepFrames,
  * frames, initialClock, finalClock, onProgress, onEvent, onFrame }. The render
  * options pass straight through to the wrapper. onProgress keeps the raw-line
  * contract; onEvent receives the same normalized progress/line events as
  * renderScene PLUS a frame channel: { kind: 'frame', index, total } fired once
  * per completed frame. onFrame(index, total) is forwarded too. Per-frame
  * percent resets each frame, so a consumer driving an overall bar computes
- * overall = (completedFrames + framePercent / 100) / total.
+ * overall = (completedFrames + framePercent / 100) / total. keepFrames defaults
+ * true for direct callers; app surfaces set it false because blobUrls/bitmaps
+ * are enough for playback and export.
  *
- * Resolves { frames: Uint8Array[], blobUrls: string[], bitmaps: ImageBitmap[],
+ * Resolves { frames?: Uint8Array[], blobUrls: string[], bitmaps: ImageBitmap[],
  * elapsedMs, log }. `frames` is the raw PNG bytes; `blobUrls`/`bitmaps` are
  * ready-to-play assets, one per frame, in frame order. `log` is the raw,
  * unfiltered output. THE CALLER OWNS the playback assets: revoke every blobUrl
@@ -126,11 +134,20 @@ export async function renderScene(source, opts = {}) {
 export async function renderAnimation(source, opts = {}) {
   if (busy) throw new Error('render already in progress');
   busy = true;
-  const { onEvent, onProgress, onFrame, frames, initialClock, finalClock, ...rest } = opts;
+  const {
+    onEvent,
+    onProgress,
+    onFrame,
+    frames,
+    initialClock,
+    finalClock,
+    keepFrames = true,
+    ...rest
+  } = opts;
   const rawLines = [];
   try {
     const start = performance.now();
-    const pngs = await wrapperRenderAnimation(source, {
+    let pngs = await wrapperRenderAnimation(source, {
       ...rest,
       frames,
       initialClock,
@@ -147,6 +164,8 @@ export async function renderAnimation(source, opts = {}) {
     });
     const elapsedMs = performance.now() - start;
     const blobs = pngs.map((bytes) => new Blob([bytes], { type: 'image/png' }));
+    const frameBytes = keepFrames ? pngs : undefined;
+    if (!keepFrames) pngs = [];
     const blobUrls = blobs.map((blob) => URL.createObjectURL(blob));
     const bitmapResults = await Promise.allSettled(
       blobs.map((blob) => Promise.resolve().then(() => createImageBitmap(blob)))
@@ -163,7 +182,13 @@ export async function renderAnimation(source, opts = {}) {
       if (result.status !== 'fulfilled') throw new Error('unreachable bitmap result');
       return result.value;
     });
-    return { frames: pngs, blobUrls, bitmaps, elapsedMs, log: rawLines.join('\n') };
+    return {
+      ...(frameBytes ? { frames: frameBytes } : {}),
+      blobUrls,
+      bitmaps,
+      elapsedMs,
+      log: rawLines.join('\n'),
+    };
   } finally {
     busy = false;
   }

@@ -452,12 +452,23 @@ try {
       busyThrew = /already in progress/.test(e.message);
     }
     const res = await p;
+    const lean = await mod.renderScene(scene, {
+      width: 16,
+      height: 12,
+      antialias: false,
+      keepBytes: false,
+    });
+    const leanHasBytes = Object.hasOwn(lean, 'bytes');
+    URL.revokeObjectURL(lean.blobUrl);
+    const blob = res.blobUrl.startsWith('blob:');
+    URL.revokeObjectURL(res.blobUrl);
     return {
       busyThrew,
       progress,
       busyAfter: mod.isBusy(),
       bytes: res.bytes.length,
-      blob: res.blobUrl.startsWith('blob:'),
+      blob,
+      leanHasBytes,
       logLen: res.log.length,
     };
   });
@@ -465,6 +476,7 @@ try {
   assert.ok(direct.progress > 0, 'onProgress must fire for a real render');
   assert.equal(direct.busyAfter, false, 'isBusy must clear after the render resolves');
   assert.ok(direct.bytes > 0 && direct.blob, 'direct render should resolve bytes + a blob url');
+  assert.equal(direct.leanHasBytes, false, 'keepBytes:false should omit raw PNG bytes');
   assert.ok(direct.logLen > 0, 'direct render should carry a raw log');
 
   // --- render-client.js renderAnimation direct -------------------------------
@@ -497,12 +509,22 @@ try {
         progress++;
       },
     });
+    const lean = await mod.renderAnimation(scene, {
+      width: 16,
+      height: 12,
+      antialias: false,
+      frames: 2,
+      keepFrames: false,
+    });
     const out = {
       count: res.frames.length,
       isPng: res.frames.every((b) => b[0] === 0x89 && b[1] === 0x50),
       blobUrls: res.blobUrls.every((u) => u.startsWith('blob:')),
       bitmapW: res.bitmaps[0].width,
       bitmapsAreImageBitmap: res.bitmaps.every((b) => b instanceof ImageBitmap),
+      leanHasFrames: Object.hasOwn(lean, 'frames'),
+      leanBlobUrls: lean.blobUrls.every((u) => u.startsWith('blob:')),
+      leanBitmapW: lean.bitmaps[0].width,
       elapsed: typeof res.elapsedMs === 'number' && res.elapsedMs > 0,
       logLen: res.log.length,
       frameEvents: events.filter((k) => k === 'frame').length,
@@ -512,12 +534,17 @@ try {
     };
     res.blobUrls.forEach((u) => URL.revokeObjectURL(u));
     res.bitmaps.forEach((b) => b.close());
+    lean.blobUrls.forEach((u) => URL.revokeObjectURL(u));
+    lean.bitmaps.forEach((b) => b.close());
     return out;
   });
   assert.equal(anim.count, 3, 'renderAnimation should return one PNG per frame');
   assert.ok(anim.isPng, 'each animation frame should be a PNG');
   assert.ok(anim.blobUrls, 'renderAnimation should hand back blob: playback URLs');
   assert.equal(anim.bitmapW, 32, 'bitmaps should match the render width');
+  assert.equal(anim.leanHasFrames, false, 'keepFrames:false should omit raw PNG frame arrays');
+  assert.ok(anim.leanBlobUrls, 'keepFrames:false should still hand back playback URLs');
+  assert.equal(anim.leanBitmapW, 16, 'keepFrames:false should still hand back decoded bitmaps');
   assert.ok(anim.bitmapsAreImageBitmap, 'bitmaps should be ImageBitmaps');
   assert.ok(anim.elapsed, 'renderAnimation should report elapsedMs');
   assert.ok(anim.logLen > 0, 'renderAnimation should carry a raw log');
@@ -1250,6 +1277,8 @@ try {
   // High-fidelity examples rely on ray features stripped by the old +Q5 tier:
   // glass loses refraction, and radiosity scenes lose their color bounce. When
   // quality is still automatic, selecting one should preselect the heavy tier.
+  // These drafts render at the preselected q7/q8 tiers, so settling can take
+  // tens of seconds on CI hardware; 60s matches the heavy-render waits above.
   await selAdvanced('#quality', '');
   await switchExample('glass');
   await page.waitForFunction(
@@ -1258,7 +1287,7 @@ try {
       return !d.pending && !d.inFlight;
     },
     null,
-    { timeout: 5_000 }
+    { timeout: 60_000 }
   );
   assert.equal(
     await page.evaluate(() => document.getElementById('quality').value),
@@ -1273,7 +1302,7 @@ try {
       return !d.pending && !d.inFlight;
     },
     null,
-    { timeout: 5_000 }
+    { timeout: 60_000 }
   );
   assert.equal(
     await page.evaluate(() => document.getElementById('quality').value),
@@ -1288,7 +1317,7 @@ try {
       return !d.pending && !d.inFlight;
     },
     null,
-    { timeout: 5_000 }
+    { timeout: 60_000 }
   );
   assert.equal(
     await page.evaluate(() => document.getElementById('quality').value),

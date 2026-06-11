@@ -11,7 +11,7 @@ import {
  * @typedef {object} AnimationResult
  * @property {ImageBitmap[]} bitmaps
  * @property {string[]} blobUrls
- * @property {Uint8Array[]} frames
+ * @property {Uint8Array[]} [frames]
  */
 
 /**
@@ -54,10 +54,6 @@ export function createPlayer(elements) {
   /** @type {ImageBitmap[]} */
   let bitmaps = [];
   let urls = [];
-  // The raw per-frame PNG bytes, kept for the lossless APNG export (which repacks
-  // their already-compressed pixel data; no canvas round-trip, alpha preserved).
-  /** @type {Uint8Array[]} */
-  let pngFrames = [];
   // A detached canvas reused to read RGBA back out of the bitmaps for the GIF
   // encoder (the visible playerCanvas stays untouched mid-playback).
   /** @type {HTMLCanvasElement | null} */
@@ -162,7 +158,6 @@ export function createPlayer(elements) {
     for (const b of bitmaps) b.close();
     urls = [];
     bitmaps = [];
-    pngFrames = [];
   }
 
   /** @param {AnimationResult} result @param {number} playbackFps */
@@ -170,7 +165,6 @@ export function createPlayer(elements) {
     destroy();
     bitmaps = result.bitmaps;
     urls = result.blobUrls;
-    pngFrames = result.frames;
     idx = 0;
     setFps(playbackFps);
     playerCanvas.width = bitmaps[0].width;
@@ -267,9 +261,14 @@ export function createPlayer(elements) {
 
   // Lossless animated PNG: repacks the source PNGs' compressed pixel data, so it
   // keeps full color + alpha. Carries a .png extension (APNG is a PNG superset).
+  // Frame bytes are loaded from blob URLs only when exporting, so playback does
+  // not retain raw PNG arrays in addition to decoded ImageBitmaps.
   async function exportApng() {
     await new Promise((r) => requestAnimationFrame(r));
-    const bytes = encodeApng(pngFrames, {
+    const frames = await Promise.all(
+      urls.map(async (url) => new Uint8Array(await (await fetch(url)).arrayBuffer()))
+    );
+    const bytes = encodeApng(frames, {
       delayNum: Math.max(1, Math.round(1000 / fps)),
       delayDen: 1000,
       numPlays: loop ? 0 : 1,

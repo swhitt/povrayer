@@ -2547,7 +2547,8 @@ const liveDraftController = createLiveDraftController({
   explicitInFlight: () => abortCtl !== null,
   renderBusy: isBusy,
   draftOptions,
-  renderDraft: (source, options, signal) => renderScene(source, { ...options, signal }),
+  renderDraft: (source, options, signal) =>
+    renderScene(source, { ...options, signal, keepBytes: false }),
   onStart: (_source, opts) => {
     const dims = `${opts.width}×${opts.height}`;
     setStatus(draftStatus(dims), 'draft');
@@ -2655,6 +2656,7 @@ async function startRender() {
     } = await renderScene(renderedSource, {
       ...opts,
       signal: ctl.signal,
+      keepBytes: false,
       onEvent: (ev) => {
         if (ctl.signal.aborted) return; // never overwrite 'cancelled'
         engineSeen = true;
@@ -2794,6 +2796,7 @@ async function runAnimateRender() {
       initialClock: 0,
       finalClock: 1,
       signal: ctl.signal,
+      keepFrames: false,
       onEvent: (ev) => {
         if (ctl.signal.aborted) return; // never overwrite 'cancelled'
         engineSeen = true;

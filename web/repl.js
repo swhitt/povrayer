@@ -532,6 +532,7 @@ async function runRender({ rollback, echoNode, entrySource } = {}) {
       height: h,
       antialias: settings.antialias,
       signal: abortCtl.signal,
+      keepBytes: false,
       onEvent: handleRenderEvent,
     };
     if (settings.quality !== undefined) opts.quality = settings.quality;
@@ -614,6 +615,7 @@ async function runAnimRender(frames) {
       initialClock: 0,
       finalClock: 1,
       signal: abortCtl.signal,
+      keepFrames: false,
       onEvent: (ev) => {
         if (ev.kind === 'frame') pendingCap.textContent = `rendering frame ${ev.index}/${ev.total}`;
         else handleRenderEvent(ev);
