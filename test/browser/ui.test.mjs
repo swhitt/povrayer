@@ -1137,6 +1137,28 @@ try {
     },
     'an animated example prepares animation settings without selecting animate or drafting'
   );
+  await page.evaluate(() => {
+    const ed = document.getElementById('editor');
+    ed.value += '\n// animated examples stay explicit\n';
+    ed.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.waitForFunction(
+    () => {
+      const d = window.__liveDraftProbe();
+      return !d.pending && !d.inFlight;
+    },
+    null,
+    { timeout: 5_000 }
+  );
+  assert.equal(
+    await page.evaluate(async () => (await import('/render-client.js')).isBusy()),
+    false,
+    'editing an animated example must cancel auto-preview instead of drafting'
+  );
+  await page.evaluate(async () => {
+    const { getExample } = await import('/examples.js');
+    document.getElementById('editor').value = getExample('orbit-moons');
+  });
 
   // Loading a STILL example must leave dialed-in frames/fps untouched (the
   // applyExampleClock early-return), and a manually-set quality must not be
