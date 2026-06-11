@@ -106,9 +106,13 @@
         </div>
         <div id="scene-toolbar" aria-label="scene source actions">
           <span id="scene-dirty" class="scene-dirty" aria-live="polite">current</span>
-          <button id="reset-scene-btn" type="button" disabled>Reset</button>
-          <button id="copy-scene-btn" type="button">Copy Scene</button>
-          <button id="download-scene-btn" type="button">Download .pov</button>
+          <button id="reset-scene-btn" type="button" title="Reset to the loaded example" disabled>
+            Reset
+          </button>
+          <button id="copy-scene-btn" type="button" title="Copy scene source">Copy</button>
+          <button id="download-scene-btn" type="button" title="Download scene source as .pov">
+            Download
+          </button>
         </div>
         <div id="editor-wrap">
           <pre id="gutter" aria-hidden="true"></pre>

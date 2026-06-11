@@ -1671,8 +1671,14 @@ function renderHistory() {
     const delta = lineDelta(entry.source, editor.value);
     const badge = document.createElement('span');
     badge.className = 'history-delta';
-    badge.textContent = delta === null ? 'current' : `+${delta.added} −${delta.removed}`;
-    row.append(time, preview, badge);
+    const deltaText = delta === null ? 'current' : `+${delta.added} −${delta.removed}`;
+    badge.textContent = deltaText;
+    const meta = document.createElement('span');
+    meta.className = 'history-meta';
+    meta.append(time, badge);
+    row.title = `${preview.textContent} · ${time.textContent} · ${deltaText}`;
+    row.setAttribute('aria-label', `Load history version: ${row.title}`);
+    row.append(preview, meta);
     row.addEventListener('click', () => {
       replaceScene(entry.source);
       historyDetails.open = false; // collapse once a version is loaded
@@ -3276,7 +3282,7 @@ function flashCopySceneLabel(label) {
   clearTimeout(copySceneLabelTimer);
   copySceneBtn.textContent = label;
   copySceneLabelTimer = setTimeout(() => {
-    copySceneBtn.textContent = 'Copy Scene';
+    copySceneBtn.textContent = 'Copy';
   }, 1200);
 }
 

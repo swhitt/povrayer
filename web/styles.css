@@ -553,14 +553,17 @@ body.ui main > * {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   margin-bottom: 8px;
+  padding: 4px 0;
+  border-block: 1px solid var(--border);
 }
 
 .scene-dirty {
   color: var(--dim);
   font-size: var(--fs-chrome);
-  min-width: 5.5em;
+  min-width: 5em;
+  margin-right: auto;
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -569,8 +572,12 @@ body.ui main > * {
   color: var(--text);
 }
 
-#copy-scene-btn {
-  min-width: 8.5em;
+#scene-toolbar button {
+  height: 24px;
+  padding: 0 8px;
+  font-size: var(--fs-chrome);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 /* Opaque popover panel: strong hairline, square, no shadow. z-index clears the
@@ -1225,8 +1232,10 @@ body.ui main > * {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px 20px;
+  gap: 8px 12px;
   margin-top: 8px;
+  padding: 8px 0;
+  border-block: 1px solid var(--border);
 }
 
 #controls label {
@@ -1293,18 +1302,27 @@ body.ui main > * {
   background: var(--border);
 }
 
-/* Render + Cancel wrap as a unit and trail the last control as a tight
-   end-cap. (No margin-left:auto: on a toolbar that always wraps it stranded
-   the hero CTA at the far edge of a near-empty row.) */
+/* Render + Cancel + Copy Link wrap as a tight action unit. Wider viewports push
+   the unit to the row end; phones make Render the stable thumb-width action. */
 .actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
+}
+
+@media (min-width: 700px) {
+  .actions {
+    margin-left: auto;
+  }
+
+  #render-btn {
+    min-width: 8em;
+  }
 }
 
 /* Hold the Copy Link button's width across the transient "Copied" label flip so
    the action row doesn't reflow narrower for ~1.2s. Pure width hold, no color. */
 #copy-link-btn {
-  min-width: 8.5em;
+  min-width: 8em;
 }
 
 /* Advanced disclosure: the render-tuning controls (quality / antialias / threads)
@@ -1329,29 +1347,38 @@ body.ui main > * {
    The list is compact full-width rows, each a borderless button that loads that
    rendered version back into the editor. */
 #history {
-  margin-top: 12px;
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
 }
 
 #history-list {
   display: flex;
   flex-direction: column;
-  margin-top: 8px;
+  max-height: min(28vh, 240px);
+  margin-top: 6px;
+  overflow: auto;
+  border-block: 1px solid var(--border);
+  scrollbar-gutter: stable;
 }
 
-/* height:auto (not min-height:0) so desktop rows stay compact while the coarse-
-   pointer 44px floor still applies on touch. The hover is a faint row tint, NOT
-   the secondary button's hard invert. */
+/* Desktop rows are dense on purpose: history can hold many rendered versions,
+   so the preview leads and the numeric metadata stays pinned to the right. */
 .history-entry {
+  flex: none;
   height: auto;
+  min-height: 24px;
   border: 0;
-  padding: 5px 8px;
+  padding: 4px 6px;
   background: none;
   color: var(--text);
   font-size: var(--fs-out);
+  line-height: 1.25;
   text-align: left;
   cursor: pointer;
-  display: flex;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
   align-items: baseline;
   overflow: hidden;
 }
@@ -1361,14 +1388,24 @@ body.ui main > * {
   color: var(--text);
 }
 
-.history-time {
+.history-meta {
+  display: inline-flex;
   flex: none;
-  min-width: 7ch;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 13ch;
+}
+
+.history-time {
+  min-width: 6ch;
   color: var(--dim);
   font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .history-preview {
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -1378,10 +1415,9 @@ body.ui main > * {
    pinned to the row's right edge in the same dim numeric treatment as the
    timestamp. ui.js recomputes it when the panel (re)opens, not per keystroke. */
 .history-delta {
-  flex: none;
-  margin-left: auto;
   color: var(--dim);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* The flags field stretches to the editor width: long +flag strings need room,
@@ -2165,10 +2201,31 @@ body.source-open #repl-source {
   /* The primary CTA becomes a full-width thumb bar on its own stable row. */
   .actions {
     width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
   }
 
   #render-btn {
     flex: 1;
+  }
+
+  #copy-link-btn {
+    min-width: 0;
+  }
+
+  #history-list {
+    max-height: 24vh;
+  }
+
+  .history-entry {
+    min-height: 26px;
+    padding-inline: 4px;
+    gap: 6px;
+  }
+
+  .history-meta {
+    gap: 6px;
+    min-width: 11ch;
   }
 
   /* On a phone the 92vw cap leaves only a ~29px peek, which reads as cramped
@@ -2283,6 +2340,13 @@ body.source-open #repl-source {
      block-level, so this one genuinely grows the row. */
   summary {
     padding-block: 13px;
+  }
+
+  /* History is a scrollable list, not a sparse command cluster. Keep rows easier
+     to tap than desktop without letting a full history dominate the phone page. */
+  .history-entry {
+    min-height: 34px;
+    padding-block: 6px;
   }
 }
 
