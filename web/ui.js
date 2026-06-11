@@ -40,7 +40,10 @@ import { triggerDownload } from './anim-export.js';
 import { createPlayer } from './player.js';
 import { ensureCrossOriginIsolation } from './coi.js';
 import { createLiveDraftController } from './live-draft.js';
-import { matchesExampleFilters as recordMatchesFilters } from './example-filters.js';
+import {
+  exampleSearchText,
+  matchesExampleFilters as recordMatchesFilters,
+} from './example-filters.js';
 import { createRenderFeedback } from './render-feedback.js';
 
 const isoWarning = document.getElementById('iso-warning');
@@ -193,6 +196,7 @@ const SPLIT_MAX_FR = SPLIT_MAX_FRACTION / (1 - SPLIT_MAX_FRACTION); // 4
 const optionEls = [];
 const exampleGroups = [];
 const galleryCards = [];
+let galleryBuilt = false;
 // The roving aria-activedescendant item: a category HEAD or an OPTION, or null.
 let activeItem = null;
 
@@ -269,23 +273,11 @@ function buildExampleBrowser() {
       opt.append(thumb, text);
 
       groupEl.appendChild(opt);
-      // Filter target: everything a user might type, joined + lowercased. Tags
-      // and the category label fuel the search without ever showing per-row.
-      const haystack = [
-        ex.name,
-        ex.title,
-        ex.description,
-        ex.author,
-        ex.license,
-        ex.difficulty,
-        labelByKey(DIFFICULTIES, ex.difficulty),
-        ex.renderTier,
-        labelByKey(RENDER_TIERS, ex.renderTier),
-        ...ex.tags,
-        group.label,
-      ]
-        .join(' ')
-        .toLowerCase();
+      const haystack = exampleSearchText(ex, {
+        categoryLabel: group.label,
+        difficultyLabel: labelByKey(DIFFICULTIES, ex.difficulty),
+        tierLabel: labelByKey(RENDER_TIERS, ex.renderTier),
+      });
       opts.push({ el: opt, ex, haystack });
       optionEls.push(opt);
     }
@@ -296,6 +288,8 @@ function buildExampleBrowser() {
 buildExampleBrowser();
 
 function buildGallery() {
+  if (galleryBuilt) return;
+  galleryBuilt = true;
   for (const ex of EXAMPLES) {
     const card = document.createElement('button');
     card.type = 'button';
@@ -329,25 +323,15 @@ function buildGallery() {
     card.append(img, body);
     galleryGrid.appendChild(card);
 
-    const haystack = [
-      ex.name,
-      ex.title,
-      ex.description,
-      ex.author,
-      ex.license,
-      ex.difficulty,
-      labelByKey(DIFFICULTIES, ex.difficulty),
-      ex.renderTier,
-      labelByKey(RENDER_TIERS, ex.renderTier),
-      categoryLabelByKey(ex.category),
-      ...ex.tags,
-    ]
-      .join(' ')
-      .toLowerCase();
+    const haystack = exampleSearchText(ex, {
+      categoryLabel: categoryLabelByKey(ex.category),
+      difficultyLabel: labelByKey(DIFFICULTIES, ex.difficulty),
+      tierLabel: labelByKey(RENDER_TIERS, ex.renderTier),
+    });
     galleryCards.push({ el: card, ex, haystack });
   }
+  syncLoadedGalleryCard(selectedExample);
 }
-buildGallery();
 
 // EXAMPLES is a static, non-empty module literal, so EXAMPLES[0] is defined.
 const DEFAULT_EXAMPLE = EXAMPLES[0].name;
@@ -375,6 +359,13 @@ function updateAttribution(ex) {
   exampleAttrSrc.setAttribute('aria-label', `source for ${ex.title}`);
 }
 
+function syncLoadedGalleryCard(name) {
+  for (const { el } of galleryCards) {
+    if (el.dataset.name === name) el.dataset.loaded = 'true';
+    else delete el.dataset.loaded;
+  }
+}
+
 // Reflect the loaded scene in the trigger label + data-name, and re-mark the
 // loaded option (bold + a quiet `loaded` byline, never aria-selected).
 function setTriggerLabel(name) {
@@ -393,10 +384,7 @@ function setTriggerLabel(name) {
     if (loaded) opt.dataset.loaded = 'true';
     else delete opt.dataset.loaded;
   }
-  for (const { el } of galleryCards) {
-    if (el.dataset.name === name) el.dataset.loaded = 'true';
-    else delete el.dataset.loaded;
-  }
+  syncLoadedGalleryCard(name);
 }
 
 // Animated examples ship a suggested frame count + fps; prefill the animate
@@ -813,9 +801,10 @@ function renderGallery() {
 
 function openGallery() {
   closeBrowser(false);
+  buildGallery();
   renderGallery();
   galleryPanel.hidden = false;
-  galleryPanel.focus();
+  gallerySearch.focus();
 }
 
 function closeGallery() {

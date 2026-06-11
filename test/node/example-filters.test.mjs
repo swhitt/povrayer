@@ -1,7 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { licenseBucket, matchesExampleFilters } from '../../web/example-filters.js';
+import {
+  exampleSearchText,
+  licenseBucket,
+  matchesExampleFilters,
+} from '../../web/example-filters.js';
 
 const still = {
   animated: false,
@@ -59,4 +63,38 @@ test('matchesExampleFilters intersects difficulty, render tier, and license', ()
   assert.equal(matchesExampleFilters(still, { tier: 'heavy' }), false);
   assert.equal(matchesExampleFilters(still, { license: 'gpl' }), false);
   assert.equal(matchesExampleFilters(animated, { license: 'gpl' }), true);
+});
+
+test('exampleSearchText includes all visible and useful hidden metadata', () => {
+  const text = exampleSearchText(
+    {
+      name: 'sourced-test-scene',
+      title: 'Crystal Tower',
+      description: 'Layered glass and fog',
+      author: 'Ada Renderer',
+      license: 'CC-BY-SA-4.0',
+      difficulty: 'advanced',
+      renderTier: 'heavy',
+      tags: ['caustics', 'architecture'],
+    },
+    {
+      categoryLabel: 'Lighting & Atmosphere',
+      difficultyLabel: 'Advanced',
+      tierLabel: 'Heavy',
+    }
+  );
+  for (const needle of [
+    'sourced-test-scene',
+    'crystal tower',
+    'layered glass',
+    'ada renderer',
+    'cc-by-sa-4.0',
+    'advanced',
+    'heavy',
+    'lighting & atmosphere',
+    'caustics',
+    'architecture',
+  ]) {
+    assert.ok(text.includes(needle), needle);
+  }
 });

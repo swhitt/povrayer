@@ -1327,6 +1327,11 @@ try {
   // independently of the compact picker, reuses the same filter semantics, and
   // selects through the same example-loading path.
   await openBrowser();
+  assert.equal(
+    await page.evaluate(() => document.querySelectorAll('.gallery-card').length),
+    0,
+    'gallery cards are built lazily on first open'
+  );
   await page.click('#gallery-btn');
   await page.waitForFunction(
     () =>
@@ -1353,12 +1358,30 @@ try {
     {
       count: galleryOpen.expected,
       loaded: 'csg-die',
-      focused: 'gallery',
+      focused: 'gallery-search',
       img: 'example-thumbnails/csg-die.png',
       imgW: '160',
       expected: galleryOpen.expected,
     },
-    'gallery opens as a focused thumbnail grid and marks the loaded example'
+    'gallery opens with search focused and marks the loaded example'
+  );
+  await page.hover('.gallery-card[data-name="csg-die"]');
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const card = document.querySelector('.gallery-card[data-name="csg-die"]');
+      const cs = getComputedStyle(card);
+      return {
+        background: cs.backgroundColor,
+        border: cs.borderTopColor,
+        color: cs.color,
+      };
+    }),
+    {
+      background: 'rgb(11, 13, 16)',
+      border: 'rgb(96, 106, 122)',
+      color: 'rgb(215, 219, 224)',
+    },
+    'gallery hover keeps the card dark and uses a neutral loaded border'
   );
   await page.keyboard.press('?');
   assert.equal((await galleryState()).shortcuts, true, '? is ignored while the gallery is open');
@@ -1417,7 +1440,7 @@ try {
     await galleryState(),
     {
       hidden: false,
-      focused: 'gallery',
+      focused: 'gallery-search',
       search: 'sombrero',
       license: 'gpl',
       clearHidden: false,
@@ -4887,7 +4910,7 @@ try {
       hidden: document.getElementById('gallery').hidden,
       focused: document.activeElement?.id,
     })),
-    { hidden: false, focused: 'gallery' },
+    { hidden: false, focused: 'gallery-search' },
     'Ctrl+Shift+K opens the gallery'
   );
   await page.keyboard.press('Control+Shift+K');

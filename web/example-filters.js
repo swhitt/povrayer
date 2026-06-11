@@ -14,6 +14,28 @@ export function licenseBucket(license) {
   return LICENSE_BUCKET[license] ?? 'other';
 }
 
+export function exampleSearchText(
+  ex,
+  { categoryLabel = '', difficultyLabel = '', tierLabel = '' } = {}
+) {
+  return [
+    ex.name,
+    ex.title,
+    ex.description,
+    ex.author,
+    ex.license,
+    ex.difficulty,
+    difficultyLabel,
+    ex.renderTier,
+    tierLabel,
+    categoryLabel,
+    ...ex.tags,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
+
 export function matchesExampleFilters(
   ex,
   { type = 'all', difficulty = 'all', tier = 'all', license = 'all' } = {}
