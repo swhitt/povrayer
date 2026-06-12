@@ -4,8 +4,16 @@
     <meta charset="utf-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
     />
+    <meta name="theme-color" content="#06070d" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="turbo" />
+    <link rel="manifest" href="turbo.webmanifest" />
+    <link rel="icon" type="image/png" href="turbo-icon-192.png" />
+    <link rel="apple-touch-icon" href="turbo-apple-icon.png" />
     <title>untitled_render_final_FINAL2.pov - povrayer turbo</title>
     <style>
       :root {
@@ -372,13 +380,97 @@
         opacity: 1;
       }
 
-      @media (max-width: 720px) {
+      #codeBtn {
+        display: none;
+      }
+
+      /* phone: canvas-first. The editor becomes a bottom sheet behind a code
+         button, the toolbar scrolls sideways, and everything respects the
+         notch/home-bar safe areas. */
+      @media (max-width: 760px) {
+        .bar {
+          top: calc(8px + env(safe-area-inset-top));
+          left: 8px;
+          right: 8px;
+          flex-wrap: nowrap;
+          overflow-x: auto;
+          padding-bottom: 6px;
+          scrollbar-width: none;
+        }
+        .bar::-webkit-scrollbar {
+          display: none;
+        }
+        .bar > * {
+          flex: 0 0 auto;
+        }
+        .brand small {
+          display: none;
+        }
+        button {
+          font-size: 13px;
+          padding: 10px 14px;
+          touch-action: manipulation;
+        }
         #editorWrap {
-          width: calc(100vw - 24px);
-          height: 44vh;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          width: 100vw;
+          height: 56vh;
+          border-radius: 16px 16px 0 0;
+          border-left: 0;
+          border-right: 0;
+          border-bottom: 0;
+          padding-bottom: env(safe-area-inset-bottom);
+          transition: transform 0.28s cubic-bezier(0.32, 0.72, 0.22, 1);
+        }
+        #editorWrap.collapsed {
+          transform: translateY(calc(100% + 24px));
+        }
+        #editor {
+          font-size: 16px; /* under 16px, iOS zooms the page on focus */
+          line-height: 1.45;
+        }
+        #codeBtn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          position: fixed;
+          left: 14px;
+          bottom: calc(14px + env(safe-area-inset-bottom));
+          z-index: 12;
+          width: 52px;
+          height: 52px;
+          border-radius: 50%;
+          font-size: 16px;
+          box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+        }
+        #transport {
+          left: auto;
+          right: 12px;
+          transform: none;
+          bottom: calc(14px + env(safe-area-inset-bottom));
+          padding: 10px 12px;
+        }
+        #scrub {
+          width: 32vw;
+        }
+        #clockOut {
+          min-width: 0;
+          font-size: 11px;
+        }
+        #period {
+          display: none;
+        }
+        #camChip {
+          top: calc(64px + env(safe-area-inset-top));
+        }
+        .toast {
+          bottom: calc(86px + env(safe-area-inset-bottom));
         }
         #glslWrap,
-        .fps {
+        .fps,
+        #glslBtn {
           display: none !important;
         }
       }
@@ -444,6 +536,7 @@
     </div>
 
     <div class="toast" id="toast"></div>
+    <button id="codeBtn" title="show the code" aria-label="toggle code editor">{ }</button>
 
     <script>
       'use strict';
@@ -4184,7 +4277,7 @@ vec2 march(vec3 ro, vec3 rd, float pixK){
     t += m.x;
     if (t > 120.0) break;
   }
-  if (best < 6.0) return vec2(bestT, bestM); // thin-CSG rescue: closest approach
+  if (best < 2.5) return vec2(bestT, bestM); // thin-CSG rescue: closest approach
   return vec2(-1.0, -1.0);
 }
 
@@ -4554,7 +4647,11 @@ void main(){
       }
 
       // ---- frame loop with a quiet resolution governor ---------------------------
-      const dprCap = Math.min(window.devicePixelRatio || 1, 2);
+      // phone GPUs get a lower ceiling; the governor still adapts under it
+      const dprCap = Math.min(
+        window.devicePixelRatio || 1,
+        matchMedia('(pointer: coarse)').matches ? 1.5 : 2
+      );
       let renderScale = dprCap;
       let frameAvg = 16,
         lastNow = 0,
@@ -4803,33 +4900,79 @@ void main(){
         onSource(true);
       });
 
-      // ---- pointer: orbit/zoom on top of the declared camera ----------------------
-      let dragging = false,
-        lastX = 0,
+      // ---- pointer: orbit/pinch/double-tap on top of the declared camera ---------
+      // One finger orbits, two fingers pinch-zoom, double-tap resets the camera.
+      // The pointer map keeps a second finger landing from teleporting the orbit.
+      const pointers = new Map();
+      let lastX = 0,
         lastY = 0,
-        pinch = 0;
+        pinchDist = 0,
+        lastTap = 0,
+        tapMoved = false;
+      const clampZoom = (z) => Math.max(-18, Math.min(24, z));
       canvas.addEventListener('pointerdown', (e) => {
-        dragging = true;
-        lastX = e.clientX;
-        lastY = e.clientY;
-        canvas.setPointerCapture(e.pointerId);
+        pointers.set(e.pointerId, [e.clientX, e.clientY]);
+        try {
+          canvas.setPointerCapture(e.pointerId);
+        } catch {
+          /* synthetic pointers can't be captured; everything else still works */
+        }
+        tapMoved = false;
+        if (pointers.size === 1) {
+          lastX = e.clientX;
+          lastY = e.clientY;
+        } else if (pointers.size === 2) {
+          const [a, b] = [...pointers.values()];
+          pinchDist = Math.hypot(a[0] - b[0], a[1] - b[1]);
+        }
       });
-      canvas.addEventListener('pointerup', () => {
-        dragging = false;
-      });
+      function endPointer(e) {
+        pointers.delete(e.pointerId);
+        if (pointers.size === 1) {
+          const [p] = pointers.values();
+          lastX = p[0];
+          lastY = p[1];
+        }
+        if (pointers.size === 0 && !tapMoved && e.pointerType === 'touch') {
+          const now = performance.now();
+          if (now - lastTap < 320) {
+            orbitX = 0;
+            orbitY = 0;
+            zoom = 0;
+            camChip.classList.remove('show');
+            showToast('camera back on script');
+            lastTap = 0;
+          } else lastTap = now;
+        }
+      }
+      canvas.addEventListener('pointerup', endPointer);
+      canvas.addEventListener('pointercancel', endPointer);
       canvas.addEventListener('pointermove', (e) => {
-        if (!dragging) return;
-        orbitX += e.clientX - lastX;
-        orbitY += e.clientY - lastY;
-        lastX = e.clientX;
-        lastY = e.clientY;
-        camChip.classList.add('show');
+        if (!pointers.has(e.pointerId)) return;
+        pointers.set(e.pointerId, [e.clientX, e.clientY]);
+        if (pointers.size === 1) {
+          const dx = e.clientX - lastX,
+            dy = e.clientY - lastY;
+          if (Math.abs(dx) + Math.abs(dy) > 2) tapMoved = true;
+          orbitX += dx;
+          orbitY += dy;
+          lastX = e.clientX;
+          lastY = e.clientY;
+          camChip.classList.add('show');
+        } else if (pointers.size === 2) {
+          tapMoved = true;
+          const [a, b] = [...pointers.values()];
+          const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+          if (pinchDist > 0) zoom = clampZoom(zoom - (d - pinchDist) * 0.045);
+          pinchDist = d;
+          camChip.classList.add('show');
+        }
       });
       canvas.addEventListener(
         'wheel',
         (e) => {
           e.preventDefault();
-          zoom = Math.max(-18, Math.min(24, zoom + e.deltaY * 0.01));
+          zoom = clampZoom(zoom + e.deltaY * 0.01);
           camChip.classList.add('show');
         },
         { passive: false }
@@ -5186,6 +5329,26 @@ blob {
         e.target.textContent = hidden ? 'Show UI' : 'Hide UI';
       });
 
+      // phone: the editor is a bottom sheet behind the { } button
+      const IS_PHONE = matchMedia('(max-width: 760px)').matches;
+      const buzz = (ms) => {
+        if (navigator.vibrate) navigator.vibrate(ms);
+      };
+      document.getElementById('codeBtn').addEventListener('click', () => {
+        wrap.classList.remove('hidden');
+        const closed = wrap.classList.toggle('collapsed');
+        buzz(8);
+        if (!closed) editor.blur(); // sheet opens showing code, keyboard on demand
+      });
+      document
+        .querySelectorAll('.preset, #share')
+        .forEach((b) => b.addEventListener('click', () => buzz(10)));
+
+      // PWA: offline cache scoped to /turbo (no-op anywhere it can't register)
+      if ('serviceWorker' in navigator && location.pathname.startsWith('/turbo')) {
+        navigator.serviceWorker.register('turbo-sw.js', { scope: 'turbo' }).catch(() => {});
+      }
+
       // the scanline gag: render like it's 1994 for one second, then betray it.
       function introGag() {
         if (sessionStorage.getItem('turbo-intro')) return;
@@ -5247,6 +5410,7 @@ blob {
           transport.value = clockInit;
           scrubEl.value = String(clockInit);
         }
+        if (IS_PHONE) wrap.classList.add('collapsed'); // canvas-first on phones
         onSource(true);
         requestAnimationFrame(frame);
         introGag();

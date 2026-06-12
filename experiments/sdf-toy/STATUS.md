@@ -85,12 +85,27 @@ camera orbits via clock).
 
 ## Running it
 
+- Deployed: <https://povrayer.com/turbo> (assemble-site copies turbo.html plus
+  the PWA shell into \_site; the Ray-trace button targets the sibling editor).
 - `python3 -m http.server 8137` in this directory → http://127.0.0.1:8137/turbo.html
   (plain static file; no COOP/COEP needed, no WASM)
 - For local handoff testing: `make web` at repo root serves the real editor on
   :8080; open turbo with `?pov=http://127.0.0.1:8080/index.html`.
 - Debug surface: `window.__fps`, `window.__povgl` (leaves/materials/slots/
   warnings/error), `window.__scanNaN()`.
+
+## Phone (first-class, not an afterthought)
+
+One finger orbits, two fingers pinch-zoom (proper multi-pointer tracking, no
+teleport when the second finger lands), double-tap puts the camera back on
+script. The editor is a bottom sheet behind a floating `{ }` button so the
+canvas owns the screen; the toolbar scrolls sideways; everything respects the
+notch/home-bar safe areas; the editor font is 16px so iOS doesn't zoom on
+focus. Installable PWA: manifest + icons (the icon is itself a POV-Ray render
+of a chrome sphere on the checkerboard, rendered by dist/ at build-author
+time) + a network-first service worker scoped to `/turbo*`, so it opens
+offline. Phone GPUs start with a 1.5 dpr ceiling and the governor adapts
+under it. Haptic ticks on preset/share where the platform allows.
 
 ## Gallery sweep (2026-06-12)
 

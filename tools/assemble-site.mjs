@@ -37,7 +37,17 @@ for (const dir of [dist, web]) {
 }
 
 // povrayer turbo: the GPU real-time twin, served at /turbo (cleanUrls strips
-// the .html). One self-contained file, no wasm, no headers needed.
-cpSync(join(root, 'experiments/sdf-toy/turbo.html'), join(out, 'turbo.html'));
+// the .html). The page is self-contained; the PWA shell (manifest, icons,
+// offline service worker) rides along as siblings.
+for (const f of [
+  'turbo.html',
+  'turbo.webmanifest',
+  'turbo-sw.js',
+  'turbo-icon-192.png',
+  'turbo-icon-512.png',
+  'turbo-apple-icon.png',
+]) {
+  cpSync(join(root, 'experiments/sdf-toy', f), join(out, f));
+}
 
 console.log(`assemble-site: wrote _site from dist/ + web/ + turbo`);

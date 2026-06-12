@@ -30,3 +30,7 @@ test-output/
 
 # sdf-toy sweep data, regenerated from web/examples.js by the harness
 experiments/sdf-toy/gallery-sweep.json
+
+# local-only experiment briefs & research notes (kept out of history on purpose)
+experiments/sdf-toy/FABLE-PROMPT.md
+research/
