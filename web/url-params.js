@@ -85,3 +85,27 @@ export function parseRenderParams(search) {
 
   return out;
 }
+
+// Hosts whose serving layer rewrites /e/<name> back to /?example=<name>:
+// vercel.json redirects in production (the apex plus *.vercel.app previews) and
+// serve.mjs locally. Plain static hosting (GitHub Pages) has no redirect layer,
+// so everywhere else keeps the ?example= query form, which works on any host.
+const EXAMPLE_SHORT_LINK_HOSTS = new Set(['povrayer.com', 'localhost', '127.0.0.1']);
+
+/**
+ * Routes an example share link onto `url`: the pretty /e/<name> path form on
+ * hosts that can redirect it, the ?example= query form everywhere else.
+ * Mutates and returns `url` (render params are appended by the caller either way).
+ *
+ * @param {URL} url the app-root base URL to share
+ * @param {string} name the example slug
+ * @returns {URL}
+ */
+export function applyExampleShareTarget(url, name) {
+  if (EXAMPLE_SHORT_LINK_HOSTS.has(url.hostname) || url.hostname.endsWith('.vercel.app')) {
+    url.pathname = `/e/${name}`;
+  } else {
+    url.searchParams.set('example', name);
+  }
+  return url;
+}

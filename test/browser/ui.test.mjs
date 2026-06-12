@@ -3613,12 +3613,40 @@ try {
     timeout: 10_000,
   });
   const exampleCopied = await page.evaluate(() => navigator.clipboard.readText());
-  assert.match(
-    exampleCopied,
-    /[?&]example=sourced-wineglass\b/,
-    'pristine examples copy as ?example'
+  // The test server has the /e/ redirect layer (like vercel.json in
+  // production), so pristine examples copy as the pretty short-link form with
+  // the render params riding along as ordinary query params.
+  assert.equal(
+    new URL(exampleCopied).pathname,
+    '/e/sourced-wineglass',
+    'pristine examples copy as /e/ short links on redirect-capable hosts'
+  );
+  assert.equal(
+    new URL(exampleCopied).searchParams.get('width'),
+    '333',
+    'an /e/ short link carries the render params'
+  );
+  assert.equal(
+    new URL(exampleCopied).searchParams.has('example'),
+    false,
+    'the /e/ form drops the redundant ?example param'
   );
   assert.equal(new URL(exampleCopied).hash, '', 'a pristine example copy carries no scene hash');
+
+  // Copy Link surfaced the /e/ path in the address bar; an edit makes the
+  // scene custom, so the next debounced save re-anchors the address at the
+  // root (the syncAddressUrl /e/ arm + the baseSceneUrl strip).
+  assert.equal(
+    await page.evaluate(() => location.pathname),
+    '/e/sourced-wineglass',
+    'Copy Link reflects the short link in the address bar'
+  );
+  await page.evaluate(() => {
+    const ed = document.getElementById('editor');
+    ed.value += '\n// edited past the short link\n';
+    ed.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.waitForFunction(() => location.pathname === '/', null, { timeout: 10_000 });
 
   await plBootGoto('?example=orbit-moons');
   await page.waitForFunction(

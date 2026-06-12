@@ -22,7 +22,7 @@ import {
 import { highlight } from './highlight.js';
 import { validateScene } from './sdl-validate.js';
 import { encodeState, decodeState } from './permalink.js';
-import { parseRenderParams } from './url-params.js';
+import { parseRenderParams, applyExampleShareTarget } from './url-params.js';
 import { parseFlags } from './flags.js';
 import { formatStats } from './stats.js';
 import { buildPool, complete, applyCompletion, signatureText } from './complete.js';
@@ -507,6 +507,10 @@ let gistSource = null;
 
 function baseSceneUrl() {
   const url = new URL(location.href);
+  // A copied /e/<name> short link lands in the address bar via replaceAddress;
+  // every other share form (hash permalink, gist pin) re-anchors at the root so
+  // that path can't leak into them.
+  if (/^\/e\/[^/]+$/.test(url.pathname)) url.pathname = '/';
   url.search = '';
   url.hash = '';
   return url;
@@ -540,8 +544,9 @@ function selectedExampleIsPristine() {
 
 function exampleShareUrl() {
   if (!selectedExampleIsPristine()) return null;
-  const url = baseSceneUrl();
-  url.searchParams.set('example', selectedExample);
+  // Pretty /e/<name> path on hosts with the redirect layer, ?example= query
+  // form elsewhere; the host routing lives in url-params.js.
+  const url = applyExampleShareTarget(baseSceneUrl(), selectedExample);
   appendShareParams(url);
   return url;
 }
@@ -556,7 +561,14 @@ function syncAddressUrl() {
     return;
   }
   const url = new URL(location.href);
-  if (!url.hash && !url.searchParams.has('gist') && !url.searchParams.has('example')) return;
+  if (
+    !url.hash &&
+    !url.searchParams.has('gist') &&
+    !url.searchParams.has('example') &&
+    !url.pathname.startsWith('/e/')
+  ) {
+    return;
+  }
   history.replaceState(null, '', baseSceneUrl());
 }
 

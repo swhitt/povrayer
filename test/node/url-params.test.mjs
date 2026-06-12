@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseRenderParams } from '../../web/url-params.js';
+import { parseRenderParams, applyExampleShareTarget } from '../../web/url-params.js';
 
 test('empty / no params yields an empty object', () => {
   assert.deepEqual(parseRenderParams(''), {});
@@ -86,4 +86,23 @@ test('draft passes through raw (validated against the select by the caller)', ()
   assert.equal(parseRenderParams('?draft=256').draft, '256');
   assert.equal(parseRenderParams('?draft=999').draft, '999'); // dropped later by ui.js
   assert.equal('draft' in parseRenderParams('?width=8'), false);
+});
+
+test('example share links take the /e/ path form on redirect-capable hosts', () => {
+  for (const origin of [
+    'https://povrayer.com',
+    'https://povrayer-preview.vercel.app',
+    'http://localhost:8080',
+    'http://127.0.0.1:8080',
+  ]) {
+    const url = applyExampleShareTarget(new URL(origin + '/'), 'cornell-mood');
+    assert.equal(url.pathname, '/e/cornell-mood', origin);
+    assert.equal(url.searchParams.has('example'), false, origin);
+  }
+});
+
+test('example share links keep the ?example= query form on plain static hosts', () => {
+  const url = applyExampleShareTarget(new URL('https://swhitt.github.io/'), 'cornell-mood');
+  assert.equal(url.pathname, '/');
+  assert.equal(url.searchParams.get('example'), 'cornell-mood');
 });
