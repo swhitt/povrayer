@@ -49,6 +49,17 @@ async function handle(req, res) {
     return;
   }
 
+  // /e/<name> is the pretty example deep link (vercel.json mirrors this
+  // redirect in production). Render params ride along as ordinary query
+  // params: /e/cornell-mood?width=1024 -> /?example=cornell-mood&width=1024.
+  const exampleLink = /^\/e\/([^/]+)$/.exec(pathname);
+  if (exampleLink) {
+    url.pathname = '/';
+    url.searchParams.set('example', exampleLink[1]);
+    res.writeHead(307, { Location: `${url.pathname}${url.search}` }).end();
+    return;
+  }
+
   if (pathname.endsWith('/')) pathname += 'index.html';
 
   for (const root of ROOTS) {

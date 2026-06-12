@@ -60,6 +60,25 @@ test('direct /x/<id> navigation lands where relative assets resolve from /', asy
   await css.arrayBuffer();
 });
 
+test('redirects /e/<name> to the root app URL with the name as ?example', async () => {
+  const res = await fetch(new URL('/e/cornell-mood', server.url), { redirect: 'manual' });
+  assert.equal(res.status, 307);
+  assert.equal(res.headers.get('location'), '/?example=cornell-mood');
+  await res.arrayBuffer();
+});
+
+test('an /e/<name> link carries its render params through the redirect', async () => {
+  const res = await fetch(new URL('/e/cornell-mood?width=1024&height=1024', server.url), {
+    redirect: 'manual',
+  });
+  assert.equal(res.status, 307);
+  const location = new URL(res.headers.get('location'), server.url);
+  assert.equal(location.searchParams.get('example'), 'cornell-mood');
+  assert.equal(location.searchParams.get('width'), '1024');
+  assert.equal(location.searchParams.get('height'), '1024');
+  await res.arrayBuffer();
+});
+
 test('maps each known extension to its content-type', async () => {
   // One representative file per MIME entry, picked from the served roots
   // (dist/, web/, test/browser/). The lookup itself is one object, so this is
