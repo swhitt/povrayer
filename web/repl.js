@@ -7,6 +7,7 @@ import {
   isAbortError,
   formatError,
   parseStats,
+  prewarm,
 } from './render-client.js';
 import { EXAMPLES, getExample } from './examples.js';
 import { highlight } from './highlight.js';
@@ -1570,3 +1571,6 @@ sourceToggle.setAttribute('aria-expanded', String(sourceOpen));
 sourcePanel.setAttribute('aria-hidden', String(!sourceOpen));
 document.body.classList.toggle('source-open', sourceOpen);
 refreshSource();
+// Warm the renderer (glue module + wasm fetch/compile) so the first entry's
+// auto-render doesn't pay the whole startup cost.
+prewarm();

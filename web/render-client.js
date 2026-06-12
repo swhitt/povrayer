@@ -6,7 +6,7 @@
 // web/ flat into one root, so the relative import only resolves in the
 // served/assembled site, never from web/ on disk.
 
-import { render, renderAnimation as wrapperRenderAnimation, PovrayError } from './index.js';
+import { render, renderAnimation as wrapperRenderAnimation, PovrayError, warmup } from './index.js';
 
 export { PovrayError };
 
@@ -15,6 +15,20 @@ let busy = false;
 /** True while a render is in flight. */
 export function isBusy() {
   return busy;
+}
+
+// Without this the first render pays the whole startup bill at click time:
+// fetch+parse of the wrapper's glue module, then fetch+compile of the ~4 MB
+// povray.wasm. Pages call it once at boot: warmup() fills the wrapper's factory
+// cache, and compileStreaming primes the HTTP cache (and Chromium's compiled-
+// code cache) for the wasm every instantiation re-fetches. Fire-and-forget: it
+// can never start a render, and failures stay silent here because the first
+// real render reports them properly.
+export function prewarm() {
+  /* c8 ignore next -- rejecting needs a transient glue-module import failure that can't be provoked deterministically */
+  warmup().catch(() => {});
+  /* c8 ignore next -- rejecting needs a wasm fetch/MIME failure the test server can't produce */
+  WebAssembly.compileStreaming(fetch(new URL('./povray.wasm', import.meta.url))).catch(() => {});
 }
 
 // --- output normalization ----------------------------------------------------

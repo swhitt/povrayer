@@ -113,6 +113,16 @@ function loadFactory(): Promise<PovrayFactory> {
     return factoryPromise;
 }
 
+/**
+ * Warms the renderer without rendering: loads (and caches) the wasm factory so
+ * the first {@link render} skips the glue-module fetch+parse. Fire-and-forget
+ * safe: it never starts a render and touches no state beyond the factory cache
+ * {@link render} already uses, and repeat calls share the same cached load.
+ */
+export async function warmup(): Promise<void> {
+    await loadFactory();
+}
+
 function defaultThreads(): number {
     // globalThis.navigator, NOT bare navigator: the bare identifier is a
     // ReferenceError on Node 20 (the global only exists on Node 21+).

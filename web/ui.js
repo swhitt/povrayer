@@ -7,6 +7,7 @@ import {
   isAbortError,
   formatError,
   parseStats,
+  prewarm,
   PovrayError,
 } from './render-client.js';
 import {
@@ -3257,6 +3258,11 @@ if (permalinkPayload) {
 } else {
   scheduleInitialDraft();
 }
+
+// Warm the renderer (glue module + wasm fetch/compile) off the first render's
+// critical path. After the deep-link routing so a boot render/draft is already
+// queued; the warm fetches overlap it (or any later first render) for free.
+prewarm();
 
 renderBtn.addEventListener('click', startRender);
 cancelBtn.addEventListener('click', () => abortCtl?.abort());

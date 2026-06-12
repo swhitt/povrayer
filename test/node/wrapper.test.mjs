@@ -11,7 +11,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { render, PovrayError } from '../../dist/index.js';
+import { render, warmup, PovrayError } from '../../dist/index.js';
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
@@ -31,6 +31,13 @@ const scene = await readFile(new URL('../fixtures/basic.pov', import.meta.url), 
 // branches (quality, antialias) cheaply, since argv is assembled before
 // callMain and POV-Ray bails almost immediately on the syntax error.
 const BAD_SCENE = 'sphere {';
+
+test('warmup preloads the factory without rendering and repeats share the cache', async () => {
+  // Both calls must resolve (the second from the cached factory promise) and
+  // neither may produce output or leave the runner hanging on stray workers.
+  await warmup();
+  await warmup();
+});
 
 test('stages extra files (flat + nested) and fires onProgress', async () => {
   // One render exercises a pile of branches at once:
