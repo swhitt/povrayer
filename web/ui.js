@@ -401,8 +401,12 @@ function applyExampleClock(record, { syncPlayer = true } = {}) {
   if (syncPlayer) player.setFps(record.fps);
 }
 
+// Animated examples never auto-draft (drafts are stills; the loop is an
+// explicit Render). Heavy stills DO auto-draft now: the draft caps (320px, q5,
+// 4 threads) keep them cheap, and the controller's slow-draft pause catches
+// the truly pathological ones, so loading any still example shows a preview.
 function shouldAutoDraftExample(record) {
-  return !record.animated && record.renderTier !== 'heavy';
+  return !record.animated;
 }
 
 function canAutoDraftCurrentScene() {

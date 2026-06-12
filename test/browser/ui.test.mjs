@@ -1190,28 +1190,27 @@ try {
   });
 
   await switchExample('julia-fractal');
+  // Heavy stills auto-draft like every other still example now: the draft caps
+  // (320px edge, q5, 4 threads) keep them cheap and the controller's slow-draft
+  // pause backstops the truly pathological ones, so loading any still example
+  // shows a preview instead of an empty plate.
   await page.waitForFunction(
     () => {
       const d = window.__liveDraftProbe();
-      return !d.pending && !d.inFlight;
+      return (
+        document.getElementById('status').dataset.state === 'draft' &&
+        /^preview ready · /.test(document.getElementById('status').textContent) &&
+        !d.pending &&
+        !d.inFlight
+      );
     },
     null,
-    { timeout: 5_000 }
+    { timeout: 60_000 }
   );
-  assert.deepEqual(
-    await page.evaluate(async () => ({
-      trigger: document.getElementById('example-trigger').dataset.name,
-      busy: (await import('/render-client.js')).isBusy(),
-      pending: window.__liveDraftProbe().pending,
-      inFlight: window.__liveDraftProbe().inFlight,
-    })),
-    {
-      trigger: 'julia-fractal',
-      busy: false,
-      pending: false,
-      inFlight: false,
-    },
-    'a pristine heavy still example must not auto-preview'
+  assert.equal(
+    await page.evaluate(() => document.getElementById('example-trigger').dataset.name),
+    'julia-fractal',
+    'a pristine heavy still example loads and auto-previews'
   );
   const HEAVY_EDIT_SCENE = [
     '#version 3.8;',
@@ -1237,8 +1236,11 @@ try {
   assert.equal(
     await page.evaluate(() => window.__liveDraftProbe().inFlight),
     false,
-    'editing a heavy still example allows live preview again'
+    'editing a heavy still example keeps live preview running'
   );
+  // Restoring the pristine heavy text re-drafts it (the suppression that used
+  // to kick in here is gone); wait for that draft to settle so the next
+  // section starts from a quiet scheduler.
   await page.evaluate(async () => {
     const { getExample } = await import('/examples.js');
     const ed = document.getElementById('editor');
@@ -1248,10 +1250,14 @@ try {
   await page.waitForFunction(
     () => {
       const d = window.__liveDraftProbe();
-      return !d.pending && !d.inFlight;
+      return (
+        /^preview ready · /.test(document.getElementById('status').textContent) &&
+        !d.pending &&
+        !d.inFlight
+      );
     },
     null,
-    { timeout: 5_000 }
+    { timeout: 60_000 }
   );
 
   // Loading a STILL example must leave dialed-in frames/fps untouched (the
@@ -1279,13 +1285,15 @@ try {
   // quality is still automatic, selecting one should preselect the heavy tier.
   await selAdvanced('#quality', '');
   await switchExample('glass');
+  // Every still example auto-drafts now (heavy included), so each of these
+  // waits blocks on a real draft render completing: long render timeout.
   await page.waitForFunction(
     () => {
       const d = window.__liveDraftProbe();
       return !d.pending && !d.inFlight;
     },
     null,
-    { timeout: 5_000 }
+    { timeout: 60_000 }
   );
   assert.equal(
     await page.evaluate(() => document.getElementById('quality').value),
@@ -1300,7 +1308,7 @@ try {
       return !d.pending && !d.inFlight;
     },
     null,
-    { timeout: 5_000 }
+    { timeout: 60_000 }
   );
   assert.equal(
     await page.evaluate(() => document.getElementById('quality').value),
@@ -1309,8 +1317,6 @@ try {
   );
   await selAdvanced('#quality', '');
   await switchExample('csg-die');
-  // Unlike the heavy examples above (which never auto-draft), this wait blocks
-  // on a real draft render completing, so it gets the long render timeout.
   await page.waitForFunction(
     () => {
       const d = window.__liveDraftProbe();
