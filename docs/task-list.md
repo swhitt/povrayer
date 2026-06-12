@@ -26,21 +26,21 @@ The default order is:
 These are the highest-value items that should be small enough to do without
 reshaping the whole project.
 
-- [ ] Let edited heavy examples use auto preview again.
+- [x] Let edited heavy examples use auto preview again.
   - Current guard suppresses drafts based on the loaded example record even after
     the user edits that scene.
   - Acceptance: pristine slow examples still do not auto-render; edited scenes
     can draft again when auto preview is enabled.
   - Touchpoints: `web/ui.js` `canAutoDraftCurrentScene()`, `scheduleDraft()`.
 
-- [ ] Abort stale live drafts immediately on edit.
+- [x] Abort stale live drafts immediately on edit.
   - Current edits debounce the next draft, but an expensive in-flight draft can
     keep running until the debounce fires.
   - Acceptance: typing during an active draft cancels the old draft promptly and
     schedules only the latest source.
   - Touchpoints: `web/live-draft.js`, `web/ui.js` input scheduling.
 
-- [ ] Add live-draft backoff for slow scenes.
+- [x] Add live-draft backoff for slow scenes.
   - If a draft exceeds a threshold, pause auto preview for that scene/session and
     require an explicit Render.
   - Include conservative draft defaults for quality and thread count.
@@ -48,7 +48,7 @@ reshaping the whole project.
     says why preview paused.
   - Touchpoints: `web/live-draft.js`, `web/ui.js` draft settings.
 
-- [ ] Preserve gallery filters while the gallery stays in the current session.
+- [x] Preserve gallery filters while the gallery stays in the current session.
   - Opening and closing the gallery currently resets exploration context.
   - Reset filters only through the clear action or a hard reload.
   - Acceptance: close/reopen keeps query and filters; Clear resets everything.
@@ -62,7 +62,7 @@ reshaping the whole project.
     distinct status string.
   - Touchpoints: `web/ui.js` draft/full render status paths.
 
-- [ ] Fix direct `/x/<slug>` navigation before shipping short links.
+- [x] Fix direct `/x/<slug>` navigation before shipping short links.
   - Rewrites preserve the visible URL, so relative assets in `index.html` can
     resolve under `/x/`.
   - Lowest-risk first step: redirect `/x/<id>` to `/?x=<id>` until the app shell
@@ -101,13 +101,13 @@ reshaping the whole project.
     widths.
   - Touchpoints: `web/index.html`, `web/styles.css`.
 
-- [ ] Add non-visual shortcut metadata.
+- [x] Add non-visual shortcut metadata.
   - Add `aria-keyshortcuts` for existing shortcuts without adding visible chrome.
   - Acceptance: shortcut metadata exists on relevant controls and no UI clutter
     is added.
   - Touchpoints: `web/index.html`, `web/ui.js`.
 
-- [ ] Add a lightweight Gallery keyboard shortcut.
+- [x] Add a lightweight Gallery keyboard shortcut.
   - Keep `Ctrl/Cmd+K` for the compact picker; add `Ctrl/Cmd+Shift+K` for Gallery.
   - Acceptance: the shortcut opens Gallery, respects existing input focus rules,
     and is listed anywhere shortcuts are surfaced.
@@ -121,14 +121,14 @@ reshaping the whole project.
 
 ## Performance and runtime
 
-- [ ] Prewarm renderer startup without changing render semantics.
+- [x] Prewarm renderer startup without changing render semantics.
   - Warm the wasm factory after page load so the first render pays less visible
     startup cost.
   - Benchmark before considering deeper worker-pool or reusable-instance work.
   - Acceptance: prewarm cannot trigger a render, change state, or break Pages.
   - Touchpoints: `web/render-client.js`, `wrapper/src/index.ts`.
 
-- [ ] Tune browser thread defaults.
+- [x] Tune browser thread defaults.
   - Full renders and drafts should avoid taking every available core by default,
     while still letting advanced users override thread count.
   - Acceptance: drafts use a lower default than full renders; explicit user
