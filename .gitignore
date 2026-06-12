@@ -27,3 +27,6 @@ test-output/
 # Vercel CLI local state + prebuilt output
 .vercel/
 .vercel
+
+# sdf-toy sweep data, regenerated from web/examples.js by the harness
+experiments/sdf-toy/gallery-sweep.json
