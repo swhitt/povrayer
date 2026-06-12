@@ -35,6 +35,7 @@ function harness(overrides = {}) {
     onError: (src, err) => events.push(['error', src, err.message]),
     onSettled: () => events.push(['settled']),
     startFullRender: () => events.push(['full']),
+    onAutoPause: (elapsedMs) => events.push(['autopause', elapsedMs]),
     ...overrides,
   };
   const controller = createLiveDraftController(hooks);
@@ -58,6 +59,7 @@ test('fire renders a ready source and records it as attempted', async () => {
     pending: false,
     inFlight: false,
     source: 'sphere',
+    autoPaused: false,
   });
 });
 
@@ -204,6 +206,48 @@ test('fire never overlaps active drafts', async () => {
 
   assert.equal(aborted, true, 'changed-source fire should abort the active draft');
   assert.deepEqual(h.events, [['start', 'sphere', 64, 48], ['settled']]);
+});
+
+test('a slow draft pauses auto scheduling until resumeAuto re-arms it', async () => {
+  const h = harness({
+    renderDraft: async () => ({ elapsedMs: 25000, blobUrl: 'blob:slow' }),
+  });
+
+  await h.controller.fire();
+
+  // The slow draft still presented normally, then reported the pause; the
+  // settle backstop's schedule() must NOT have re-armed the timer.
+  assert.deepEqual(h.events, [
+    ['start', 'sphere', 64, 48],
+    ['success', 'sphere', 25000],
+    ['autopause', 25000],
+    ['settled'],
+  ]);
+  assert.equal(h.controller.probe().autoPaused, true);
+  assert.equal(h.controller.probe().pending, false);
+
+  // While paused, neither path may start (or even queue) another draft.
+  h.setSource('box');
+  h.controller.schedule();
+  assert.equal(h.controller.probe().pending, false, 'schedule is inert while paused');
+  await h.controller.fire();
+  assert.equal(
+    h.events.filter(([kind]) => kind === 'start').length,
+    1,
+    'fire is inert while paused'
+  );
+
+  // resumeAuto re-arms: the next fire drafts the new source normally (and,
+  // being just as slow, trips the pause again).
+  h.controller.resumeAuto();
+  assert.equal(h.controller.probe().autoPaused, false);
+  await h.controller.fire();
+  assert.deepEqual(h.events.filter(([kind]) => kind === 'success').at(-1), [
+    'success',
+    'box',
+    25000,
+  ]);
+  assert.equal(h.controller.probe().autoPaused, true);
 });
 
 test('resetAttempted lets an unchanged source render again', async () => {

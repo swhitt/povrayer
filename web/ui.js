@@ -1593,6 +1593,7 @@ function reflectSceneReplaced({ autoDraft = true } = {}) {
   buildSliders();
   updateSceneActions();
   scheduleSave();
+  liveDraftController.resumeAuto(); // a new scene gets a fresh slow-draft verdict
   if (autoDraft) scheduleDraft();
   else liveDraftController.cancel();
 }
@@ -2597,6 +2598,10 @@ const liveDraftController = createLiveDraftController({
   },
   onSettled: syncSpinner,
   startFullRender: () => startRender(),
+  // The just-shown image stays; only future auto-drafts stop. Loading another
+  // scene or re-flipping the live toggle resumes (the resumeAuto call sites).
+  /* c8 ignore next -- pausing needs a real draft slower than the 20s threshold, which the suite can't render deterministically */
+  onAutoPause: () => setStatus('preview paused · slow scene, use Render', 'idle'),
 });
 
 // Read-only test-observability probe (no behaviour; the app never reads it).
@@ -3082,7 +3087,8 @@ liveToggle.addEventListener('click', () => {
   setLiveTogglePressed(liveDraft);
   scheduleSave();
   if (liveDraft) {
-    if (status.dataset.state === 'idle' && status.textContent === 'preview paused') {
+    liveDraftController.resumeAuto(); // an explicit re-enable overrides a slow-draft pause
+    if (status.dataset.state === 'idle' && status.textContent.startsWith('preview paused')) {
       syncStatusToPlate();
     }
     scheduleDraft();
