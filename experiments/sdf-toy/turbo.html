@@ -5156,7 +5156,11 @@ blob {
           fps: '12',
         };
         const payload = await packB64(state);
-        const base = new URLSearchParams(location.search).get('pov') || 'https://povrayer.com/';
+        // deployed at povrayer.com/turbo the editor is a sibling; anywhere else
+        // (the experiments dir, a saved copy) fall back to the public site
+        const base =
+          new URLSearchParams(location.search).get('pov') ||
+          (location.pathname.startsWith('/turbo') ? '/' : 'https://povrayer.com/');
         window.open(base + '#' + payload, '_blank');
         showToast(
           usesClock

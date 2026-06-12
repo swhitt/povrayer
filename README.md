@@ -26,6 +26,9 @@ nothing leaves the page.
   radiosity, media, depth of field, clock-driven animation, ...).
 - **REPL.** An incremental mode where each entry appends to the scene and
   auto-renders, rolling back on error: [repl.html](https://povrayer.com/repl.html).
+- **Turbo.** A real-time GPU twin: the same SDL compiled to a raymarching
+  shader at 60fps, with `clock` as a live scrubber and one click back to the
+  honest render: [/turbo](https://povrayer.com/turbo).
 
 Every one of these is ray-traced in the browser, no GPU, no server round-trip:
 
@@ -41,9 +44,10 @@ One build, three surfaces: the [browser playground](#try-it-in-the-browser), a
 
 ## Try it in the browser
 
-Live, no install: <https://povrayer.com/> (scene editor) and
+Live, no install: <https://povrayer.com/> (scene editor),
 <https://povrayer.com/repl.html> (the SDL REPL: each entry appends
-to the scene and auto-renders; a failed entry rolls back).
+to the scene and auto-renders; a failed entry rolls back), and
+<https://povrayer.com/turbo> (turbo: the GPU real-time twin).
 
 <p align="center">
   <img src="docs/screenshots/examples.png" width="49%" alt="the categorized, collapsible example browser" />

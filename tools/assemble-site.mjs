@@ -36,4 +36,8 @@ for (const dir of [dist, web]) {
   }
 }
 
-console.log(`assemble-site: wrote _site from dist/ + web/`);
+// povrayer turbo: the GPU real-time twin, served at /turbo (cleanUrls strips
+// the .html). One self-contained file, no wasm, no headers needed.
+cpSync(join(root, 'experiments/sdf-toy/turbo.html'), join(out, 'turbo.html'));
+
+console.log(`assemble-site: wrote _site from dist/ + web/ + turbo`);
