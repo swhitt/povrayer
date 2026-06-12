@@ -2526,6 +2526,13 @@ function draftMaxEdge() {
 // run at POV-Ray's default q9, so the cap applies there too.
 const DRAFT_MAX_QUALITY = 5;
 
+// ... and threads: every render spawns a fresh worker pool, so at high core
+// counts the per-draft spawn overhead outweighs what a ~320px image can use,
+// and an as-you-type preview shouldn't commandeer every core anyway. An
+// explicit threads value still wins (for drafts AND the full Render, which
+// otherwise keeps the wrapper's all-cores default).
+const DRAFT_MAX_THREADS = 4;
+
 // Fast + clearly lower-res than the full Render: antialias always off and the
 // longest edge capped to draftMaxEdge(), aspect ratio preserved so the draft
 // composition matches the eventual full render. Reads (never writes) the inputs
@@ -2537,7 +2544,7 @@ function draftOptions() {
     width: Math.max(8, Math.round(width * s)),
     height: Math.max(8, Math.round(height * s)),
     quality: Math.min(quality ?? Infinity, DRAFT_MAX_QUALITY),
-    threads,
+    threads: threads ?? Math.min(DRAFT_MAX_THREADS, navigator.hardwareConcurrency),
     antialias: false,
     files: assetDrop.assetFiles(), // staged dropped assets (undefined when none)
   };
