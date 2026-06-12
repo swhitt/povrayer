@@ -3582,6 +3582,19 @@ try {
     null,
     { timeout: 10_000 }
   );
+  // A still ?example= link is a "show me this scene" deep link with the ?gist
+  // contract: the recipient lands on the finished FULL render at the link's
+  // settings (download offered), not a draft or an empty plate.
+  await page.waitForFunction(
+    () => document.getElementById('status').dataset.state === 'done',
+    null,
+    { timeout: 120_000 }
+  );
+  assert.equal(
+    await page.evaluate(() => document.getElementById('download-btn').hidden),
+    false,
+    'a still ?example link lands on a finished full render'
+  );
   assert.match(
     await editorValue(),
     /wineglass\.pov/i,
@@ -3618,6 +3631,19 @@ try {
     })),
     { mode: 'still', frames: '24', fps: '24', pending: false, inFlight: false },
     'animated ?example links prepare frames/fps but wait for explicit Render'
+  );
+
+  // An example link that lands in animate mode never auto-renders either (a
+  // full frame sweep is too big to fire unasked): the boot router falls
+  // through to the draft path, which animate mode also gates off.
+  await plBootGoto('?example=sourced-wineglass&mode=animate');
+  await page.waitForFunction(() => document.body.dataset.mode === 'animate', null, {
+    timeout: 10_000,
+  });
+  assert.equal(
+    await page.evaluate(async () => (await import('/render-client.js')).isBusy()),
+    false,
+    'an animate-mode example link must not auto-render'
   );
 
   // --- Case 4: an animate-mode permalink hydrates mode + player fps. ----------

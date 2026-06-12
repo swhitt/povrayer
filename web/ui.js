@@ -620,6 +620,10 @@ let lastLoadedSource = '';
 // (the gist scene rendered at these settings). The numeric clamps live in
 // url-params.js; quality/antialias are matched here against the real <select>
 // options so an out-of-range value is ignored, not forced.
+// True when this load carried a valid ?example= param: the boot routing treats
+// that as a "show me this scene" deep link and full-renders it (startInitialView).
+let bootExampleLoaded = false;
+
 function applyUrlParams() {
   const params = new URLSearchParams(location.search);
   const exampleName = params.get('example');
@@ -631,6 +635,7 @@ function applyUrlParams() {
     applyExampleClock(record, { syncPlayer: false });
     applyExampleRenderDefaults(record);
     setTriggerLabel(exampleName);
+    bootExampleLoaded = true;
   }
   const p = parseRenderParams(location.search);
   applyControls(p, coerceParam);
@@ -3241,13 +3246,28 @@ function scheduleInitialDraft() {
   scheduleDraft();
 }
 
+// The no-permalink, no-gist boot view. An ?example= link is a "show me this
+// scene" deep link with the same contract as ?gist and #hash: the recipient
+// lands on the finished render at the link's settings, not an empty plate.
+// Animate mode and animated examples stay explicit (a full frame sweep is too
+// big to fire unasked); those fall back to the auto-draft path.
+function startInitialView() {
+  const record = getExampleRecord(selectedExample);
+  if (bootExampleLoaded && mode === 'still' && !record.animated) {
+    startRender();
+    return;
+  }
+  scheduleInitialDraft();
+}
+
 // Deep-link precedence on load: a #<permalink> hash wins over ?gist, which wins
 // over ?example / the already-applied saved/default scene. The permalink decode
 // is async and tolerant (decodeState returns null on garbage); a null falls
 // through to the gist/example/cold-load path so a junk hash never strands the
-// page. Without the final scheduleInitialDraft a cheap still cold page load sits
+// page. startInitialView full-renders a still ?example= deep link and otherwise
+// schedules the cold-load draft: without it a cheap still cold page load sits
 // on the empty-state hint until the first keystroke, which reads as "live is
-// broken" (it isn't). Animated/heavy pristine examples wait for explicit Render.
+// broken" (it isn't). Animated examples wait for explicit Render.
 const permalinkPayload = location.hash.slice(1);
 const gistParam = new URLSearchParams(location.search).get('gist');
 if (permalinkPayload) {
@@ -3263,13 +3283,13 @@ if (permalinkPayload) {
     } else if (gistParam) {
       loadGistScene(gistParam);
     } else {
-      scheduleInitialDraft();
+      startInitialView();
     }
   });
 } else if (gistParam) {
   loadGistScene(gistParam);
 } else {
-  scheduleInitialDraft();
+  startInitialView();
 }
 
 // Warm the renderer (glue module + wasm fetch/compile) off the first render's
