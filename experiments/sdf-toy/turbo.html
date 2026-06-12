@@ -2131,6 +2131,24 @@
 #declare T_Glass3 = texture { pigment { color rgbt <0.92,0.96,1,0.88> } finish { reflection { 0.04, 0.92 fresnel } specular 1 roughness 0.001 } }
 #declare T_Glass4 = texture { pigment { color rgbt <0.88,0.94,0.98,0.86> } finish { reflection { 0.06, 0.9 fresnel } specular 1 roughness 0.001 } }
 `;
+      // glass.inc interior identifiers: just the refractive index
+      const INTERIOR_IOR = {
+        I_Glass: 1.5,
+        I_Glass1: 1.45,
+        I_Glass2: 1.5,
+        I_Glass3: 1.55,
+        I_Glass4: 1.6,
+        I_Glass_Dispersion1: 1.5,
+        I_Glass_Dispersion2: 1.5,
+        I_Glass_Caustics1: 1.5,
+        I_Glass_Caustics2: 1.5,
+        I_Glass_Exit: 1.0,
+        I_Diamond: 2.42,
+        I_Sapphire: 1.77,
+        I_Emerald: 1.57,
+        I_Ruby: 1.77,
+        I_WaterIce: 1.31,
+      };
       const INCLUDE_SHIMS = {
         'colors.inc': COLORS_INC,
         'colors_ns.inc': COLORS_INC,
@@ -2476,6 +2494,9 @@
                   const t2 = this.parseTexture();
                   if (t2.pigment) node.tex.pigment = t2.pigment;
                   if (t2.finish) node.tex.finish = { ...(node.tex.finish || {}), ...t2.finish };
+                } else if (w.v === 'interior') {
+                  const ior = this.parseInterior();
+                  if (ior !== null) node.ior = ior;
                 } else if (w.t === 'id' && this.lookup(w.v)?.kind === 'texture') {
                   const t2 = this.lookup(w.v).tex;
                   if (t2.pigment) node.tex.pigment = t2.pigment;
@@ -2491,10 +2512,11 @@
               this.warn("normal{} bump maps aren't in turbo; the real tracer has them");
               this.skipBlock();
               break;
-            case 'interior':
-              this.warn('interior (refraction, ior) is CPU-only; glass here is fresnel + tint');
-              this.skipBlock();
+            case 'interior': {
+              const ior = this.parseInterior();
+              if (ior !== null) node.ior = ior;
               break;
+            }
             case 'interior_texture':
               this.warn('interior_texture is CPU-only');
               this.skipBlock();
@@ -2551,6 +2573,36 @@
           }
         },
 
+        // interior { ior 1.5 ... }: returns the ior (dyn-capable) or null.
+        // Everything else in interior (media, caustics, fade_*) stays CPU-only.
+        parseInterior() {
+          this.expect('{');
+          let ior = null;
+          for (;;) {
+            this.normalize();
+            if (this.tryDirective()) continue;
+            if (this.eat('}')) break;
+            const w = this.next();
+            if (w.v === 'ior') ior = this.parseExpr();
+            else if (w.t === 'id' && INTERIOR_IOR[w.v] !== undefined) ior = INTERIOR_IOR[w.v];
+            else if (w.v === 'media') {
+              this.warn("media is CPU-only; it'll show up in the real render");
+              this.skipBlock();
+            } else if (
+              w.v === 'caustics' ||
+              w.v === 'dispersion' ||
+              w.v === 'dispersion_samples' ||
+              w.v === 'fade_power' ||
+              w.v === 'fade_distance'
+            ) {
+              this.warn(`interior ${w.v} is CPU-only`);
+              this.parseExpr();
+            } else if (w.v === 'fade_color') {
+              this.parseColorValue();
+            } else this.err(`unknown interior item '${w.v}'`, w.ln);
+          }
+          return ior;
+        },
         parseOptionalColor() {
           if (!this.isColorStart()) return null;
           this.eat('color') || this.eat('colour');
@@ -3525,7 +3577,7 @@
         const materials = [];
         const defaults = parser.defaults || {};
 
-        function resolveMaterial(tex, inherited, leafChain) {
+        function resolveMaterial(tex, inherited, leafChain, ior) {
           const pig = tex.pigment ||
             inherited.pigment ||
             defaults.pigment || {
@@ -3550,10 +3602,11 @@
           // Solid pigments have no pattern space, so they dedupe across all transforms
           // (one chrome material for a #for-loop of 50 chrome spheres).
           const pxf = pig.type === 0 ? [] : [...pig.pxf, ...tex.pxf, ...leafChain];
-          const mat = { pig, fin, pxf };
+          const mat = { pig, fin, pxf, ior: ior ?? 1 };
           const key = keyOf({
             p: { ...pig, pxf: pig.pxf },
             f: fin,
+            i: keyOf(mat.ior),
             x: pxf.map((e) => ({ k: e.k, v: keyOf(e.v) })),
           });
           if (matKeys.has(key)) return matKeys.get(key);
@@ -3574,6 +3627,7 @@
               finish: node.tex.finish
                 ? { ...(inhTex.finish || {}), ...node.tex.finish }
                 : inhTex.finish,
+              ior: node.ior ?? inhTex.ior,
             };
             // dOp() does the negating for difference children; leaf.neg is only for
             // an explicit `inverse` flag, never both (that would cancel out).
@@ -3584,7 +3638,7 @@
             if (!kids.length) return null;
             return { op: node.csg, kids };
           }
-          const matId = resolveMaterial(node.tex, inhTex, myChain);
+          const matId = resolveMaterial(node.tex, inhTex, myChain, node.ior ?? inhTex.ior);
           const leaf = {
             node,
             chain: myChain,
@@ -3926,7 +3980,7 @@
               B + 5,
               asNum(evC(fin.phong, c)),
               Math.max(1, asNum(evC(fin.phongSize, c))),
-              0,
+              asNum(evC(m.ior, c)) || 1,
               asNum(evC(fin.metallic, c))
             );
             const em = fin.emission ? asVec5(evC(fin.emission, c)) : [0, 0, 0, 0, 0];
@@ -4158,6 +4212,35 @@ void main(){
     float refl = rf.x + (rf.y - rf.x) * pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), falloff);
     float trans = pat.a;
     if (trans > 0.05 && trans > refl) {
+      float ior = u[mb+5].z;
+      if (ior > 1.001) {
+        // real refraction: bend in, march the interior to the far surface,
+        // bend out (one total-internal-reflection bounce allowed), and tint
+        // by Beer's law over the interior path. The bent checkerboard lives.
+        att *= fogA * trans;
+        vec3 rdIn = refract(rd, n, 1.0/ior);
+        if (dot(rdIn, rdIn) < 0.25) rdIn = reflect(rd, n);
+        vec3 pp = p;
+        bool out_ = false;
+        for (int leg = 0; leg < 2 && !out_; leg++) {
+          float tIn = eps*6.0;
+          for (int s = 0; s < 64; s++) {
+            float di = map(pp + rdIn*tIn).x;
+            if (di > -eps*2.0) break;
+            tIn += max(-di, eps*3.0);
+          }
+          att *= exp(-(vec3(1.0) - pat.rgb) * tIn * 0.5);
+          vec3 pe = pp + rdIn*tIn;
+          vec3 ne = calcNormal(pe, eps);
+          if (dot(ne, rdIn) < 0.0) ne = -ne; // outward along the exiting ray
+          vec3 rdo = refract(rdIn, -ne, ior);
+          if (dot(rdo, rdo) > 0.25) { ro = pe + rdo*eps*6.0; rd = rdo; out_ = true; }
+          else { rdIn = reflect(rdIn, -ne); pp = pe + rdIn*eps*6.0; }
+        }
+        if (!out_) { ro = pp + rdIn*eps*6.0; rd = rdIn; } // give up gracefully after 2 TIR legs
+        continue;
+      }
+      // no interior{}: POV doesn't bend either, just pass the tint through
       att *= fogA * trans * mix(vec3(1.0), pat.rgb, 0.5);
       float tt = eps*4.0;
       for (int s = 0; s < 40; s++){ float d = map(p + rd*tt).x; if (d > eps*2.0) break; tt += max(abs(d), 0.02); }
@@ -4803,10 +4886,11 @@ sphere { <2.4*sin(Orbit), 1, 2.4*cos(Orbit)>, 1
   pigment { color rgb 0.95 }
   finish { reflection 0.85 specular 1 roughness 0.001 metallic ambient 0.03 }
 }
-// glass-ish (the real tracer refracts; turbo just flirts with fresnel)
+// glass. both tracers bend the checkerboard now.
 sphere { <-2.6, 1, 1.6>, 1
-  pigment { color rgbt <0.85, 0.95, 1.0, 0.8> }
+  pigment { color rgbt <0.85, 0.95, 1.0, 0.9> }
   finish { reflection { 0.04, 0.9 fresnel } specular 1 roughness 0.001 }
+  interior { ior 1.5 }
 }
 // signal red, bobbing.
 #declare Bob = 3; // make me 9, I dare you

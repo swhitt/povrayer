@@ -121,14 +121,24 @@ GPU watchdog, killing the process the same way. Now: pending builds are
 deleted on overtake, and scenes >250/>600 leaves clamp the render scale
 before their first frame (the governor climbs back within a per-scene cap).
 
+## Refraction (added after the sweep)
+
+`interior { ior 1.5 }` is real now: the bounce loop refracts in, marches the
+interior to the far surface, refracts out (one total-internal-reflection leg
+allowed) and tints by Beer's law over the path. glass.inc interior names
+(I_Glass, I_Diamond, ...) map to their indices. The hello preset's glass
+sphere bends the checkerboard, and the GPU result matches the real tracer's
+render side by side. Pigment transmit WITHOUT an interior stays straight-
+through, which is also what POV does. All 5 gallery glass scenes render lit.
+
 ## Known limits (deliberate)
 
-No refraction/interior (glass is fresnel reflection + tinted transmission),
-no normal{} bumps, no media/radiosity/photons (funneled to the real tracer),
+No media along interior paths, no dispersion/caustics, no normal{} bumps,
+no media/radiosity/photons (funneled to the real tracer),
 no lathe/prism/sor/height_field/mesh/text/isosurface (warn + skip), merge
 behaves as union (identical for opaque), fog is exponential type-1 only,
-color_map capped at 8 stops, ≤8 lights, UBO budget 1024 vec4 (~50-200 objects
-depending on type). POV's `rotate` on cameras is warned-and-skipped.
+color_map capped at 8 stops, ≤8 lights, parameter budget 16384 vec4 with a
+512-leaf real-time ceiling. POV's `rotate` on cameras is warned-and-skipped.
 
 ## Screenshots
 
