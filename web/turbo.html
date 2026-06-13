@@ -6063,12 +6063,12 @@ void main(){
         if (orbitActive()) {
           let v = vsub(loc, look);
           // drag follows the finger (grab/trackball feel): drag right swings the
-          // scene right, matching the vertical axis below and touch expectations
+          // scene right, drag down brings the pixels down (both axes, like touch)
           v = rotAxis(v, sky, orbitX * 0.008);
           const rtN = vcross(sky, vnorm(v));
           const rl = Math.hypot(...rtN);
           if (rl > 1e-5) {
-            const nv = rotAxis(v, vmul(rtN, 1 / rl), orbitY * 0.008);
+            const nv = rotAxis(v, vmul(rtN, 1 / rl), -orbitY * 0.008);
             if (Math.abs(vdot(vnorm(nv), sky)) < 0.985) v = nv;
           }
           v = vmul(v, Math.exp(zoom * 0.09));
