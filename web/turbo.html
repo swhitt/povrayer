@@ -532,24 +532,26 @@
           top: calc(8px + env(safe-area-inset-top));
           left: 8px;
           right: 8px;
-          flex-wrap: nowrap;
-          overflow-x: auto;
-          padding-bottom: 6px;
-          scrollbar-width: none;
+          gap: 6px;
+          /* inherit the desktop flex-wrap: every control stays reachable instead of
+             scrolling off-screen (still canvas-first, just no hidden horizontal row) */
         }
-        .bar::-webkit-scrollbar {
-          display: none;
-        }
-        .bar > * {
-          flex: 0 0 auto;
+        .brand {
+          font-size: 13px;
+          margin-right: 2px;
         }
         .brand small {
           display: none;
         }
         button {
-          font-size: 13px;
-          padding: 10px 14px;
+          font-size: 12px;
+          padding: 7px 10px;
           touch-action: manipulation;
+        }
+        /* .pov file actions are awkward on a phone; Share covers mobile handoff */
+        #copyPov,
+        #downloadPov {
+          display: none;
         }
         #editorWrap {
           left: 0;
@@ -604,7 +606,7 @@
           display: none;
         }
         #camChip {
-          top: calc(64px + env(safe-area-inset-top));
+          top: calc(160px + env(safe-area-inset-top)); /* clear the wrapped bar */
         }
         .toast {
           bottom: calc(86px + env(safe-area-inset-bottom));
@@ -6060,7 +6062,9 @@ void main(){
         const sky = vnorm(asVec3(E(cam.sky, [0, 1, 0])));
         if (orbitActive()) {
           let v = vsub(loc, look);
-          v = rotAxis(v, sky, -orbitX * 0.008);
+          // drag follows the finger (grab/trackball feel): drag right swings the
+          // scene right, matching the vertical axis below and touch expectations
+          v = rotAxis(v, sky, orbitX * 0.008);
           const rtN = vcross(sky, vnorm(v));
           const rl = Math.hypot(...rtN);
           if (rl > 1e-5) {
@@ -6118,7 +6122,9 @@ void main(){
         // resolution floor: with FXAA smoothing the edges, normal scenes can hold a
         // much higher minimum than the old 0.2 and still read as crisp. Only the
         // genuinely huge (watchdog-risk) scenes are allowed to drop all the way.
-        const floor = lv > 600 ? 0.25 : lv > 250 ? 0.4 : 0.65;
+        // Desktop holds a high floor (FXAA keeps it crisp even there); weak mobile
+        // GPUs need to drop low to stay smooth, so coarse pointers keep the old ~0.2.
+        const floor = coarseDpr ? 0.2 : lv > 600 ? 0.25 : lv > 250 ? 0.4 : 0.65;
         renderScale = Math.min(renderScale, lv > 600 ? 0.25 : lv > 250 ? 0.4 : renderScale);
         cur = {
           program: p,
@@ -6435,11 +6441,9 @@ void main(){
       }
 
       // ---- frame loop with a quiet resolution governor ---------------------------
-      // phone GPUs get a lower ceiling; the governor still adapts under it
-      const dprCap = Math.min(
-        window.devicePixelRatio || 1,
-        matchMedia('(pointer: coarse)').matches ? 1.5 : 2
-      );
+      // phone GPUs get a lower ceiling AND a lower floor; the governor adapts between
+      const coarseDpr = matchMedia('(pointer: coarse)').matches;
+      const dprCap = Math.min(window.devicePixelRatio || 1, coarseDpr ? 1.5 : 2);
       let renderScale = dprCap;
       let frameAvg = 16,
         lastNow = 0,
@@ -6467,7 +6471,7 @@ void main(){
         lastNow = now;
         frameAvg += (Math.min(dt, 100) - frameAvg) * 0.08;
         const scaleCap = cur ? cur.scaleCap : dprCap;
-        const floor = cur ? cur.floor : 0.65;
+        const floor = cur ? cur.floor : coarseDpr ? 0.2 : 0.65;
         if (now - govT > 500) {
           // favour resolution: tolerate ~38fps before shedding pixels, and never go
           // below the scene's floor (heavy scenes trade fps for sharpness, not mush)
