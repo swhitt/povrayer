@@ -37,6 +37,16 @@ test('serves / as index.html with the isolation headers and html mime', async ()
   assert.ok((await res.text()).length > 0, 'index.html should not be empty');
 });
 
+test('serves turbo at its clean production route with .pov actions', async () => {
+  const res = await get('/turbo');
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type'), /text\/html/);
+  const html = await res.text();
+  assert.match(html, /povrayer turbo/);
+  assert.match(html, /id="copyPov"/);
+  assert.match(html, /id="downloadPov"/);
+});
+
 test('redirects /x/<id> to the root app URL with the id as ?x', async () => {
   const res = await fetch(new URL('/x/demo', server.url), { redirect: 'manual' });
   assert.equal(res.status, 307);

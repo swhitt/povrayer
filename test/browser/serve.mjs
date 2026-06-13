@@ -12,7 +12,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 // dist/ first so /index.js and /povray.{mjs,wasm} win; web/ next so / serves the real UI
-// page exactly as deployed on Pages; test/browser/ last for the test harness.
+// page exactly as deployed on Pages (web/ also holds turbo.html now); test/browser/
+// last for the test harness.
 const ROOTS = [resolve(here, '../../dist'), resolve(here, '../../web'), resolve(here)];
 
 const MIME = {
@@ -60,6 +61,7 @@ async function handle(req, res) {
     return;
   }
 
+  if (pathname === '/turbo') pathname = '/turbo.html';
   if (pathname.endsWith('/')) pathname += 'index.html';
 
   for (const root of ROOTS) {
