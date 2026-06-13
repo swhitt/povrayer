@@ -23,6 +23,7 @@
     "gen:manifest": "node tools/includes-manifest/generate.mjs",
     "gen:examples": "node tools/examples-docs/generate.mjs",
     "gen:thumbs": "node tools/example-thumbnails/generate.mjs",
+    "gen:turbo": "node tools/gen-turbo.mjs",
     "prepare": "node tools/install-hooks.mjs"
   },
   "devDependencies": {
