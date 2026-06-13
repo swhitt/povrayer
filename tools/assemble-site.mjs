@@ -30,24 +30,13 @@ rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 
 // web/ overlays dist/ (web wins on any name clash, though today there are none).
+// povrayer turbo lives in web/ too (turbo.html + its self-contained PWA shell:
+// manifest, icons, offline service worker), so it rides along here and is served
+// at /turbo (cleanUrls strips the .html). No special-casing needed.
 for (const dir of [dist, web]) {
   for (const entry of readdirSync(dir)) {
     cpSync(join(dir, entry), join(out, entry), { recursive: true });
   }
 }
 
-// povrayer turbo: the GPU real-time twin, served at /turbo (cleanUrls strips
-// the .html). The page is self-contained; the PWA shell (manifest, icons,
-// offline service worker) rides along as siblings.
-for (const f of [
-  'turbo.html',
-  'turbo.webmanifest',
-  'turbo-sw.js',
-  'turbo-icon-192.png',
-  'turbo-icon-512.png',
-  'turbo-apple-icon.png',
-]) {
-  cpSync(join(root, 'experiments/sdf-toy', f), join(out, f));
-}
-
-console.log(`assemble-site: wrote _site from dist/ + web/ + turbo`);
+console.log(`assemble-site: wrote _site from dist/ + web/`);

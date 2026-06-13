@@ -1,9 +1,10 @@
-# SDF Toy: status
+# povrayer turbo: status
 
-Two toys now live here:
-
-- `index.html`: the original GLSL playground (Shadertoy-style `mainImage`, three presets, randomize). Unchanged, still works.
-- `turbo.html`: **povrayer turbo**, the main event. You type real POV-Ray SDL and it raymarches on the GPU at 60-120fps. Same scene text ray-traces for real at povrayer.com, one click away.
+`web/turbo.html`: **povrayer turbo**, the GPU real-time twin of povrayer. You
+type real POV-Ray SDL and it raymarches on the GPU at 60-120fps. Same scene text
+ray-traces for real at povrayer.com, one click away. (It started as an
+`experiments/sdf-toy` prototype; the old Shadertoy-style GLSL playground that
+lived beside it has been retired now that turbo is the whole point.)
 
 ## povrayer turbo, in one paragraph
 
@@ -85,12 +86,14 @@ camera orbits via clock).
 
 ## Running it
 
-- Deployed: <https://povrayer.com/turbo> (assemble-site copies turbo.html plus
-  the PWA shell into \_site; the Ray-trace button targets the sibling editor).
-- `python3 -m http.server 8137` in this directory → http://127.0.0.1:8137/turbo.html
-  (plain static file; no COOP/COEP needed, no WASM)
-- For local handoff testing: `make web` at repo root serves the real editor on
-  :8080; open turbo with `?pov=http://127.0.0.1:8080/index.html`.
+- Deployed: <https://povrayer.com/turbo>. turbo.html + its PWA shell live in
+  `web/`, so assemble-site copies them with the rest of the app into \_site
+  (cleanUrls strips the .html); the Ray-trace button targets the sibling editor.
+- `python3 -m http.server 8137 --directory web` → http://127.0.0.1:8137/turbo.html
+  (plain static file; no COOP/COEP needed, no WASM). `/` serves the real editor.
+- For local handoff testing: `make web` at repo root serves the whole app on
+  :8080; the Ray-trace handoff then targets the same-origin editor at `/`. Override
+  with `?pov=<url>` to point at any other povrayer.
 - Debug surface: `window.__fps`, `window.__povgl` (leaves/materials/slots/
   warnings/error), `window.__scanNaN()`.
 
@@ -145,6 +148,28 @@ allowed) and tints by Beer's law over the path. glass.inc interior names
 sphere bends the checkerboard, and the GPU result matches the real tracer's
 render side by side. Pigment transmit WITHOUT an interior stays straight-
 through, which is also what POV does. All 5 gallery glass scenes render lit.
+
+## Make it yours (post-fx, capture, dice)
+
+Three additions that lean into joy over fidelity. None touch the faithful path:
+glow has a one-click off, and the Ray-trace handoff is unchanged.
+
+- **✨ glow**: a real second pass. The raymarch renders into an offscreen buffer,
+  a half-res bright-pass + separable blur make the speculars and emission bloom,
+  then a composite runs FXAA (so a governed-down raymarch still reads crisp) and
+  adds a soft vignette, edge chromatic aberration and a whisper of film grain.
+  Toggle lives in the bar (remembered in localStorage), default OFF: it's a
+  stylistic look, not the faithful path, and bright scenes (the render farm's
+  cranked lights) bloom hard. Off is byte-for-byte the old raymarcher, so it
+  costs nothing disabled. The headless `__probe` always reads the raw scene, so
+  the gallery sweep numbers stay comparable regardless of glow.
+- **📸 / 🎬 capture**: snapshot the exact frame to a full-res PNG (re-rendered at
+  the scale cap so it's crisp no matter what the governor was doing), or record
+  one clock loop straight to a shareable WebM via MediaRecorder on the canvas
+  stream. Both use the retro filename gag.
+- **🎲 weirder**: nudges every float literal by ±25% toward a happy accident.
+  Only floats move, so the scene structure is untouched and most rolls stream
+  through as a same-frame tweak. Share to keep a roll you like.
 
 ## Known limits (deliberate)
 

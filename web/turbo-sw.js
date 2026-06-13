@@ -1,7 +1,6 @@
 // povrayer turbo's service worker: network-first with cache fallback, scoped
 // to /turbo* only (the main povrayer app manages itself). Network-first keeps
 // deploys instant; the cache means the toy still opens on the subway.
-/* global self, caches, fetch, location, URL */
 const CACHE = 'turbo-v1';
 const ASSETS = [
   '/turbo',
