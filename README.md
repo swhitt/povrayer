@@ -26,9 +26,8 @@ nothing leaves the page.
   radiosity, media, depth of field, clock-driven animation, ...).
 - **REPL.** An incremental mode where each entry appends to the scene and
   auto-renders, rolling back on error: [repl.html](https://povrayer.com/repl.html).
-- **Turbo.** A real-time GPU twin: the same SDL compiled to a raymarching
-  shader at 60fps, with `clock` as a live scrubber and one click back to the
-  honest render: [/turbo](https://povrayer.com/turbo).
+- **[Turbo.](#turbo)** A real-time GPU twin: the same SDL raymarched at 60fps,
+  with `clock` as a live scrubber and one click back to the honest render.
 
 Every one of these is ray-traced in the browser, no GPU, no server round-trip:
 
@@ -44,10 +43,8 @@ One build, three surfaces: the [browser playground](#try-it-in-the-browser), a
 
 ## Try it in the browser
 
-Live, no install: <https://povrayer.com/> (scene editor),
-<https://povrayer.com/repl.html> (the SDL REPL: each entry appends
-to the scene and auto-renders; a failed entry rolls back), and
-<https://povrayer.com/turbo> (turbo: the GPU real-time twin).
+Live, no install: the [scene editor](https://povrayer.com/), the
+[SDL REPL](https://povrayer.com/repl.html), and [turbo](#turbo).
 
 <p align="center">
   <img src="docs/screenshots/examples.png" width="49%" alt="the categorized, collapsible example browser" />
@@ -72,6 +69,43 @@ cross-origin isolation; the first visit reloads once while the worker installs.
 Locally: `make web` builds `dist/` if needed and serves the same pages at
 <http://127.0.0.1:8080/> with real COOP/COEP headers (no service worker
 involved; the server binds the IPv4 loopback, so use the numeric address).
+
+## Turbo
+
+[**Turbo**](https://povrayer.com/turbo) is the GPU real-time twin. You type the
+same POV-Ray SDL and it raymarches on the GPU at 60-120fps; editing a number or
+scrubbing `clock` updates the scene in the same frame. One click on **Ray-trace
+it →** gzips the exact source into povrayer's permalink and opens the real
+tracer, so the live preview and the honest render are always one step apart.
+
+[![povrayer turbo: the same POV-Ray SDL raymarched live on the GPU, with the clock scrubber and the Ray-trace handoff](docs/screenshots/turbo-hero.png)](https://povrayer.com/turbo)
+
+It's a single self-contained HTML file: no build, no deps, no WASM. A
+recursive-descent parser reads a useful subset of POV-Ray SDL, compiles the
+scene _structure_ to GLSL once, and streams every _number_ through a uniform
+buffer each frame, so only structural edits recompile (debounced, in the
+background, the old scene still rendering through it). The raymarcher is
+POV-faithful on the things that matter: left-handed coordinates, `angle` FOV,
+real materials with `interior { ior }` refraction, exponential fog, and the sky.
+95 of the 96 gallery scenes render on the GPU; the one holdout funnels back to
+the real tracer.
+
+<p align="center">
+  <img src="docs/screenshots/turbo-farm.png" width="32%" alt="render farm: a 49-sphere #for grid compiled to one GLSL loop over a uniform buffer" />
+  <img src="docs/screenshots/turbo-carousel.png" width="32%" alt="the carousel: difference{} monoliths around a breathing blob" />
+  <img src="docs/screenshots/turbo-csg.png" width="32%" alt="csg lab: a Steinmetz intersection and a die with pigmented pips" />
+</p>
+
+The `glsl` button shows the generated shader with provenance comments; `✨ glow`
+adds a real second-pass bloom (off by default, it's a look, not the faithful
+path); `📸` / `🎬` capture a full-res PNG or a WebM of one clock loop. Phones are
+first-class: one finger orbits, two pinch-zoom, and it installs as a PWA that
+opens offline.
+
+<p align="center">
+  <img src="docs/screenshots/turbo-glsl.png" width="49%" alt="the same SDL compiled to a raymarching GLSL shader, shown side by side" />
+  <img src="docs/screenshots/turbo-glow.png" width="49%" alt="the render farm with glow on: a second-pass bloom over the speculars" />
+</p>
 
 ## Render with docker
 
