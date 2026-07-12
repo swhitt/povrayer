@@ -24,7 +24,7 @@ const defaultExtension = require('@istanbuljs/schema/default-extension');
 // for the CLI tests. 'full' is the local one-shot used by run.mjs.
 export const SHARDS = {
   node: ['npm', 'run', 'test:node'],
-  browser: ['node', 'test/browser/browser.test.mjs'],
+  browser: ['npm', 'run', 'test:browser:core'],
   ui: ['node', 'test/browser/ui.test.mjs'],
   repl: ['node', 'test/browser/repl.test.mjs'],
   full: ['npm', 'test'],

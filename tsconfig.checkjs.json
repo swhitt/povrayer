@@ -26,7 +26,7 @@
     // One config covers both worlds: DOM globals for the browser UI/REPL modules
     // and @types/node for the CLI, tooling, and test drivers. Loading both lib
     // sets is harmless for the files that only use one of them.
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "WebWorker"],
     "types": ["node"],
 
     // Don't type-check the contents of .d.ts files we don't own (DOM/node libs,
@@ -48,6 +48,7 @@
     "web/flags.js",
     "web/stats.js",
     "web/ui.js",
+    "web/gallery.js",
     "web/player.js",
     "web/repl.js",
     "web/repl-scene.js",
@@ -58,6 +59,7 @@
     "web/render-feedback.js",
     "web/render-client.js",
     "web/highlight.js",
+    "web/glsl-highlight.js",
     "web/sdl-strip.js",
     "web/complete.js",
     "web/context.js",
@@ -71,6 +73,7 @@
     "web/examples.js",
     "web/examples-sourced.js",
     "web/example-filters.js",
+    "web/turbo-sw.js",
     "src/cli.mjs",
     "test/**/*.mjs",
     "tools/**/*.mjs"

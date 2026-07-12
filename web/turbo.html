@@ -2112,7 +2112,7 @@
       // ============================================================================
       // povrayer turbo: a real-time GPU twin for POV-Ray SDL.
       // Parse SDL in JS -> compile scene STRUCTURE to GLSL once -> stream all
-      // numeric parameters through a std140 UBO every frame. Editing a number or
+      // numeric parameters through an RGBA32F texture every frame. Editing a number or
       // scrubbing `clock` never recompiles the shader; only structural edits do.
       // One button hands the same source to povrayer.com (real POV-Ray 3.8, WASM).
       // ============================================================================
@@ -5217,7 +5217,7 @@
 
       // ---------------------------------------------------------------------------
       // compiler: scene AST -> GLSL (structure) + per-frame param writers (numbers).
-      // UBO layout (vec4 slots):
+      // Parameter-texture layout (vec4 slots):
       //   0 ro+clock | 1 right+pixK | 2 up | 3 dir*dirLen | 4 bg+fogDist
       //   5 fogColor+fogTransmit | 6 ambient+radiosity | 7 res+time
       //   8.. lights (2 each) | materials (19 each) | leaves (variable)
@@ -5347,7 +5347,7 @@
           skyMatId = resolveMaterial({ pigment: scene.sky, finish: {}, pxf: [] }, {}, []);
 
         // flat-union grouping: a #for loop of 50 chrome spheres becomes ONE GLSL
-        // loop over a contiguous UBO range instead of 50 inlined functions. This is
+        // loop over a contiguous parameter-slot range instead of 50 inlined functions. This is
         // the difference between a 100ms and a multi-second Metal shader compile.
         const slotsOf = (lf) => {
           const p = lf.node.prim;
@@ -5946,7 +5946,7 @@ void main(){
       }
 
       // ---------------------------------------------------------------------------
-      // engine: GL plumbing, UBO streaming, async program swaps, the frame loop.
+      // engine: GL plumbing, parameter streaming, async program swaps, the frame loop.
       // The product thesis lives here: parse on every keystroke; if the generated
       // GLSL is unchanged, only uniforms move (same-frame "tweak"); otherwise a
       // debounced background compile swaps in without ever blanking the canvas.
@@ -6118,14 +6118,14 @@ void main(){
         // command buffer trips the macOS GPU watchdog and zombies the GPU process.
         // Clamp up front; the governor can climb back within scaleCap if it's fast.
         const lv = b.comp.leaves.length;
-        const scaleCap = lv > 600 ? 0.45 : lv > 250 ? 0.8 : dprCap;
+        const scaleCap = lv > 250 ? 0.8 : dprCap;
         // resolution floor: with FXAA smoothing the edges, normal scenes can hold a
         // much higher minimum than the old 0.2 and still read as crisp. Only the
         // genuinely huge (watchdog-risk) scenes are allowed to drop all the way.
         // Desktop holds a high floor (FXAA keeps it crisp even there); weak mobile
         // GPUs need to drop low to stay smooth, so coarse pointers keep the old ~0.2.
-        const floor = coarseDpr ? 0.2 : lv > 600 ? 0.25 : lv > 250 ? 0.4 : 0.65;
-        renderScale = Math.min(renderScale, lv > 600 ? 0.25 : lv > 250 ? 0.4 : renderScale);
+        const floor = coarseDpr ? 0.2 : lv > 250 ? 0.4 : 0.65;
+        renderScale = Math.min(renderScale, lv > 250 ? 0.4 : renderScale);
         cur = {
           program: p,
           build: b,

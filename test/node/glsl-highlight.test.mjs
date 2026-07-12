@@ -126,6 +126,18 @@ test('comments: line, block (NON-nesting), unterminated; strings', () => {
     highlight('"path"').includes('<span class="tok-string">"path"</span>'),
     'a quoted string is one span'
   );
+  assert.ok(
+    highlight('"a\\"b"').includes('<span class="tok-string">"a\\"b"</span>'),
+    'an escaped quote stays inside the string'
+  );
+  assert.ok(
+    highlight('"eol\nnext').startsWith('<span class="tok-string">"eol</span>\n'),
+    'an unterminated string stops at a newline'
+  );
+  assert.ok(
+    highlight('"eof').includes('<span class="tok-string">"eof</span>'),
+    'an unterminated string may run to EOF'
+  );
 });
 
 test('user identifiers stay neutral; empty input is empty', () => {

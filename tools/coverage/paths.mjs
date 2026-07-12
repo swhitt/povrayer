@@ -44,7 +44,9 @@ const FILES = [
   { path: 'web/examples.js', browser: true },
   { path: 'web/examples-sourced.js', browser: true },
   { path: 'web/example-filters.js', browser: true },
+  { path: 'web/gallery.js', browser: true },
   { path: 'web/highlight.js', browser: true },
+  { path: 'web/glsl-highlight.js' },
   { path: 'web/sdl-strip.js', browser: true },
   { path: 'web/complete.js', browser: true },
   { path: 'web/context.js', browser: true },
@@ -69,6 +71,7 @@ const FILES = [
   { path: 'web/asset-drop.js', browser: true },
   { path: 'web/coi.js', browser: true },
   { path: 'web/live-draft.js', browser: true },
+  { path: 'web/turbo-sw.js' },
 ];
 
 // Browser modules measured via Playwright V8 coverage, keyed by the basename the

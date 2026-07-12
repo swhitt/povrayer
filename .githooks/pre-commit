@@ -15,13 +15,8 @@ npx eslint .
 say 'tsc --noEmit (wrapper)'
 npx tsc --noEmit -p wrapper/tsconfig.json
 
-# Pure-logic node tests only (named *.unit.test.mjs). The wasm render tests are
-# slow and belong in pre-push; skip cleanly until the fast subset exists.
+# Pure-logic Node tests only. The wasm render tests are slow and belong in CI.
 say 'fast node unit tests'
-if ls test/node/*.unit.test.mjs >/dev/null 2>&1; then
-  node --test "test/node/*.unit.test.mjs"
-else
-  printf '  (no test/node/*.unit.test.mjs yet; skipping)\n'
-fi
+npm run test:unit
 
 say 'ok'

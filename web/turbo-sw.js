@@ -10,16 +10,20 @@ const ASSETS = [
   '/turbo-apple-icon.png',
 ];
 
-self.addEventListener('install', (e) => {
+// Naming the service-worker global makes checkJs select the specific install,
+// activate, and fetch event overloads instead of the generic DOM Event shape.
+const sw = /** @type {ServiceWorkerGlobalScope} */ (/** @type {unknown} */ (self));
+
+sw.addEventListener('install', (e) => {
   e.waitUntil(
     caches
       .open(CACHE)
       .then((c) => c.addAll(ASSETS))
-      .then(() => self.skipWaiting())
+      .then(() => sw.skipWaiting())
   );
 });
 
-self.addEventListener('activate', (e) => {
+sw.addEventListener('activate', (e) => {
   e.waitUntil(
     caches
       .keys()
@@ -28,11 +32,11 @@ self.addEventListener('activate', (e) => {
           ks.filter((k) => k.startsWith('turbo-') && k !== CACHE).map((k) => caches.delete(k))
         )
       )
-      .then(() => self.clients.claim())
+      .then(() => sw.clients.claim())
   );
 });
 
-self.addEventListener('fetch', (e) => {
+sw.addEventListener('fetch', (e) => {
   const u = new URL(e.request.url);
   if (u.origin !== location.origin || !u.pathname.startsWith('/turbo')) return;
   e.respondWith(

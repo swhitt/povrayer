@@ -34,7 +34,10 @@ export async function buildMergedMap(roots) {
         // url is the served URL (http://127.0.0.1:PORT/ui.js); key by basename.
         const name = basename(new URL(entry.url, 'http://localhost').pathname);
         const filePath = WEB_FILES[name];
-        if (!filePath) continue; // wrapper / povray.mjs / SW: not measured here
+        // Generated runtimes and Turbo's inline scripts have no standalone web
+        // module path. Turbo is exercised behaviorally by turbo.test.mjs; its
+        // shared language modules and service worker are measured Node-side.
+        if (!filePath) continue;
         const converter = v8toIstanbul(filePath, 0, { source: entry.source });
         await converter.load();
         converter.applyCoverage(entry.functions);
