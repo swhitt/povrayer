@@ -19,9 +19,14 @@ nothing leaves the page.
 - **Live draft.** Edit the SDL and it re-renders as you type (debounced, low-res
   preview). Hit Render for the full-quality, downloadable image.
 - **Syntax highlighting + validation.** The editor speaks POV-Ray SDL and flags
-  the obvious mistakes inline, before you spend a render on them.
+  the obvious mistakes inline, before you spend a render on them. Context-aware
+  completion, find/go-to-line, numeric scrubbing, and generated `#declare`
+  sliders keep larger scenes manageable.
 - **Animation.** Drive POV-Ray's native `clock` loop, then scrub the frames in a
-  built-in player.
+  built-in player or export GIF, APNG, WebM, or numbered PNG frames.
+- **Local workflow.** Drop images and includes into a scene, keep a local render
+  history, inspect trace statistics, and share compressed links without uploading
+  the scene or its output.
 - **Examples gallery.** A spread of scenes to fork from (CSG, isosurfaces,
   radiosity, media, depth of field, clock-driven animation, ...).
 - **REPL.** An incremental mode where each entry appends to the scene and
@@ -29,7 +34,8 @@ nothing leaves the page.
 - **[Turbo.](#turbo)** A real-time GPU twin: the same SDL raymarched at 60fps,
   with `clock` as a live scrubber and one click back to the honest render.
 
-Every one of these is ray-traced in the browser, no GPU, no server round-trip:
+The gallery renders below use the real CPU ray tracer in the browser—no GPU and
+no server round-trip:
 
 <p align="center">
   <img src="docs/screenshots/gallery-glass.png" width="24%" alt="checkered glass sphere: refraction and reflection" />
@@ -58,9 +64,10 @@ slide-out panel:
   <img src="docs/screenshots/repl.png" width="82%" alt="the REPL with the assembled scene-source slide-out open" />
 </p>
 
-REPL commands: `:help`, `:reset`, `:list`, `:source`, `:undo`, `:del N`,
-`:size WxH`, `:q N`, `:aa [threshold|off]`, `:threads N`, `:render`,
-`:anim N`, `:example [name]`.
+REPL commands: `:help`, `:reset`, `:list`, `:source`, `:edit N`, `:undo`,
+`:del N`, `:size WxH`, `:q N`, `:aa [threshold|off]`, `:threads N`,
+`:args [switches]`, `:log [full]`, `:render`, `:anim N`, `:example [name]`,
+and `:editor`.
 
 GitHub Pages can't send COOP/COEP headers, so the pages use a vendored
 [coi-serviceworker](https://github.com/gzuidhof/coi-serviceworker) to get
@@ -91,7 +98,7 @@ real materials with `interior { ior }` refraction, exponential fog, and the sky.
 the real tracer.
 
 <p align="center">
-  <img src="docs/screenshots/turbo-farm.png" width="32%" alt="render farm: a 49-sphere #for grid compiled to one GLSL loop over a uniform buffer" />
+  <img src="docs/screenshots/turbo-farm.png" width="32%" alt="render farm: a 49-sphere #for grid compiled to one GLSL loop over a parameter-texture range" />
   <img src="docs/screenshots/turbo-carousel.png" width="32%" alt="the carousel: difference{} monoliths around a breathing blob" />
   <img src="docs/screenshots/turbo-csg.png" width="32%" alt="csg lab: a Steinmetz intersection and a die with pigmented pips" />
 </p>
@@ -281,7 +288,8 @@ docker buildx build --build-arg WASM_MAX_MEMORY=4GB --target artifact --output t
 ```sh
 npm ci            # installs dev deps and wires git hooks (prepare -> core.hooksPath)
 make dist         # build the wasm bundle once (cached); tests render against dist/
-npm test          # node:test render suite + the 3 Playwright browser suites
+npx playwright install chromium  # one-time browser install for local Playwright tests
+npm test          # node:test render suite + the 4 Playwright browser suites
 ```
 
 `npm ci` runs `prepare`, which points `core.hooksPath` at `.githooks/`. If you
@@ -320,15 +328,15 @@ The gate also audits `c8 ignore` / `istanbul ignore` pragmas: each must carry a
 
 Committed in `.githooks/`, wired via `core.hooksPath`:
 
-- **pre-commit** (fast): `prettier --check`, `eslint`, `tsc --noEmit` on the
-  wrapper, and the fast `*.unit.test.mjs` node subset.
-- **pre-push** (slow, authoritative): `eslint`, the full suite under coverage,
-  and the 100% `coverage:check` gate.
+- **pre-commit:** `prettier --check`, `eslint`, wrapper typechecking, and the fast
+  DOM-free `test:unit` suite.
+- **pre-push:** the same fast static checks. CI owns the full render/browser suite
+  and merged coverage gate so local pushes stay quick.
 
 ## License
 
 The image and the wasm artifact embed POV-Ray 3.8, which is licensed
-AGPL-3.0-or-later, so the artifact is too. This repository is the complete
+[AGPL-3.0-or-later](LICENSE), so the artifact is too. This repository is the complete
 corresponding source for that build: the Dockerfile plus the pinned POV-Ray
 commit (`c3ce13e5bb51892d8f59c1148b5f905a01ef82f3`) reproduce the artifact
 exactly. POV-Ray itself lives at <https://github.com/POV-Ray/povray>.

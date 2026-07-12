@@ -10,14 +10,17 @@ lived beside it has been retired now that turbo is the whole point.)
 
 A single self-contained HTML file (no build, no deps, no WASM) containing a
 recursive-descent parser for a useful subset of POV-Ray SDL, a compiler that
-turns scene STRUCTURE into GLSL once and streams all NUMBERS through a std140
-UBO every frame, and a POV-faithful raymarcher (plain N·L diffuse, no distance
+turns scene STRUCTURE into GLSL once and streams all NUMBERS through an RGBA32F
+parameter texture every frame, and a POV-faithful raymarcher (plain N·L diffuse, no distance
 falloff, both phong and specular lobes, additive reflection, exponential fog,
 clamp + sRGB out). Editing a number or scrubbing `clock` updates uniforms in
 the same frame; only structural edits recompile (debounced, background-linked
 via `KHR_parallel_shader_compile`, old scene keeps rendering through it).
 
-## What works (verified in browser via playwright-cli)
+## What works
+
+The core parse, compile, render, edit, recovery, and ray-trace handoff paths run
+in the automated Turbo Playwright suite; broader gallery sweeps remain manual.
 
 - **SDL subset**: camera (location/look*at/angle/right/up/sky/direction),
   light_source (point, shadowless, area_light→soft shadows, fade*\*),
@@ -28,7 +31,8 @@ via `KHR_parallel_shader_compile`, old scene keeps rendering through it).
   extended idiom, checker/gradient/marble/bozo/radial/spherical pigments +
   color_map + turbulence, finish ambient/diffuse/specular/roughness/phong/
   phong_size/metallic/emission/reflection{min,max fresnel falloff metallic},
-  rgbt transparency (straight-through tint, no refraction),
+  rgbt transparency (straight-through tint unless an `interior { ior }` enables
+  the refraction path),
   `#declare/#local/#while/#for/#if/#ifdef/#else/#macro/#include/array`,
   full expression eval (vectors, dot-members, rand/seed, vrotate, the lot),
   `clock` everywhere.
@@ -64,7 +68,7 @@ via `KHR_parallel_shader_compile`, old scene keeps rendering through it).
   depends on clock (loop bounds) re-parse per scrub and only recompile if the
   GLSL actually changed.
 - **Performance**: flat unions of same-primitive/same-material leaves (the
-  `#for`-grid idiom) compile to ONE GLSL loop over a UBO range instead of N
+  `#for`-grid idiom) compile to ONE GLSL loop over a parameter-slot range instead of N
   inlined functions; this took the 50-sphere preset from multi-second Metal
   compiles to ~instant. Resolution governor drops/raises render scale to hold
   frame time. 120fps on Apple M5 Pro for 4 presets, 44fps for the 50-sphere
@@ -136,8 +140,8 @@ leak a GPU pipeline per rebuild (animated structural scenes leaked ~4/sec
 until the GPU process silently zombied, `isContextLost()` still false), and
 giant scenes taking their FIRST frame at full resolution could trip the macOS
 GPU watchdog, killing the process the same way. Now: pending builds are
-deleted on overtake, and scenes >250/>600 leaves clamp the render scale
-before their first frame (the governor climbs back within a per-scene cap).
+deleted on overtake, and scenes over 250 leaves clamp the render scale before
+their first frame (the governor climbs back within a per-scene cap).
 
 ## Refraction (added after the sweep)
 

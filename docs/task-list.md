@@ -55,7 +55,7 @@ reshaping the whole project.
   - Touchpoints: `web/ui.js` `openGallery()`, `closeGallery()`,
     `resetGalleryFilters()`.
 
-- [ ] Clarify status language.
+- [x] Clarify status language.
   - Prefer explicit strings like `render failed`, `render cancelled`,
     `preview paused`, and `preview error`.
   - Acceptance: every cancelled, failed, paused, and completed path uses a
@@ -73,14 +73,14 @@ reshaping the whole project.
 
 ## UI polish
 
-- [ ] Make loaded gallery-card styling quieter.
+- [x] Make loaded gallery-card styling quieter.
   - Use neutral loaded treatment instead of accent borders so accent stays
     reserved for focus/progress/primary actions.
   - Acceptance: selected, focused, hovered, and loaded states are visually
     distinct without competing yellow outlines.
   - Touchpoints: `web/styles.css`, `web/ui.js` `setTriggerLabel()`.
 
-- [ ] Tone down gallery hover styling.
+- [x] Tone down gallery hover styling.
   - Lowest priority. The current hover/focus treatment can wash a card almost
     white, muting thumbnail detail and making text feel disabled.
   - Acceptance: hover/focus reads as active without inverting the whole card or
@@ -129,40 +129,39 @@ reshaping the whole project.
   - Touchpoints: `web/render-client.js`, `wrapper/src/index.ts`.
 
 - [x] Tune browser thread defaults.
-  - Full renders and drafts should avoid taking every available core by default,
-    while still letting advanced users override thread count.
+  - Keep short-lived drafts to a small worker pool while allowing full renders to
+    use the wrapper's hardware-concurrency default.
   - Acceptance: drafts use a lower default than full renders; explicit user
     thread choices still win.
   - Touchpoints: `web/ui.js`, `web/render-client.js`, `wrapper/src/index.ts`.
 
-- [ ] Avoid staging every dropped asset for every render.
+- [x] Avoid staging every dropped asset for every render.
   - Pass only files referenced by the current scene when possible, and warn for
     large asset sets.
   - Acceptance: scenes with many dropped assets do not restage unrelated files
     for every draft/full render.
   - Touchpoints: `web/asset-drop.js`, `web/ui.js`, `wrapper/src/index.ts`.
 
-- [ ] Reduce animation memory spikes.
-  - Decode frames with limited concurrency, create export blob URLs lazily, and
-    enforce a memory budget from frame count and resolution.
+- [x] Reduce animation memory spikes.
+  - Decode frames with limited concurrency and enforce a conservative memory
+    budget from frame count and resolution before wasm starts.
   - Acceptance: large animations fail early with a clear message instead of
     exhausting tab memory.
   - Touchpoints: `web/render-client.js`, `web/player.js`.
 
-- [ ] Tighten animation cleanup paths.
-  - Clear raw PNG frames in `player.destroy()`, revoke partial blob URLs on
-    decode failure, and consider cleanup on pagehide or mode switch.
+- [x] Tighten animation cleanup paths.
+  - Release bitmap/canvas storage in `player.destroy()`, revoke partial blob URLs
+    on failure, and clean up on pagehide and mode switches.
   - Acceptance: cancelled/failed animations do not leave raw PNG buffers or blob
     URLs retained.
   - Touchpoints: `web/player.js`, `web/render-client.js`, `web/ui.js`.
 
-- [ ] Defer expensive editor work on input.
-  - Move highlighting to animation frame timing and debounce slider rebuilding,
-    especially when the sliders panel is closed.
+- [x] Defer expensive editor work on input.
+  - Coalesce highlighting and slider rebuilding to the next animation frame.
   - Acceptance: typing stays responsive on large scenes; overlays remain synced.
   - Touchpoints: `web/ui.js`, `web/complete.js`, `web/context.js`.
 
-- [ ] Improve long-render progress feedback.
+- [x] Improve long-render progress feedback.
   - Patch progress flushing so long renders visibly advance instead of emitting
     late status bursts.
   - Acceptance: long renders show periodic progress without changing trace
@@ -171,7 +170,7 @@ reshaping the whole project.
 
 ## Catalog and gallery scale
 
-- [ ] Stop prebuilding the entire gallery DOM.
+- [x] Stop prebuilding the entire gallery DOM.
   - Render the first visible batch, then append on scroll/filter.
   - This keeps startup cheap when the catalog grows.
   - Acceptance: gallery startup cost is bounded when the catalog grows past the
@@ -278,7 +277,7 @@ reshaping the whole project.
   - Acceptance: extracted modules have narrow contracts and are covered by
     behavior-preserving tests before any logic is moved.
 
-- [ ] Extract gallery/catalog UI once lazy rendering is started.
+- [x] Extract gallery/catalog UI once lazy rendering is started.
   - Keep DOM state, filters, selected example, and card rendering out of the
     top-level UI file.
   - Acceptance: gallery behavior is still covered by browser tests and the main

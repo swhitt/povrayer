@@ -675,7 +675,7 @@
           <div class="layer wasm">
             <span class="lyr-ic">⚙️</span>
             <div>
-              <div class="lyr-t">3 · The wasm engine boots, lazily, on first render</div>
+              <div class="lyr-t">3 · The wasm engine prewarms after page boot</div>
               <div class="lyr-d">
                 An Emscripten module: <code>povray.mjs</code> glue + <code>povray.wasm</code> + a
                 pool of pthread Web Workers over shared memory.
@@ -1122,12 +1122,11 @@ newHeaders.set(<span class="s">"Cross-Origin-Opener-Policy"</span>,   <span clas
 
         <h3>Lazy, cached factory: fresh instance per render</h3>
         <p>
-          The 3.9&nbsp;MB wasm isn't fetched until your first render. The wrapper dynamically
-          imports
-          <code>povray.mjs</code> once and caches the <em>factory</em> (which holds the compiled
-          bytes), but spins up a brand-new <em>instance</em> for every render.
-          <code>EXIT_RUNTIME</code> makes that cheap and clean: FS, memory, and worker state never
-          leak between renders.
+          The page starts fetching and compiling the wasm after boot so the first render usually
+          avoids that startup cost. The wrapper dynamically imports
+          <code>povray.mjs</code> once and caches the <em>factory</em>, but spins up a brand-new
+          <em>instance</em> for every render. <code>EXIT_RUNTIME</code> makes that cheap and clean:
+          FS, memory, and worker state never leak between renders.
         </p>
         <pre><span class="k">function</span> <span class="f">loadFactory</span>() {
   <span class="k">if</span> (!factoryPromise) {
@@ -1243,7 +1242,7 @@ editor.<span class="f">addEventListener</span>(<span class="s">'input'</span>, a
           <span class="chip">floor <b>250&nbsp;ms</b></span>
           <span class="chip">ceiling <b>2000&nbsp;ms</b></span>
           <span class="chip">delay ≈ <b>lastDraftMs × 0.75</b></span>
-          <span class="chip">draft res capped to <b>320&nbsp;px</b> longest edge</span>
+          <span class="chip">draft res <b>256 / 320 / 512&nbsp;px</b> longest edge</span>
           <span class="chip">antialias <b>off</b> for drafts</span>
         </div>
         <p>
@@ -1346,8 +1345,8 @@ instance.<span class="f">callMain</span>(argv);
           <div class="card tight">
             <strong style="font-size: 0.9rem">Live draft</strong>
             <p class="dim" style="font-size: 0.86rem; margin: 8px 0 0">
-              Auto-fires on idle. ≤320&nbsp;px, AA off, no progress bar, no log. Superseded by newer
-              text. Keeps the last good image on error.
+              Auto-fires on idle at the selected 256/320/512&nbsp;px cap. AA is off, with no
+              progress bar or log. Superseded by newer text; keeps the last good image on error.
             </p>
           </div>
           <div class="card tight">
@@ -1412,9 +1411,7 @@ instance.<span class="f">callMain</span>(argv);
               </td>
             </tr>
             <tr>
-              <td class="mono">
-                examples / highlight / sdl-validate / permalink / declare-sliders.js
-              </td>
+              <td class="mono">examples / highlight / sdl-validate / permalink / sliders.js</td>
               <td>web/</td>
               <td>
                 ui.js's import graph: scene library, syntax coloring, settle-check, share links,
