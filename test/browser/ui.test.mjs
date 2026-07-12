@@ -2843,10 +2843,11 @@ try {
 
   // Replace the editor contents and fire the input event the controller hooks.
   const typeScene = (value) =>
-    page.evaluate((v) => {
+    page.evaluate(async (v) => {
       const ed = document.getElementById('editor');
       ed.value = v;
       ed.dispatchEvent(new Event('input'));
+      await new Promise(requestAnimationFrame);
     }, value);
   const outSrc = () => page.evaluate(() => document.getElementById('output').src);
   const ariaPressed = (id) =>
