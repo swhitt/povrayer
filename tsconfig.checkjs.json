@@ -97,6 +97,7 @@
     // Node-side render/CLI/tooling code and the non-evaluate test logic (incl.
     // test/browser/serve.mjs + browser.test.mjs) are still fully checked.
     "test/browser/ui.test.mjs",
+    "test/browser/ui/**/*.mjs",
     "test/browser/repl.test.mjs"
   ]
 }
