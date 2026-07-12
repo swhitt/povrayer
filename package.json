@@ -7,7 +7,7 @@
   },
   "scripts": {
     "test": "npm run test:node && npm run test:browser",
-    "test:unit": "node --test test/node/coverage-config.test.mjs test/node/highlight.test.mjs test/node/glsl-highlight.test.mjs test/node/sdl-validate.test.mjs test/node/turbo-lang.test.mjs test/node/turbo-sw.test.mjs",
+    "test:unit": "node --test test/node/coverage-config.test.mjs test/node/highlight.test.mjs test/node/glsl-highlight.test.mjs test/node/render-orchestrator.test.mjs test/node/scene-state.test.mjs test/node/sdl-validate.test.mjs test/node/turbo-lang.test.mjs test/node/turbo-sw.test.mjs",
     "pretest:node": "node tools/link-wrapper.mjs",
     "test:node": "node --test test/node/*.test.mjs",
     "pretest:node:serial": "node tools/link-wrapper.mjs",

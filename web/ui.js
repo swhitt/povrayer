@@ -40,13 +40,19 @@ import { CONTROL_FIELDS, coerceSaved, coerceParam, coerceHydrate } from './setti
 import { triggerDownload } from './anim-export.js';
 import { createPlayer } from './player.js';
 import { ensureCrossOriginIsolation } from './coi.js';
-import { createLiveDraftController } from './live-draft.js';
+import {
+  buildDraftOptions,
+  createRenderOrchestrator,
+  previewReadyStatus,
+  renderDoneStatus,
+} from './render-orchestrator.js';
 import {
   exampleSearchText,
   matchesExampleFilters as recordMatchesFilters,
 } from './example-filters.js';
 import { createRenderFeedback } from './render-feedback.js';
 import { createGallery } from './gallery.js';
+import { createSceneState } from './scene-state.js';
 
 const isoWarning = document.getElementById('iso-warning');
 ensureCrossOriginIsolation({ warningEl: isoWarning });
@@ -288,8 +294,7 @@ buildExampleBrowser();
 
 // EXAMPLES is a static, non-empty module literal, so EXAMPLES[0] is defined.
 const DEFAULT_EXAMPLE = EXAMPLES[0].name;
-// The loaded scene's name; replaces every old examplesSelect.value read/write.
-let selectedExample = DEFAULT_EXAMPLE;
+const sceneState = createSceneState({ selectedExample: DEFAULT_EXAMPLE });
 
 const gallery = createGallery({
   panel: galleryPanel,
@@ -378,7 +383,7 @@ function shouldAutoDraftExample(record) {
 }
 
 function canAutoDraftCurrentScene() {
-  const record = getExampleRecord(selectedExample);
+  const record = getExampleRecord(sceneState.selectedExample);
   if (record && sceneIsDirty()) return !record.animated;
   return !record || shouldAutoDraftExample(record);
 }
@@ -440,7 +445,7 @@ function saveState() {
       JSON.stringify({
         source: editor.value,
         ...readControls(),
-        example: selectedExample,
+        example: sceneState.selectedExample,
         mode,
         liveDraft,
         advancedOpen: advanced.open,
@@ -465,14 +470,6 @@ function captureState() {
   });
 }
 
-// When a ?gist=<id> scene is loaded, that short gist URL stays shareable until
-// the scene text is edited. gistId is the loaded id; gistSource is its pristine
-// text. The pin breaks the moment editor.value diverges from gistSource.
-/** @type {string | null} */
-let gistId = null;
-/** @type {string | null} */
-let gistSource = null;
-
 function baseSceneUrl() {
   const url = new URL(location.href);
   // A copied /e/<name> short link lands in the address bar via replaceAddress;
@@ -494,27 +491,22 @@ function appendShareParams(url) {
 }
 
 function pinnedGistUrl() {
-  if (gistId !== null) {
-    if (editor.value === gistSource) {
-      const pinned = baseSceneUrl();
-      pinned.searchParams.set('gist', gistId);
-      return pinned;
-    }
-    gistId = null;
-    gistSource = null;
-  }
-  return null;
+  const id = sceneState.pinnedGistId(editor.value);
+  if (id === null) return null;
+  const pinned = baseSceneUrl();
+  pinned.searchParams.set('gist', id);
+  return pinned;
 }
 
 function selectedExampleIsPristine() {
-  return editor.value === lastLoadedSource && getExample(selectedExample) === lastLoadedSource;
+  return sceneState.isPristineExample(editor.value, getExample);
 }
 
 function exampleShareUrl() {
   if (!selectedExampleIsPristine()) return null;
   // Pretty /e/<name> path on hosts with the redirect layer, ?example= query
   // form elsewhere; the host routing lives in url-params.js.
-  const url = applyExampleShareTarget(baseSceneUrl(), selectedExample);
+  const url = applyExampleShareTarget(baseSceneUrl(), sceneState.selectedExample);
   appendShareParams(url);
   return url;
 }
@@ -569,21 +561,16 @@ window.addEventListener('pagehide', () => {
   saveState();
 });
 
-// lastLoadedSource is the pristine text of the last loaded example; the
-// dirty-guard on example switch compares against it.
-let lastLoadedSource = '';
-
 {
   const saved = readSavedState();
   const example =
     saved && typeof saved.example === 'string' && hasExample(saved.example)
       ? saved.example
       : DEFAULT_EXAMPLE;
-  selectedExample = example;
-  setTriggerLabel(example);
   /* c8 ignore next -- example is always a real EXAMPLES entry (hasExample-validated or DEFAULT_EXAMPLE), so getExample never returns undefined here */
-  lastLoadedSource = getExample(example) ?? '';
-  editor.value = saved && typeof saved.source === 'string' ? saved.source : lastLoadedSource;
+  sceneState.loadExample(example, getExample(example) ?? '');
+  setTriggerLabel(example);
+  editor.value = saved && typeof saved.source === 'string' ? saved.source : sceneState.loadedSource;
   if (saved) {
     applyControls(saved, coerceSaved);
     if (typeof saved.liveDraft === 'boolean') liveDraft = saved.liveDraft;
@@ -613,9 +600,8 @@ function applyUrlParams() {
   const exampleName = params.get('example');
   if (exampleName && hasExample(exampleName)) {
     const record = getExampleRecord(exampleName);
-    selectedExample = exampleName;
     editor.value = record.source;
-    lastLoadedSource = record.source;
+    sceneState.loadExample(exampleName, record.source);
     applyExampleClock(record, { syncPlayer: false });
     applyExampleRenderDefaults(record);
     setTriggerLabel(exampleName);
@@ -633,13 +619,12 @@ applyUrlParams();
 function selectExample(name) {
   const record = getExampleRecord(name);
   const source = record.source;
-  if (editor.value !== lastLoadedSource) {
-    if (!confirm('Replace your edited scene?')) return; // selectedExample unchanged, no load
+  if (sceneState.isDirty(editor.value)) {
+    if (!confirm('Replace your edited scene?')) return; // scene provenance stays unchanged
     stashScene();
   }
-  selectedExample = name;
   editor.value = source;
-  lastLoadedSource = source;
+  sceneState.loadExample(name, source);
   applyExampleClock(record); // BEFORE scheduleDraft
   applyExampleRenderDefaults(record);
   setTriggerLabel(name); // trigger text + data-name + re-mark loaded option
@@ -647,11 +632,11 @@ function selectExample(name) {
 }
 
 function sceneIsDirty() {
-  return editor.value !== lastLoadedSource;
+  return sceneState.isDirty(editor.value);
 }
 
 function canResetScene() {
-  return lastLoadedSource !== '' && sceneIsDirty();
+  return sceneState.canReset(editor.value);
 }
 
 function updateSceneActions() {
@@ -801,12 +786,12 @@ function openBrowser() {
   resetExampleFilters();
   // Open COMPACT: collapse every category except the loaded scene's, so its
   // rows are the only ones showing and the panel isn't a 29-row wall.
-  const loaded = document.getElementById(`ex-opt-${selectedExample}`);
+  const loaded = document.getElementById(`ex-opt-${sceneState.selectedExample}`);
   const loadedGroup = loaded ? groupFor(loaded) : null;
   for (const g of exampleGroups) g.collapsed = loadedGroup ? g !== loadedGroup : true;
   renderList();
   setActive(loaded ?? null); // gallery-only scenes have no featured row to focus
-  if (!loaded) updateAttribution(getExampleRecord(selectedExample));
+  if (!loaded) updateAttribution(getExampleRecord(sceneState.selectedExample));
   exampleSearch.focus();
 }
 
@@ -1498,21 +1483,17 @@ function handleCompleteKeydown(e) {
 // ---- scene editing primitives (shared by the example browser, the drop import
 //      module, and the restore-scene undo) ----
 
-// One in-session recovery copy of the scene the user had edited, kept so a
-// replace (example switch or scene drop) past the confirm() is still undoable.
-let stashedScene = '';
-
 // Capture the about-to-be-replaced scene and reveal the restore affordance. The
 // copy lives in memory only (the undo is for the current session, and the note
 // clears on the next edit), so there's no localStorage to leave behind.
 function stashScene() {
-  stashedScene = editor.value;
+  sceneState.stash(editor.value);
   restoreNote.hidden = false;
 }
 
 // Restore the stashed scene and dismiss the note. Wired to the restore link.
 function restoreScene() {
-  editor.value = stashedScene;
+  editor.value = sceneState.restoreStash();
   restoreNote.hidden = true;
   reflectSceneReplaced();
 }
@@ -1530,14 +1511,14 @@ function reflectSceneReplaced({ autoDraft = true } = {}) {
   buildSliders();
   updateSceneActions();
   scheduleSave();
-  liveDraftController.resumeAuto(); // a new scene gets a fresh slow-draft verdict
+  renderOrchestrator.resumeAuto(); // a new scene gets a fresh slow-draft verdict
   if (autoDraft) scheduleDraft();
-  else liveDraftController.cancel();
+  else renderOrchestrator.cancel();
 }
 
 function resetSceneToExample() {
   if (!canResetScene()) return;
-  replaceScene(lastLoadedSource);
+  replaceScene(sceneState.resetSource());
 }
 
 // Replace the whole scene with `text`, stashing the outgoing one first so the swap
@@ -1891,7 +1872,7 @@ for (const el of [
 // attempted this source" guard so the unchanged scene re-drafts at the new
 // resolution (scheduleDraft self-guards on mode/live-off).
 draftSelect.addEventListener('change', () => {
-  liveDraftController.resetAttempted();
+  renderOrchestrator.resetAttempted();
   scheduleDraft();
 });
 
@@ -1954,7 +1935,7 @@ const {
   logLabel,
   logCount,
   faviconLink,
-  isDrafting: () => liveDraftController.isDrafting(),
+  isDrafting: () => renderOrchestrator.isDrafting(),
 });
 
 // ---- image zoom (fit / 1:1 / 4x) ----
@@ -1978,7 +1959,7 @@ let zoomLevel = 0;
 // click must not ALSO cycle the zoom. Consumed by the plate click handler.
 let suppressClick = false;
 
-// Live drafts render downscaled (DRAFT_MAX_EDGE) but must not shrink the hero
+// Live drafts render downscaled but must not shrink the hero
 // plate: the page below would pump in height on every keystroke between a full
 // render and the next draft. The draft path holds #output at the full render's
 // display width (the upscale softness is the accepted trade); CSS
@@ -2378,16 +2359,7 @@ function downloadName(opts) {
 }
 
 function sceneName() {
-  return editor.value === lastLoadedSource ? selectedExample : 'edited scene';
-}
-
-// done in 0.92s · 512×384
-// The brief celebratory headline: wall-clock time + resolution only. The full
-// numeric breakdown (timings, rays, rays/s, threads, warnings) lives in the stat
-// chips under the image (showStats), so nothing is repeated between the two.
-/** @param {number} elapsedMs @param {{ width: number, height: number }} opts @returns {string} */
-function doneLine(elapsedMs, opts) {
-  return `done in ${(elapsedMs / 1000).toFixed(2)}s · ${opts.width}×${opts.height}`;
+  return sceneState.sceneName(editor.value);
 }
 
 // One stat chip: <div class="stat"><dt>label</dt><dd>value</dd></div>.
@@ -2453,62 +2425,36 @@ function showImage(blobUrl, alt, holdWidth = null) {
 // AbortSignal; it never duplicates orchestration. Explicit renders always win
 // (see startRender). The persisted `liveDraft` toggle is wired further down.
 
-// Longest draft edge in px (the downscaled fast preview), from the advanced
-// "draft" select (256/320/512, default 320; persisted via CONTROL_FIELDS like
-// quality/antialias). A select always has a numeric option chosen.
-function draftMaxEdge() {
-  return Number(draftSelect.value);
-}
-
-// Drafts also cap quality: q6+ ray features (reflection, refraction, radiosity)
-// dominate render time, which is wrong for an as-you-type preview. The full
-// Render keeps the selected quality. Auto quality (undefined) would otherwise
-// run at POV-Ray's default q9, so the cap applies there too.
-const DRAFT_MAX_QUALITY = 5;
-
-// ... and threads: every render spawns a fresh worker pool, so at high core
-// counts the per-draft spawn overhead outweighs what a ~320px image can use,
-// and an as-you-type preview shouldn't commandeer every core anyway. An
-// explicit threads value still wins (for drafts AND the full Render, which
-// otherwise keeps the wrapper's all-cores default).
-const DRAFT_MAX_THREADS = 4;
-
 // Fast + clearly lower-res than the full Render: antialias always off and the
-// longest edge capped to draftMaxEdge(), aspect ratio preserved so the draft
+// longest edge capped to the draft select, aspect ratio preserved so the draft
 // composition matches the eventual full render. Reads (never writes) the inputs
 // so a mid-type width/height isn't clobbered.
 function draftOptions() {
-  const { width, height, quality, threads } = readRenderOptions();
-  const s = Math.min(1, draftMaxEdge() / Math.max(width, height));
-  return {
-    width: Math.max(8, Math.round(width * s)),
-    height: Math.max(8, Math.round(height * s)),
-    quality: Math.min(quality ?? Infinity, DRAFT_MAX_QUALITY),
-    threads: threads ?? Math.min(DRAFT_MAX_THREADS, navigator.hardwareConcurrency),
-    antialias: false,
+  return buildDraftOptions({
+    ...readRenderOptions(),
+    maxEdge: Number(draftSelect.value),
+    hardwareConcurrency: navigator.hardwareConcurrency,
     files: assetDrop.assetFiles(editor.value), // referenced dropped assets only
-  };
+  });
 }
 
-function draftStatus(dims) {
-  return `preview ready · ${dims}`;
-}
-
-const liveDraftController = createLiveDraftController({
-  enabled: () => mode === 'still' && liveDraft && crossOriginIsolated,
+const renderOrchestrator = createRenderOrchestrator({
+  mode: () => mode,
+  liveEnabled: () => liveDraft,
+  isolated: () => crossOriginIsolated,
   readSource: () => editor.value,
   // The auto-draft gate must live here, not just in scheduleDraft: the
   // controller re-schedules itself after an aborted draft settles, and that
   // internal path would otherwise auto-preview heavy/animated examples.
-  sourceReady: (source) => canAutoDraftCurrentScene() && validateScene(source).ready,
+  canAutoDraft: () => canAutoDraftCurrentScene(),
+  sourceReady: (source) => validateScene(source).ready,
   explicitInFlight: () => abortCtl !== null,
   renderBusy: isBusy,
   draftOptions,
   renderDraft: (source, options, signal) =>
     renderScene(source, { ...options, signal, keepBytes: false }),
   onStart: (_source, opts) => {
-    const dims = `${opts.width}×${opts.height}`;
-    setStatus(draftStatus(dims), 'draft');
+    setStatus(previewReadyStatus(opts.width, opts.height), 'draft');
   },
   onSuccess: (_source, result, opts) => {
     const dims = `${opts.width}×${opts.height}`;
@@ -2521,7 +2467,7 @@ const liveDraftController = createLiveDraftController({
     // a width edit mid-draft lands), keeping the plate footprint stable.
     showImage(result.blobUrl, `live draft, ${sceneName()}, ${dims}`, readRenderOptions().width);
     downloadBtn.hidden = true; // the preview is low-res, not a downloadable full render
-    setStatus(draftStatus(dims), 'draft');
+    setStatus(previewReadyStatus(opts.width, opts.height), 'draft');
   },
   onError: (_source, err) => {
     // Non-destructive: keep the last good image (no #output.src change, no
@@ -2547,31 +2493,27 @@ const liveDraftController = createLiveDraftController({
 // Surfaces the draft scheduler's internal state so the browser coverage suite
 // can await coalescing / supersede / mid-flight-abort transitions deterministically.
 /** @type {Window & { __liveDraftProbe?: () => unknown }} */ (window).__liveDraftProbe =
-  liveDraftController.probe;
+  renderOrchestrator.probe;
 
 function scheduleDraft({ sourceChanged = false } = {}) {
-  if (!canAutoDraftCurrentScene()) {
-    liveDraftController.cancel();
-    return;
-  }
-  if (sourceChanged) liveDraftController.sourceChanged();
-  else liveDraftController.schedule();
+  renderOrchestrator.schedule({ sourceChanged });
 }
 
 async function startRender() {
   // An explicit render always wins over a live draft. Drop any pending draft
   // timer, and if a draft is mid-flight, abort it and let its finally restart
   // us once `busy` clears.
-  if (liveDraftController.requestFullRender()) return;
+  const route = renderOrchestrator.requestExplicitRender();
+  if (route === 'deferred') return;
   // Bail while busy or non-isolated (first-visit SW install window: the
   // banner is visible and the page will reload itself once installed). The
   // draft handoff above deliberately KEEPS finalRenderOnce armed (the restarted
   // render is the same user intent); these dead ends disarm it.
-  if (abortCtl || isBusy()) {
+  if (route === 'busy') {
     finalRenderOnce = false;
     return;
   }
-  if (!crossOriginIsolated) {
+  if (route === 'unisolated') {
     isoWarning.hidden = false;
     finalRenderOnce = false;
     return;
@@ -2580,7 +2522,7 @@ async function startRender() {
   // Animate mode drives a different engine entry point and playback target; it
   // owns the same abortCtl/cancel/progress/status plumbing so cancel and the
   // busy guards keep working across both paths.
-  if (mode === 'animate') {
+  if (route === 'animate') {
     runAnimateRender();
     return;
   }
@@ -2649,7 +2591,7 @@ async function startRender() {
     statsList.classList.remove('stale');
     showStats(rawLog, opts);
 
-    setStatus(doneLine(elapsedMs, opts), 'done');
+    setStatus(renderDoneStatus(elapsedMs, opts), 'done');
     recordHistory(renderedSource); // a milestone worth remembering: this scene just rendered
     setLogSummary('render log');
     if (!matchMedia('(min-width: 900px)').matches) {
@@ -2701,7 +2643,7 @@ async function startRender() {
     // Mark this exact source as already attempted so the backstop draft no-ops
     // until the next edit. If the user typed during the render, editor.value
     // now differs from renderedSource, so the draft fires for the latest text.
-    liveDraftController.markAttempted(renderedSource);
+    renderOrchestrator.markAttempted(renderedSource);
     scheduleDraft();
   }
 }
@@ -2722,11 +2664,6 @@ function collectAnimOptions() {
   fpsInput.value = String(fps);
 
   return { frames, fps };
-}
-
-// done in 1.84s · 256×192 · 12 frames
-function animDoneLine(elapsedMs, opts, frameCount) {
-  return `done in ${(elapsedMs / 1000).toFixed(2)}s · ${opts.width}×${opts.height} · ${frameCount} frames`;
 }
 
 async function runAnimateRender() {
@@ -2784,7 +2721,7 @@ async function runAnimateRender() {
 
     player.load(result, fps);
     refreshPlate();
-    setStatus(animDoneLine(result.elapsedMs, opts, frames), 'done');
+    setStatus(renderDoneStatus(result.elapsedMs, opts, frames), 'done');
     setLogSummary('render log');
     if (!matchMedia('(min-width: 900px)').matches) {
       playerCanvas.scrollIntoView({ block: 'nearest' });
@@ -2837,7 +2774,7 @@ const player = createPlayer({
 // also stop wasm work so a bfcache/navigation cannot leave worker threads alive.
 window.addEventListener('pagehide', (event) => {
   abortCtl?.abort();
-  liveDraftController.cancel();
+  renderOrchestrator.cancel();
   // A persisted page is entering the back/forward cache, not unloading. Pause
   // playback but retain its URLs/bitmaps so restoring the page restores state.
   if (event.persisted) {
@@ -2859,7 +2796,7 @@ function setMode(next) {
   if (abortCtl) return; // an explicit/animate render locks the mode
   // A live draft is still-only; aborting it must not block the switch (its
   // finally re-checks mode and won't reschedule in animate).
-  liveDraftController.cancel();
+  renderOrchestrator.cancel();
   // Animation frames can retain hundreds of MiB across decoded GPU bitmaps,
   // blob URLs, and a canvas backing store. Leaving animate mode is an explicit
   // lifecycle boundary: free them instead of keeping a hidden player alive.
@@ -3050,13 +2987,13 @@ liveToggle.addEventListener('click', () => {
   setLiveTogglePressed(liveDraft);
   scheduleSave();
   if (liveDraft) {
-    liveDraftController.resumeAuto(); // an explicit re-enable overrides a slow-draft pause
+    renderOrchestrator.resumeAuto(); // an explicit re-enable overrides a slow-draft pause
     if (status.dataset.state === 'idle' && status.textContent.startsWith('preview paused')) {
       syncStatusToPlate();
     }
     scheduleDraft();
   } else {
-    liveDraftController.cancel();
+    renderOrchestrator.cancel();
     // Drop the "preview ready · …" label so the now-frozen, editable preview isn't
     // still announced as live. Only when the footer is actually showing a draft
     // line (don't clobber a real render's done/error payoff).
@@ -3088,7 +3025,7 @@ function hydrateFromState(state) {
   applyMode();
   // A permalink replaces "what counts as the loaded scene": clear the example
   // dirty-baseline so the next example switch doesn't treat this as example text.
-  lastLoadedSource = state.source;
+  sceneState.adoptSource(state.source);
   reflectSceneReplaced();
 }
 
@@ -3185,12 +3122,11 @@ async function loadGistScene(raw) {
   // Success: the gist text replaces the restored scene, then renders it in FULL
   // (not just a live-draft preview). A ?gist link is a "show me this scene" deep
   // link, so the recipient should land on the finished image. We PIN the gist as
-  // the permalink (gistId/gistSource): ?gist stays in the bar as the shareable
+  // the permalink (sceneState's gist pin): ?gist stays in the bar as the shareable
   // URL until the scene is edited, at which point syncAddressUrl clears the stale
   // gist query. startRender() supersedes any in-flight draft and
   // self-guards on busy / non-isolated, so it is safe to fire right after.
-  gistId = id;
-  gistSource = source;
+  sceneState.pinGist(id, source);
   editor.value = source;
   renderGutter();
   paintHighlight();
@@ -3199,8 +3135,8 @@ async function loadGistScene(raw) {
 }
 
 function scheduleInitialDraft() {
-  const record = getExampleRecord(selectedExample);
-  if (record && editor.value === lastLoadedSource && !shouldAutoDraftExample(record)) return;
+  const record = getExampleRecord(sceneState.selectedExample);
+  if (record && !sceneState.isDirty(editor.value) && !shouldAutoDraftExample(record)) return;
   scheduleDraft();
 }
 
@@ -3210,7 +3146,7 @@ function scheduleInitialDraft() {
 // Animate mode and animated examples stay explicit (a full frame sweep is too
 // big to fire unasked); those fall back to the auto-draft path.
 function startInitialView() {
-  const record = getExampleRecord(selectedExample);
+  const record = getExampleRecord(sceneState.selectedExample);
   if (bootExampleLoaded && mode === 'still' && !record.animated) {
     startRender();
     return;
@@ -3327,10 +3263,10 @@ downloadSceneBtn.addEventListener('click', downloadScene);
 stopBtn.addEventListener('click', () => {
   if (abortCtl) {
     abortCtl.abort();
-  } else if (liveDraftController.isDrafting()) {
+  } else if (renderOrchestrator.isDrafting()) {
     liveDraft = false;
     setLiveTogglePressed(false);
-    liveDraftController.cancel();
+    renderOrchestrator.cancel();
     scheduleSave();
     // The stop button is only visible mid-draft, so the footer is in the
     // 'draft' state here; drop the "preview ready · …" label so the now-frozen,
