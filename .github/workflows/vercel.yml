@@ -28,7 +28,7 @@ jobs:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Deploy the exact commit ci tested: workflow_run otherwise defaults to
           # the default-branch HEAD, which can drift past the triggering run.
