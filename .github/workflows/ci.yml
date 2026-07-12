@@ -88,7 +88,9 @@ jobs:
       - name: Install deps (pinned via root lockfile)
         run: npm ci
       - name: Run Node tests on Node 20
-        run: npm run test:node
+        # Keep the compatibility lane serial: concurrent WASM renders can
+        # exhaust POV-Ray's worker startup budget on the smaller Node 20 runner.
+        run: npm run test:node:serial
 
   # The render-heavy suite, split across parallel runners. Each shard collects its
   # OWN raw coverage (tools/coverage/collect.mjs); the coverage-gate job merges

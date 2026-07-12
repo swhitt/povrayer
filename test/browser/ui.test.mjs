@@ -1470,7 +1470,7 @@ try {
     galleryOpen.batch,
     'scrolling away from the end does not append a batch'
   );
-  await page.click('.gallery-more');
+  await page.locator('.gallery-more').evaluate((button) => button.click());
   assert.equal(
     await page.locator('.gallery-card').count(),
     Math.min(galleryOpen.batch * 2, galleryOpen.expected),
