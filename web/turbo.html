@@ -6641,6 +6641,7 @@ void main(){
       }
       function showParseError(e) {
         if (!lastError) return;
+        clearTimeout(pillT);
         const ln = e.ln || 1;
         setPill('err', `✗ line ${ln}`);
         const lines = editor.value.split('\n');
