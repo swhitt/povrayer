@@ -43,15 +43,14 @@ jobs:
           cache-from: type=gha
           # No cache-to here: ci.yml owns the gha cache (10GB budget); this job
           # only reads it, so a main push reuses the layers ci just wrote.
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
       - name: Assemble site (dist + web, flat)
         # Flat layout: web/'s relative URLs (./index.js, ./coi-serviceworker.js, ...)
         # must resolve next to the dist artifacts at the /povrayer/ Pages subpath.
         # The custom domain (povrayer.com) is served by Vercel, not Pages, so there
         # is no CNAME file here; Pages serves at swhitt.github.io/povrayer/.
-        run: |
-          mkdir -p _site
-          cp -R dist/* _site/
-          cp -R web/* _site/
+        run: node tools/assemble-site.mjs
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with: { path: _site }

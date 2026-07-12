@@ -8,6 +8,18 @@ permissions:
   contents: read
 
 jobs:
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          fail-on-scopes: runtime, development
+
   # Fast, no-wasm gate: format, lint, wrapper types. Parallel with everything.
   lint:
     runs-on: ubuntu-latest
@@ -61,6 +73,22 @@ jobs:
         run: npm ci
       - name: Typecheck first-party JS (checkJs)
         run: npm run typecheck:js
+
+  # Node 22 remains the authoritative test and coverage runtime. Exercise the
+  # supported Node 20 line separately so compatibility regressions fail CI.
+  node-20-compat:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with: { name: povrayer-dist, path: dist }
+      - uses: actions/setup-node@v6
+        with: { node-version: 20 }
+      - name: Install deps (pinned via root lockfile)
+        run: npm ci
+      - name: Run Node tests on Node 20
+        run: npm run test:node
 
   # The render-heavy suite, split across parallel runners. Each shard collects its
   # OWN raw coverage (tools/coverage/collect.mjs); the coverage-gate job merges
@@ -126,11 +154,13 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: coverage-gate
+    needs: [lint, typecheck-js, node-20-compat, coverage-gate]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
+      attestations: write
       contents: read
+      id-token: write
       packages: write
     steps:
       - uses: actions/checkout@v6
@@ -148,6 +178,7 @@ jobs:
             type=raw,value=latest
             type=sha,format=long
       - uses: docker/build-push-action@v7
+        id: image
         with:
           context: .
           target: runtime
@@ -164,3 +195,11 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
+          provenance: mode=max
+          sbom: true
+      - name: Attest published image
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true

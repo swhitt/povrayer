@@ -1,11 +1,13 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1@sha256:87999aa3d42bdc6bea60565083ee17e86d1f3339802f543c0d03998580f9cb89
 ARG EMSDK_VERSION=5.0.7
 ARG POVRAY_COMMIT=c3ce13e5bb51892d8f59c1148b5f905a01ef82f3
+ARG POVRAY_SHA256=40e916f7e97a20c84eea5b4a36edb6ad0eaaf063dc142d5e7e460f355ec80eee
 
 # --platform=$BUILDPLATFORM: the wasm output is arch-independent, so this stage
 # always runs natively on the build host; only the runtime stage is per-platform.
-FROM --platform=$BUILDPLATFORM emscripten/emsdk:${EMSDK_VERSION} AS builder
+FROM --platform=$BUILDPLATFORM emscripten/emsdk:${EMSDK_VERSION}@sha256:4e332f7343b6f66320bf72f7ecc01a3d9f3866721a13b0e5c7b96505d6ab148a AS builder
 ARG POVRAY_COMMIT
+ARG POVRAY_SHA256
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       autoconf automake m4 patch curl ca-certificates unzip && \
@@ -25,8 +27,12 @@ RUN echo 'int main(){return 0;}' > /tmp/warm.c && \
 
 # Pinned source fetch (no git history needed)
 WORKDIR /build
-RUN curl -fsSL "https://github.com/POV-Ray/povray/archive/${POVRAY_COMMIT}.tar.gz" \
-      | tar xz && mv "povray-${POVRAY_COMMIT}" povray
+RUN curl -fsSL --retry 3 -o /tmp/povray.tar.gz \
+      "https://github.com/POV-Ray/povray/archive/${POVRAY_COMMIT}.tar.gz" \
+      && printf '%s  /tmp/povray.tar.gz\n' "${POVRAY_SHA256}" | sha256sum -c - \
+      && tar xzf /tmp/povray.tar.gz \
+      && mv "povray-${POVRAY_COMMIT}" povray \
+      && rm /tmp/povray.tar.gz
 
 # Patches: applied to pristine source, BEFORE prebuild.sh (so bootstrap
 # regenerates configure from the patched m4 macros).
@@ -142,7 +148,7 @@ RUN mkdir -p /out && cd povray && em++ \
       --embed-file distribution/include@/usr/share/povray-3.8/include
 
 # Arch-independent JS output; same native-platform treatment as the builder.
-FROM --platform=$BUILDPLATFORM node:22-alpine AS wrapper-build
+FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2 AS wrapper-build
 WORKDIR /wrapper
 # package-lock.json is committed to the repo; npm ci requires it,
 # and BuildKit fails the COPY without it.
@@ -156,7 +162,7 @@ COPY --from=builder /out/povray.mjs /out/povray.wasm /
 COPY --from=wrapper-build /wrapper/dist/index.js /wrapper/dist/index.d.ts /
 COPY --from=wrapper-build /wrapper/package.json /package.json
 
-FROM node:22-alpine AS runtime
+FROM node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2 AS runtime
 LABEL org.opencontainers.image.source="https://github.com/swhitt/povrayer" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
       org.opencontainers.image.description="POV-Ray 3.8 compiled to WebAssembly (pthreads, wasm EH)"

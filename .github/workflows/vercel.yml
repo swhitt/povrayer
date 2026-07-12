@@ -48,7 +48,7 @@ jobs:
         with:
           node-version: 22
       - name: Install Vercel CLI
-        run: npm i -g vercel@latest
+        run: npm install --global vercel@55.0.0
       - name: Pull Vercel project settings (production)
         run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
       - name: Build (assembles _site from dist/ + web/ via buildCommand)
