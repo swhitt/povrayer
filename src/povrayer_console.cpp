@@ -81,11 +81,8 @@ static vfeDisplay *NullDisplayCreator (unsigned int width, unsigned int height, 
     return nullptr;
 }
 
-static void PrintStatus (vfeSession *session)
+static void PrintStatus (vfeSession *session, FILE *stream = stderr)
 {
-    // TODO -- when invoked while processing "--help" command-line switch,
-    //         GNU/Linux customs would be to print to stdout (among other differences).
-
     std::string str;
     vfeSession::MessageType type;
     static vfeSession::MessageType lastType = vfeSession::mUnclassified;
@@ -95,11 +92,16 @@ static void PrintStatus (vfeSession *session)
         if (type != vfeSession::mGenericStatus)
         {
             if (lastType == vfeSession::mGenericStatus)
-                fprintf (stderr, "\n") ;
-            fprintf (stderr, "%s\n", str.c_str());
+                fprintf (stream, "\n") ;
+            fprintf (stream, "%s\n", str.c_str());
         }
         else
-            fprintf (stderr, "%s\r", str.c_str());
+        {
+            fprintf (stream, "%s\r", str.c_str());
+            // Emscripten's TTY otherwise waits for a newline and delivers a
+            // render's entire carriage-return progress stream at completion.
+            fflush(stream);
+        }
         lastType = type;
     }
 }
@@ -127,9 +129,7 @@ static void PrintStatusChanged (vfeSession *session, State force = kUnknown)
 
 static void PrintVersion(void)
 {
-    // TODO -- GNU/Linux customs would be to print to stdout (among other differences).
-
-    fprintf(stderr,
+    fprintf(stdout,
         "%s %s\n\n"
         "%s\n%s\n%s\n"
         "%s\n%s\n%s\n\n",
@@ -137,7 +137,7 @@ static void PrintVersion(void)
         DISTRIBUTION_MESSAGE_1, DISTRIBUTION_MESSAGE_2, DISTRIBUTION_MESSAGE_3,
         POV_RAY_COPYRIGHT, DISCLAIMER_MESSAGE_1, DISCLAIMER_MESSAGE_2
     );
-    fprintf(stderr,
+    fprintf(stdout,
         "Built-in features:\n"
         "  I/O restrictions:          %s\n"
         "  X Window display:          %s\n"
@@ -145,7 +145,7 @@ static void PrintVersion(void)
         "  Unsupported image formats: %s\n\n",
         BUILTIN_IO_RESTRICTIONS, BUILTIN_XWIN_DISPLAY, BUILTIN_IMG_FORMATS, MISSING_IMG_FORMATS
     );
-    fprintf(stderr,
+    fprintf(stdout,
         "Compilation settings:\n"
         "  Build architecture:  %s\n"
         "  Built/Optimized for: %s\n"
@@ -204,8 +204,7 @@ int main (int argc, char **argv)
     if (session->GetUnixOptions()->isOptionSet("general", "help"))
     {
         session->Shutdown() ;
-        PrintStatus (session) ;
-        // TODO: general usage display (not yet in core code)
+        PrintStatus (session, stdout) ;
         session->GetUnixOptions()->PrintOptions();
         delete session;
         fflush(stdout);

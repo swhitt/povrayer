@@ -12,6 +12,55 @@ export { PovrayError };
 
 let busy = false;
 
+// Animation peak memory is substantially larger than the final PNG payload:
+// while playback assets are prepared the page can hold the encoded PNG, a Blob,
+// and a decoded RGBA ImageBitmap for every frame. Budget eight bytes per pixel
+// (encoded+decoded, deliberately conservative) and reject before starting wasm
+// when the requested sweep would exceed a tab-safe 256 MiB.
+export const ANIMATION_MEMORY_BUDGET_BYTES = 256 * 1024 * 1024;
+const ANIMATION_BYTES_PER_PIXEL = 8;
+const BITMAP_DECODE_CONCURRENCY = 2;
+
+/** Estimated peak bytes while animation PNGs become playback assets. */
+export function estimateAnimationMemoryBytes(width, height, frames) {
+  return Math.ceil(Number(width) * Number(height) * Number(frames) * ANIMATION_BYTES_PER_PIXEL);
+}
+
+/**
+ * Decode frame Blobs with a small fixed worker pool. A failure waits for the
+ * already-started decodes, closes every successful bitmap, then rejects; no
+ * partially-owned GPU resources escape to the caller.
+ *
+ * @param {Blob[]} blobs
+ * @returns {Promise<ImageBitmap[]>}
+ */
+export async function decodeAnimationBitmaps(blobs) {
+  /** @type {ImageBitmap[]} */
+  const decoded = new Array(blobs.length);
+  const errors = [];
+  let next = 0;
+  const workers = Array.from(
+    { length: Math.min(BITMAP_DECODE_CONCURRENCY, blobs.length) },
+    async () => {
+      for (;;) {
+        const index = next++;
+        if (index >= blobs.length) return;
+        try {
+          decoded[index] = await createImageBitmap(blobs[index]);
+        } catch (err) {
+          errors.push(err);
+        }
+      }
+    }
+  );
+  await Promise.all(workers);
+  if (errors.length > 0) {
+    for (const bitmap of decoded) bitmap?.close();
+    throw errors[0];
+  }
+  return decoded;
+}
+
 /** True while a render is in flight. */
 export function isBusy() {
   return busy;
@@ -147,7 +196,6 @@ export async function renderScene(source, opts = {}) {
  */
 export async function renderAnimation(source, opts = {}) {
   if (busy) throw new Error('render already in progress');
-  busy = true;
   const {
     onEvent,
     onProgress,
@@ -158,6 +206,20 @@ export async function renderAnimation(source, opts = {}) {
     keepFrames = true,
     ...rest
   } = opts;
+
+  // Match the wrapper's defaults without changing the options forwarded to it.
+  const width = /** @type {{ width?: number }} */ (opts).width ?? 800;
+  const height = /** @type {{ height?: number }} */ (opts).height ?? 600;
+  const estimatedBytes = estimateAnimationMemoryBytes(width, height, frames);
+  if (estimatedBytes > ANIMATION_MEMORY_BUDGET_BYTES) {
+    const need = Math.ceil(estimatedBytes / (1024 * 1024));
+    const limit = Math.floor(ANIMATION_MEMORY_BUDGET_BYTES / (1024 * 1024));
+    throw new Error(
+      `animation needs about ${need} MiB of playback memory (safety limit ${limit} MiB); reduce the frame count or resolution`
+    );
+  }
+
+  busy = true;
   const rawLines = [];
   try {
     const start = performance.now();
@@ -180,29 +242,21 @@ export async function renderAnimation(source, opts = {}) {
     const blobs = pngs.map((bytes) => new Blob([bytes], { type: 'image/png' }));
     const frameBytes = keepFrames ? pngs : undefined;
     if (!keepFrames) pngs = [];
-    const blobUrls = blobs.map((blob) => URL.createObjectURL(blob));
-    const bitmapResults = await Promise.allSettled(
-      blobs.map((blob) => Promise.resolve().then(() => createImageBitmap(blob)))
-    );
-    const bitmapFailure = bitmapResults.find((result) => result.status === 'rejected');
-    if (bitmapFailure) {
+    const blobUrls = [];
+    try {
+      for (const blob of blobs) blobUrls.push(URL.createObjectURL(blob));
+      const bitmaps = await decodeAnimationBitmaps(blobs);
+      return {
+        ...(frameBytes ? { frames: frameBytes } : {}),
+        blobUrls,
+        bitmaps,
+        elapsedMs,
+        log: rawLines.join('\n'),
+      };
+    } catch (err) {
       for (const u of blobUrls) URL.revokeObjectURL(u);
-      for (const result of bitmapResults) {
-        if (result.status === 'fulfilled') result.value.close();
-      }
-      throw bitmapFailure.reason;
+      throw err;
     }
-    const bitmaps = bitmapResults.map((result) => {
-      if (result.status !== 'fulfilled') throw new Error('unreachable bitmap result');
-      return result.value;
-    });
-    return {
-      ...(frameBytes ? { frames: frameBytes } : {}),
-      blobUrls,
-      bitmaps,
-      elapsedMs,
-      log: rawLines.join('\n'),
-    };
   } finally {
     busy = false;
   }

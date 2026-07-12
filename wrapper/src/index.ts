@@ -20,16 +20,16 @@
  */
 
 export interface RenderOptions {
-    /** Image width in pixels (`+W`). Default 800. */
+    /** Image width in pixels (`+W`), integer 1..32768. Default 800. */
     width?: number;
-    /** Image height in pixels (`+H`). Default 600. */
+    /** Image height in pixels (`+H`), integer 1..32768. Default 600. */
     height?: number;
     /** Render quality (`+Q`), 0..11. Omitted unless set. */
     quality?: number;
     /**
      * Antialiasing: `false` (the default) disables it (`-A`); `true` enables
      * it with threshold 0.3 (`+A0.3`); a number enables it with that
-     * threshold (`+A{n}`).
+     * threshold (`+A{n}`), from 0 to 1.
      */
     antialias?: boolean | number;
     /**
@@ -130,6 +130,32 @@ function defaultThreads(): number {
     return Math.min(32, Math.max(1, hc));
 }
 
+function assertIntegerOption(name: string, value: number, min: number, max: number): void {
+    if (!Number.isInteger(value) || value < min || value > max) {
+        throw new RangeError(`${name} must be an integer from ${min} to ${max}`);
+    }
+}
+
+/** Validate public numeric options before loading or instantiating the engine. */
+function validateRenderOptions(
+    width: number,
+    height: number,
+    quality: number | undefined,
+    threads: number,
+    antialias: boolean | number,
+): void {
+    assertIntegerOption("width", width, 1, 32768);
+    assertIntegerOption("height", height, 1, 32768);
+    if (quality !== undefined) assertIntegerOption("quality", quality, 0, 11);
+    assertIntegerOption("threads", threads, 1, 32);
+    if (
+        typeof antialias === "number" &&
+        (!Number.isFinite(antialias) || antialias < 0 || antialias > 1)
+    ) {
+        throw new RangeError("antialias must be false, true, or a finite threshold from 0 to 1");
+    }
+}
+
 /** Maps a `files` key to its MEMFS path, rejecting escapes from /work. */
 function stagedPath(name: string): string {
     const segments = name.split("/").filter((s) => s !== "" && s !== ".");
@@ -207,6 +233,7 @@ async function runEngine<T>(
         locateFile,
     } = options;
 
+    validateRenderOptions(width, height, quality, threads, antialias);
     signal?.throwIfAborted();
 
     const factory = await loadFactory();
@@ -433,6 +460,9 @@ export async function renderAnimation(
 
     if (!Number.isInteger(frames) || frames < 1) {
         throw new Error("frames must be an integer >= 1");
+    }
+    if (!Number.isFinite(initialClock) || !Number.isFinite(finalClock)) {
+        throw new RangeError("initialClock and finalClock must be finite numbers");
     }
 
     const extraArgs = ["+KFI1", `+KFF${frames}`, `+KI${initialClock}`, `+KF${finalClock}`];

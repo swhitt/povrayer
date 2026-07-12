@@ -11,10 +11,107 @@
 import { classifyAsset, assetSnippet, safeName, uniqueName } from './assets.js';
 
 /**
+ * Scan POV-Ray source for string literals that can name staged files. Comments
+ * are skipped, block comments nest like POV-Ray's, and a non-literal #include
+ * is reported so callers can fall back to staging everything rather than break
+ * an include assembled through a variable/concat expression.
+ *
+ * @param {string} source
+ * @returns {{ strings: string[], dynamicInclude: boolean }}
+ */
+function scanFileReferences(source) {
+  const strings = [];
+  let dynamicInclude = false;
+  let i = 0;
+  let blockDepth = 0;
+  while (i < source.length) {
+    if (blockDepth > 0) {
+      if (source.startsWith('/*', i)) {
+        blockDepth++;
+        i += 2;
+      } else if (source.startsWith('*/', i)) {
+        blockDepth--;
+        i += 2;
+      } else {
+        i++;
+      }
+      continue;
+    }
+    if (source.startsWith('//', i)) {
+      const nl = source.indexOf('\n', i + 2);
+      i = nl === -1 ? source.length : nl + 1;
+      continue;
+    }
+    if (source.startsWith('/*', i)) {
+      blockDepth = 1;
+      i += 2;
+      continue;
+    }
+    if (source[i] === '"') {
+      let value = '';
+      i++;
+      while (i < source.length && source[i] !== '"' && source[i] !== '\n') {
+        if (source[i] === '\\' && i + 1 < source.length) i++;
+        value += source[i++];
+      }
+      if (source[i] === '"') i++;
+      strings.push(value);
+      continue;
+    }
+    if (source[i] === '#') {
+      const directive = /^#\s*include\b/i.exec(source.slice(i));
+      if (directive) {
+        let j = i + directive[0].length;
+        while (/\s/.test(source[j] ?? '')) j++;
+        if (source[j] !== '"') dynamicInclude = true;
+      }
+    }
+    i++;
+  }
+  return { strings, dynamicInclude };
+}
+
+/** Normalize the harmless leading ./ form POV accepts for /work-relative files. */
+function referenceName(value) {
+  return value.replace(/^(?:\.\/)+/, '');
+}
+
+/**
+ * Select only staged files referenced by the scene, following dropped text
+ * includes transitively. A dynamic #include expression is deliberately
+ * conservative and returns the whole registry: static analysis cannot know
+ * which staged include it will choose at render time.
+ *
+ * @param {string} source
+ * @param {ReadonlyMap<string, string | Uint8Array>} registry
+ * @returns {Record<string, string | Uint8Array> | undefined}
+ */
+export function referencedAssetFiles(source, registry) {
+  if (registry.size === 0) return undefined;
+  const selected = new Map();
+  const pending = [source];
+
+  while (pending.length > 0) {
+    const text = pending.pop();
+    const { strings, dynamicInclude } = scanFileReferences(text);
+    if (dynamicInclude) return Object.fromEntries(registry);
+    for (const literal of strings) {
+      const name = referenceName(literal);
+      if (!registry.has(name) || selected.has(name)) continue;
+      const data = registry.get(name);
+      selected.set(name, data);
+      if (typeof data === 'string') pending.push(data);
+    }
+  }
+
+  return selected.size > 0 ? Object.fromEntries(selected) : undefined;
+}
+
+/**
  * Self-queries its DOM contract from the page: #editor-wrap (drop target),
  * #asset-chips + #assets (the staged-asset strip), and #asset-note (skip feedback).
  * @param {{ insertSnippet: (text: string) => void, replaceScene: (text: string) => void }} hooks
- * @returns {{ assetFiles: () => Record<string, Uint8Array | string> | undefined }}
+ * @returns {{ assetFiles: (source: string) => Record<string, Uint8Array | string> | undefined }}
  */
 export function createAssetDrop({ insertSnippet, replaceScene }) {
   const editorWrap = document.getElementById('editor-wrap');
@@ -26,10 +123,10 @@ export function createAssetDrop({ insertSnippet, replaceScene }) {
   const assetRegistry = new Map();
   const EMPTY_ASSET = new Uint8Array(0); // placeholder while a dropped file is being read
 
-  // The staged assets as the wrapper's `files` map, or undefined when there are
-  // none (so the render opts stay clean and the wrapper skips FS staging).
-  function assetFiles() {
-    return assetRegistry.size > 0 ? Object.fromEntries(assetRegistry) : undefined;
+  // The referenced subset as the wrapper's `files` map. Text includes are
+  // followed transitively; dynamic include expressions conservatively stage all.
+  function assetFiles(source) {
+    return referencedAssetFiles(source, assetRegistry);
   }
 
   function renderAssetChips() {

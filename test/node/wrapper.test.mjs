@@ -137,6 +137,26 @@ test('antialias: <number> appends +A{n}', async () => {
   });
 });
 
+test('numeric render options reject invalid values before engine work', async () => {
+  /** @type {Array<[import('../../dist/index.js').RenderOptions, RegExp]>} */
+  const invalid = [
+    [{ width: 1.5 }, /width must be an integer/],
+    [{ width: 0 }, /width must be an integer/],
+    [{ width: 32769 }, /width must be an integer/],
+    [{ height: 0 }, /height must be an integer/],
+    [{ quality: -1 }, /quality must be an integer/],
+    [{ quality: 12 }, /quality must be an integer/],
+    [{ threads: 0 }, /threads must be an integer/],
+    [{ threads: 33 }, /threads must be an integer/],
+    [{ antialias: Number.NaN }, /antialias must be/],
+    [{ antialias: -0.1 }, /antialias must be/],
+    [{ antialias: 1.1 }, /antialias must be/],
+  ];
+  for (const [options, message] of invalid) {
+    await assert.rejects(render(scene, options), message);
+  }
+});
+
 test('a pre-aborted signal rejects before any work', async () => {
   // Aborted before render() is even called: the first throwIfAborted (before
   // loadFactory) rejects, so the factory is never instantiated.

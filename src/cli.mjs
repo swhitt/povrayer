@@ -8,13 +8,13 @@ import { basename, dirname, extname, join } from 'node:path';
 const HELP = `Usage: povrayer <scene.pov | -> [options] [-- raw POV-Ray args...]
 
   <scene.pov>    scene file to render; '-' reads the scene source from stdin
-  -w N           image width in pixels (default 800)
-  -h N           image height in pixels (default 600)
+  -w N           image width in pixels, 1..32768 (default 800)
+  -h N           image height in pixels, 1..32768 (default 600)
   -o FILE        output PNG path; '-' writes the PNG bytes to stdout
                  (default: <scene>.png next to the scene, or '-' in stdin mode)
   -q N           render quality, 0..11
-  -a [T]         enable antialiasing, with optional threshold T (e.g. -a 0.3)
-  --threads N    number of render threads
+  -a [T]         enable antialiasing, optional threshold T in 0..1 (e.g. -a 0.3)
+  --threads N    number of render threads, 1..32
   --frames N     render N frames as a clock-driven animation instead of a
                  single image (writes numbered PNGs; see below)
   --clock-initial F  clock value at the first frame (default 0)
@@ -64,6 +64,12 @@ function parseArgs(argv) {
       fail(`${flag} expects a number`);
     return n;
   };
+  const boundedInt = (flag, value, min, max) => {
+    const n = num(flag, value);
+    if (!Number.isInteger(n) || n < min || n > max)
+      fail(`${flag} expects an integer from ${min} to ${max}`);
+    return n;
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--help') {
@@ -73,16 +79,16 @@ function parseArgs(argv) {
       options.args.push(...argv.slice(i + 1));
       break;
     } else if (arg === '-w') {
-      options.width = num('-w', argv[++i]);
+      options.width = boundedInt('-w', argv[++i], 1, 32768);
     } else if (arg === '-h') {
-      options.height = num('-h', argv[++i]);
+      options.height = boundedInt('-h', argv[++i], 1, 32768);
     } else if (arg === '-o') {
       out = argv[++i];
       if (out === undefined) fail('-o expects a path');
     } else if (arg === '-q') {
-      options.quality = num('-q', argv[++i]);
+      options.quality = boundedInt('-q', argv[++i], 0, 11);
     } else if (arg === '--threads') {
-      options.threads = num('--threads', argv[++i]);
+      options.threads = boundedInt('--threads', argv[++i], 1, 32);
     } else if (arg === '--frames') {
       const n = num('--frames', argv[++i]);
       if (!Number.isInteger(n) || n < 1) fail('--frames expects an integer >= 1');
@@ -94,10 +100,13 @@ function parseArgs(argv) {
     } else if (arg === '-a') {
       // Optional threshold: consume the next token only if it parses as a number.
       const next = argv[i + 1];
-      options.antialias =
-        next !== undefined && next !== '' && Number.isFinite(Number(next))
-          ? Number(argv[++i])
-          : true;
+      if (next !== undefined && next !== '' && Number.isFinite(Number(next))) {
+        const threshold = Number(argv[++i]);
+        if (threshold < 0 || threshold > 1) fail('-a threshold must be from 0 to 1');
+        options.antialias = threshold;
+      } else {
+        options.antialias = true;
+      }
     } else if (scene === undefined && (arg === '-' || !arg.startsWith('-'))) {
       scene = arg;
     } else {

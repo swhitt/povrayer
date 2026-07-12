@@ -66,10 +66,11 @@ try {
   // Set the editor source and fire the input event the app listens on (rebuilds
   // the scene-params panel, schedules a save/draft). Shared by the slider steps.
   const setSceneSource = (val) =>
-    page.evaluate((v) => {
+    page.evaluate(async (v) => {
       const e = document.getElementById('editor');
       e.value = v;
       e.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise(requestAnimationFrame);
     }, val);
 
   // FIRST: cross-origin isolation, so a header regression fails distinctly
@@ -1426,6 +1427,7 @@ try {
   );
   const galleryOpen = await page.evaluate(async () => {
     const { EXAMPLES } = await import('/examples.js');
+    const { GALLERY_BATCH_SIZE } = await import('/gallery.js');
     const first = document.querySelector('.gallery-card[data-name="csg-die"] img');
     return {
       count: [...document.querySelectorAll('.gallery-card')].length,
@@ -1433,21 +1435,56 @@ try {
       focused: document.activeElement?.id,
       img: first.getAttribute('src'),
       imgW: first.getAttribute('width'),
+      batch: GALLERY_BATCH_SIZE,
       expected: EXAMPLES.length,
     };
   });
-  assert.equal(galleryOpen.count, galleryOpen.expected, 'gallery renders one card per example');
+  assert.equal(galleryOpen.count, galleryOpen.batch, 'gallery renders only its first batch');
   assert.deepEqual(
     galleryOpen,
     {
-      count: galleryOpen.expected,
+      count: galleryOpen.batch,
       loaded: 'csg-die',
       focused: 'gallery-search',
       img: 'example-thumbnails/csg-die.png',
       imgW: '160',
+      batch: galleryOpen.batch,
       expected: galleryOpen.expected,
     },
-    'gallery opens with search focused and marks the loaded example'
+    'gallery opens with bounded DOM, search focused, and the loaded example marked'
+  );
+  await page.evaluate(() => {
+    const grid = document.getElementById('gallery-grid');
+    Object.defineProperties(grid, {
+      scrollHeight: { value: 2_000, configurable: true },
+      clientHeight: { value: 500, configurable: true },
+      scrollTop: { value: 0, configurable: true },
+    });
+    grid.dispatchEvent(new Event('scroll'));
+    delete grid.scrollHeight;
+    delete grid.clientHeight;
+    delete grid.scrollTop;
+  });
+  assert.equal(
+    await page.locator('.gallery-card').count(),
+    galleryOpen.batch,
+    'scrolling away from the end does not append a batch'
+  );
+  await page.click('.gallery-more');
+  assert.equal(
+    await page.locator('.gallery-card').count(),
+    Math.min(galleryOpen.batch * 2, galleryOpen.expected),
+    'the accessible fallback appends the next gallery batch'
+  );
+  await page.evaluate(() => {
+    const grid = document.getElementById('gallery-grid');
+    grid.scrollTop = grid.scrollHeight;
+    grid.dispatchEvent(new Event('scroll'));
+  });
+  assert.equal(
+    await page.locator('.gallery-card').count(),
+    Math.min(galleryOpen.batch * 3, galleryOpen.expected),
+    'scrolling near the end appends another gallery batch'
   );
   await page.hover('.gallery-card[data-name="csg-die"]');
   assert.deepEqual(
@@ -1556,6 +1593,12 @@ try {
   assert.equal(await triggerName(), 'sourced-wineglass', 'clicking a gallery card loads it');
 
   await page.click('#gallery-btn');
+  await page.click('#gallery-clear');
+  assert.equal(
+    await page.locator('.gallery-card').first().getAttribute('data-name'),
+    'sourced-wineglass',
+    'clearing filters keeps the loaded example at the front of a fresh batch'
+  );
   await page.fill('#gallery-search', 'crystal cluster');
   await page.click('.gallery-card[data-name="sourced-crystal"]');
   await page.waitForFunction(
@@ -2128,6 +2171,37 @@ try {
     document.getElementById('scrubber').dispatchEvent(new Event('input')); // seek -> !bitmaps.length
     document.getElementById('export-btn').click(); // exportAs -> !bitmaps.length
   });
+
+  assert.match(
+    await page.evaluate(async () => {
+      const { renderAnimation } = await import('./render-client.js');
+      try {
+        await renderAnimation('', { frames: 100 }); // wrapper-default 800×600 exceeds the budget
+      } catch (err) {
+        return err instanceof Error ? err.message : String(err);
+      }
+      return '';
+    }),
+    /safety limit 256 MiB/,
+    'the animation budget should apply the wrapper defaults when dimensions are omitted'
+  );
+
+  // Reject an animation whose decoded playback assets would exceed the tab-safe
+  // memory budget before wasm starts, then prove the render lock remains free.
+  await page.fill('#width', '2048');
+  await page.fill('#height', '2048');
+  await page.fill('#frames', '9');
+  await page.click('#render-btn');
+  await page.waitForFunction(() => document.getElementById('status').dataset.state === 'error');
+  assert.match(
+    await page.evaluate(() => document.getElementById('error').textContent),
+    /animation needs about \d+ MiB.*safety limit 256 MiB/,
+    'oversized animations should fail with an actionable memory-budget message'
+  );
+  await page.fill('#width', '48');
+  await page.fill('#height', '36');
+  await page.fill('#frames', '30');
+
   assert.equal(
     await page.evaluate(async () => {
       const { createPlayer } = await import('./player.js');
@@ -2354,6 +2428,28 @@ try {
     'a stalled tick must resync and advance exactly one frame (not burst the backlog)'
   );
   assert.equal(resync.aria, 'frame 2 of 3', 'the resync-advanced frame announces "frame 2 of 3"');
+
+  const cachedPage = await page.evaluate(() => {
+    const canvas = document.getElementById('player-canvas');
+    const before = { width: canvas.width, height: canvas.height };
+    window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+    return {
+      before,
+      after: { width: canvas.width, height: canvas.height },
+      controlsHidden: document.getElementById('player-controls').hidden,
+      playLabel: document.getElementById('play-btn').textContent,
+    };
+  });
+  assert.deepEqual(
+    cachedPage,
+    {
+      before: { width: 48, height: 36 },
+      after: { width: 48, height: 36 },
+      controlsHidden: false,
+      playLabel: 'Play',
+    },
+    'entering the back/forward cache pauses playback without releasing restorable frames'
+  );
 
   // Export pipeline. Capture both the download filenames (stubbed anchor click)
   // and the produced Blobs (stubbed createObjectURL) so each encoder's real
@@ -2624,9 +2720,9 @@ try {
   );
   assert.equal(bitmapFailureCleanup.calls, 2, 'bitmap creation should be attempted for each frame');
 
-  // Mode toggle + plate routing: switch to still (player pauses, image plate),
-  // run a still render, then bounce animate<->still so refreshPlate routes both
-  // a live player (animate, hasFrames) and a kept still image (still).
+  // Mode toggle + plate routing: leaving animate releases its playback assets.
+  // A subsequent still render remains available when bouncing through the now
+  // empty animate plate.
   await page.click('#mode-still');
   assert.equal(
     await page.evaluate(() => document.body.dataset.mode),
@@ -2645,22 +2741,21 @@ try {
     false,
     'a still render after animate mode should show the image again'
   );
-  await page.click('#mode-animate'); // refreshPlate animate branch (hasFrames true)
+  await page.click('#mode-animate'); // animation assets were released on the earlier mode switch
   assert.equal(
     await page.evaluate(() => document.getElementById('player-canvas').hidden),
-    false,
-    'switching back to animate should re-show the player'
+    true,
+    'switching back to animate should not resurrect released frames'
   );
-  // syncStatusToPlate re-derives a neutral footer that agrees with the new
-  // plate: animate (frames present) reads 'animation ready', not the prior
-  // still 'done …' line.
+  // syncStatusToPlate re-derives a neutral footer that agrees with the empty
+  // animation plate, not the prior still 'done …' line.
   assert.deepEqual(
     await page.evaluate(() => {
       const s = document.getElementById('status');
       return { text: s.textContent, state: s.dataset.state };
     }),
-    { text: 'animation ready', state: 'idle' },
-    'switching into animate with frames must read "animation ready"'
+    { text: 'no render yet', state: 'idle' },
+    'switching into animate after cleanup must read "no render yet"'
   );
   await page.click('#mode-still'); // refreshPlate still branch (hasStillImage true)
   assert.equal(
@@ -4252,6 +4347,45 @@ try {
   // Scene-params disclosure: hidden with no params; a busy scene (more than the
   // auto-open max) reveals it COLLAPSED with the count; a handful auto-opens it.
   // Exercised empty -> many -> empty -> few so every count branch is hit.
+  const deferredEditorWork = await page.evaluate(async () => {
+    await new Promise(requestAnimationFrame);
+    const editor = document.getElementById('editor');
+    const code = document.getElementById('editor-code');
+    const sliders = document.getElementById('sliders');
+    const before = code.textContent;
+    let rebuilds = 0;
+    sliders.replaceChildren = (...nodes) => {
+      rebuilds++;
+      Element.prototype.replaceChildren.call(sliders, ...nodes);
+    };
+    try {
+      editor.value = '#declare RAF_A = 1;';
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+      editor.value = '#declare RAF_B = 2;';
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+      const immediate = code.textContent;
+      await new Promise(requestAnimationFrame);
+      return { before, immediate, final: code.textContent, rebuilds };
+    } finally {
+      delete sliders.replaceChildren;
+    }
+  });
+  assert.equal(
+    deferredEditorWork.immediate,
+    deferredEditorWork.before,
+    'editor input defers the full-source overlay scan until the next frame'
+  );
+  assert.equal(
+    deferredEditorWork.final,
+    '#declare RAF_B = 2;',
+    'the deferred overlay reflects the newest source in the burst'
+  );
+  assert.equal(
+    deferredEditorWork.rebuilds,
+    1,
+    'two inputs in one frame rebuild generated sliders once'
+  );
+
   await setSceneSource('camera { location 0 look_at z }'); // no top-level #declare numbers
   assert.equal(
     await page.evaluate(() => document.getElementById('scene-params').hidden),
@@ -4325,10 +4459,11 @@ try {
   );
 
   // Editing the number in the CODE makes that the new slider value + default.
-  await page.evaluate(() => {
+  await page.evaluate(async () => {
     const e = document.getElementById('editor');
     e.value = '#declare A = 20;';
     e.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise(requestAnimationFrame);
   });
   assert.equal(
     await page.evaluate(() => document.querySelector('#sliders input').value),
@@ -4408,10 +4543,11 @@ try {
   );
 
   // A scene with no declared numbers hides the scene-params region again.
-  await page.evaluate(() => {
+  await page.evaluate(async () => {
     const e = document.getElementById('editor');
     e.value = 'sphere { 0, 1 }';
     e.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise(requestAnimationFrame);
   });
   assert.equal(
     await page.evaluate(() => document.getElementById('scene-params').hidden),

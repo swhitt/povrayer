@@ -152,36 +152,71 @@ export function createPlayer(elements) {
     loopBtn.setAttribute('aria-pressed', String(on));
   }
 
+  function releaseAssets(oldUrls, oldBitmaps) {
+    for (const u of oldUrls) URL.revokeObjectURL(u);
+    for (const b of oldBitmaps) b.close();
+  }
+
   function destroy() {
     pause();
-    for (const u of urls) URL.revokeObjectURL(u);
-    for (const b of bitmaps) b.close();
+    // Clear ownership before releasing resources so destroy stays idempotent even
+    // if a host callback observes the player during URL revocation/bitmap close.
+    const oldUrls = urls;
+    const oldBitmaps = bitmaps;
     urls = [];
     bitmaps = [];
+    releaseAssets(oldUrls, oldBitmaps);
+    idx = 0;
+    scrubber.max = '0';
+    scrubber.value = '0';
+    scrubber.setAttribute('aria-valuetext', 'no animation frames');
+    playerControls.hidden = true;
+    // Resetting canvas dimensions releases its backing store (which can be many
+    // megapixels); do the same for the detached GIF readback canvas.
+    playerCanvas.width = 0;
+    playerCanvas.height = 0;
+    playerCanvas.setAttribute('aria-label', 'animation playback');
+    if (exportCanvas) {
+      exportCanvas.width = 0;
+      exportCanvas.height = 0;
+      exportCanvas = null;
+    }
+    updateReadout();
   }
 
   /** @param {AnimationResult} result @param {number} playbackFps */
   function load(result, playbackFps) {
     destroy();
+    if (!result.bitmaps.length || result.bitmaps.length !== result.blobUrls.length) {
+      releaseAssets(result.blobUrls, result.bitmaps);
+      throw new Error('animation playback assets are incomplete');
+    }
     bitmaps = result.bitmaps;
     urls = result.blobUrls;
-    idx = 0;
-    setFps(playbackFps);
-    playerCanvas.width = bitmaps[0].width;
-    playerCanvas.height = bitmaps[0].height;
-    // Replace the static "animation playback" placeholder with the real shape
-    // once frames load, mirroring the REPL inline player's labelling.
-    playerCanvas.setAttribute(
-      'aria-label',
-      `animation, ${bitmaps[0].width}×${bitmaps[0].height}, ${bitmaps.length} frames`
-    );
-    scrubber.max = String(bitmaps.length - 1);
-    scrubber.value = '0';
-    draw(0);
-    playerControls.hidden = false;
-    // Autoplay only when motion is welcome; otherwise wait for the play button.
-    if (matchMedia('(prefers-reduced-motion: no-preference)').matches) play();
-    else setPlayLabel();
+    try {
+      idx = 0;
+      setFps(playbackFps);
+      playerCanvas.width = bitmaps[0].width;
+      playerCanvas.height = bitmaps[0].height;
+      // Replace the static "animation playback" placeholder with the real shape
+      // once frames load, mirroring the REPL inline player's labelling.
+      playerCanvas.setAttribute(
+        'aria-label',
+        `animation, ${bitmaps[0].width}×${bitmaps[0].height}, ${bitmaps.length} frames`
+      );
+      scrubber.max = String(bitmaps.length - 1);
+      scrubber.value = '0';
+      draw(0);
+      playerControls.hidden = false;
+      // Autoplay only when motion is welcome; otherwise wait for the play button.
+      if (matchMedia('(prefers-reduced-motion: no-preference)').matches) play();
+      else setPlayLabel();
+    } catch (err) {
+      // Ownership transferred above; any setup failure must release it before
+      // surfacing so the render result cannot strand GPU/blob resources.
+      destroy();
+      throw err;
+    }
   }
 
   // Wrap encoder output bytes in a Blob and trigger a download, revoking the URL

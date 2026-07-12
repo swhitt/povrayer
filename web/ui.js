@@ -46,6 +46,7 @@ import {
   matchesExampleFilters as recordMatchesFilters,
 } from './example-filters.js';
 import { createRenderFeedback } from './render-feedback.js';
+import { createGallery } from './gallery.js';
 
 const isoWarning = document.getElementById('iso-warning');
 ensureCrossOriginIsolation({ warningEl: isoWarning });
@@ -196,14 +197,11 @@ const SPLIT_MAX_FR = SPLIT_MAX_FRACTION / (1 - SPLIT_MAX_FRACTION); // 4
 // drives the disclosure (openBrowser seeds it, the head toggle flips it).
 const optionEls = [];
 const exampleGroups = [];
-const galleryCards = [];
-let galleryBuilt = false;
 // The roving aria-activedescendant item: a category HEAD or an OPTION, or null.
 let activeItem = null;
 
 const labelByKey = (items, key) => items.find((item) => item.key === key).label;
 const tierByKey = (key) => RENDER_TIERS.find((tier) => tier.key === key);
-const categoryLabelByKey = (key) => CATEGORIES.find((item) => item.key === key).label;
 
 // Render one .ex-group per CATEGORIES entry (in order) and one .ex-option per
 // scene. The head is a disclosure toggle (role=button + aria-expanded) carrying
@@ -288,56 +286,29 @@ function buildExampleBrowser() {
 }
 buildExampleBrowser();
 
-function buildGallery() {
-  if (galleryBuilt) return;
-  galleryBuilt = true;
-  for (const ex of EXAMPLES) {
-    const card = document.createElement('button');
-    card.type = 'button';
-    card.className = 'gallery-card';
-    card.dataset.name = ex.name;
-
-    const img = document.createElement('img');
-    img.src = ex.thumbnail;
-    img.alt = '';
-    img.loading = 'lazy';
-    img.decoding = 'async';
-    img.width = 160;
-    img.height = 120;
-
-    const body = document.createElement('span');
-    const title = document.createElement('span');
-    title.className = 'gallery-title';
-    title.textContent = ex.title;
-    const meta = document.createElement('span');
-    meta.className = 'gallery-meta';
-    meta.textContent = [
-      categoryLabelByKey(ex.category),
-      labelByKey(DIFFICULTIES, ex.difficulty),
-      labelByKey(RENDER_TIERS, ex.renderTier),
-      ex.animated ? 'Animated' : 'Still',
-    ].join(' · ');
-    const license = document.createElement('span');
-    license.className = 'gallery-license';
-    license.textContent = `${ex.license} · ${ex.author}`;
-    body.append(title, meta, license);
-    card.append(img, body);
-    galleryGrid.appendChild(card);
-
-    const haystack = exampleSearchText(ex, {
-      categoryLabel: categoryLabelByKey(ex.category),
-      difficultyLabel: labelByKey(DIFFICULTIES, ex.difficulty),
-      tierLabel: labelByKey(RENDER_TIERS, ex.renderTier),
-    });
-    galleryCards.push({ el: card, ex, haystack });
-  }
-  syncLoadedGalleryCard(selectedExample);
-}
-
 // EXAMPLES is a static, non-empty module literal, so EXAMPLES[0] is defined.
 const DEFAULT_EXAMPLE = EXAMPLES[0].name;
 // The loaded scene's name; replaces every old examplesSelect.value read/write.
 let selectedExample = DEFAULT_EXAMPLE;
+
+const gallery = createGallery({
+  panel: galleryPanel,
+  trigger: galleryBtn,
+  closeButton: galleryClose,
+  search: gallerySearch,
+  type: galleryType,
+  difficulty: galleryDifficulty,
+  tier: galleryTier,
+  license: galleryLicense,
+  clearButton: galleryClear,
+  grid: galleryGrid,
+  empty: galleryEmpty,
+  examples: EXAMPLES,
+  categories: CATEGORIES,
+  difficulties: DIFFICULTIES,
+  tiers: RENDER_TIERS,
+  onSelect: selectExample,
+});
 
 function hasExample(name) {
   return getExampleRecord(name) !== undefined;
@@ -361,10 +332,7 @@ function updateAttribution(ex) {
 }
 
 function syncLoadedGalleryCard(name) {
-  for (const { el } of galleryCards) {
-    if (el.dataset.name === name) el.dataset.loaded = 'true';
-    else delete el.dataset.loaded;
-  }
+  gallery.setSelected(name);
 }
 
 // Reflect the loaded scene in the trigger label + data-name, and re-mark the
@@ -782,56 +750,13 @@ function matchesExampleFilters(ex) {
   });
 }
 
-function resetGalleryFilters() {
-  gallerySearch.value = '';
-  galleryType.value = 'all';
-  galleryDifficulty.value = 'all';
-  galleryTier.value = 'all';
-  galleryLicense.value = 'all';
-}
-
-function hasGalleryFilters() {
-  return (
-    gallerySearch.value.trim() !== '' ||
-    galleryType.value !== 'all' ||
-    galleryDifficulty.value !== 'all' ||
-    galleryTier.value !== 'all' ||
-    galleryLicense.value !== 'all'
-  );
-}
-
-function matchesGalleryFilters(ex) {
-  return recordMatchesFilters(ex, {
-    type: galleryType.value,
-    difficulty: galleryDifficulty.value,
-    tier: galleryTier.value,
-    license: galleryLicense.value,
-  });
-}
-
-function renderGallery() {
-  const q = gallerySearch.value.trim().toLowerCase();
-  galleryClear.hidden = !hasGalleryFilters();
-  let anyMatch = false;
-  for (const { el, ex, haystack } of galleryCards) {
-    const match = (q === '' || haystack.includes(q)) && matchesGalleryFilters(ex);
-    el.hidden = !match;
-    if (match) anyMatch = true;
-  }
-  galleryEmpty.hidden = anyMatch;
-}
-
 function openGallery() {
   closeBrowser(false);
-  buildGallery();
-  renderGallery();
-  galleryPanel.hidden = false;
-  gallerySearch.focus();
+  gallery.open();
 }
 
 function closeGallery() {
-  galleryPanel.hidden = true;
-  galleryBtn.focus();
+  gallery.close();
 }
 
 function renderList() {
@@ -917,25 +842,6 @@ exampleTrigger.addEventListener('keydown', (e) => {
 });
 
 galleryBtn.addEventListener('click', openGallery);
-galleryClose.addEventListener('click', closeGallery);
-
-gallerySearch.addEventListener('input', renderGallery);
-for (const filter of [galleryType, galleryDifficulty, galleryTier, galleryLicense]) {
-  filter.addEventListener('change', renderGallery);
-}
-galleryClear.addEventListener('click', () => {
-  resetGalleryFilters();
-  renderGallery();
-  gallerySearch.focus();
-});
-
-galleryGrid.addEventListener('click', (e) => {
-  const target = /** @type {Element} */ (e.target);
-  const card = /** @type {HTMLElement | null} */ (target.closest('.gallery-card'));
-  if (!card) return;
-  selectExample(card.dataset.name);
-  closeGallery();
-});
 
 exampleSearch.addEventListener('input', () => {
   renderList();
@@ -1059,12 +965,23 @@ function renderGutter() {
   gutter.scrollTop = editor.scrollTop;
 }
 
-// Repaint the syntax overlay from the current text. Cheap synchronous string
-// scan (no debounce: that's only for the render in the live-draft section), so
-// it sits beside every renderGutter() call site. The HTML is byte-escaped in
+// Repaint the syntax overlay from the current text. The HTML is byte-escaped in
 // highlight.js, so it can never break or inject markup.
 function paintHighlight() {
   editorCode.innerHTML = highlight(editor.value);
+}
+
+// Highlighting and slider discovery both scan the full source. Coalesce bursts
+// of input to one pass on the next paint boundary so the input event itself
+// stays light while the overlay and generated controls still update promptly.
+let editorWorkFrame = 0;
+function scheduleEditorWork() {
+  if (editorWorkFrame) return;
+  editorWorkFrame = requestAnimationFrame(() => {
+    editorWorkFrame = 0;
+    paintHighlight();
+    buildSliders();
+  });
 }
 
 // Keep the gutter and syntax overlay aligned as the textarea scrolls. The
@@ -1084,9 +1001,8 @@ editor.addEventListener('input', () => {
   clearErrorLine(); // the edit may well fix the error; drop the stale marker
   closeFind(false); // editing invalidates the match set; the bar simply closes
   renderGutter();
-  paintHighlight();
+  scheduleEditorWork();
   refreshComplete(false);
-  buildSliders();
   updateSceneActions();
   scheduleSave();
   scheduleDraft({ sourceChanged: true });
@@ -1951,7 +1867,9 @@ function collectOptions() {
   }
   widthInput.value = String(opts.width);
   heightInput.value = String(opts.height);
-  opts.files = assetDrop.assetFiles(); // undefined when no assets are loaded; the wrapper skips it
+  // Stage only files the current scene references (including transitive dropped
+  // includes). Dynamic include expressions conservatively fall back to all.
+  opts.files = assetDrop.assetFiles(editor.value);
   const args = parseFlags(flagsInput.value);
   return args.length ? { ...opts, args } : opts;
 }
@@ -2568,7 +2486,7 @@ function draftOptions() {
     quality: Math.min(quality ?? Infinity, DRAFT_MAX_QUALITY),
     threads: threads ?? Math.min(DRAFT_MAX_THREADS, navigator.hardwareConcurrency),
     antialias: false,
-    files: assetDrop.assetFiles(), // staged dropped assets (undefined when none)
+    files: assetDrop.assetFiles(editor.value), // referenced dropped assets only
   };
 }
 
@@ -2914,6 +2832,26 @@ const player = createPlayer({
   exportFormat,
 });
 
+// Rendering assets are page-owned, not browser-navigation-owned. Release every
+// animation resource plus the two retained still-image generations on pagehide;
+// also stop wasm work so a bfcache/navigation cannot leave worker threads alive.
+window.addEventListener('pagehide', (event) => {
+  abortCtl?.abort();
+  liveDraftController.cancel();
+  // A persisted page is entering the back/forward cache, not unloading. Pause
+  // playback but retain its URLs/bitmaps so restoring the page restores state.
+  if (event.persisted) {
+    player.pause();
+    return;
+  }
+  player.destroy();
+  for (const url of new Set([lastUrl, prevUrl])) {
+    if (url) URL.revokeObjectURL(url);
+  }
+  lastUrl = null;
+  prevUrl = null;
+});
+
 // ---- mode toggle + plate routing ----
 
 function setMode(next) {
@@ -2922,6 +2860,10 @@ function setMode(next) {
   // A live draft is still-only; aborting it must not block the switch (its
   // finally re-checks mode and won't reschedule in animate).
   liveDraftController.cancel();
+  // Animation frames can retain hundreds of MiB across decoded GPU bitmaps,
+  // blob URLs, and a canvas backing store. Leaving animate mode is an explicit
+  // lifecycle boundary: free them instead of keeping a hidden player alive.
+  if (mode === 'animate') player.destroy();
   mode = next;
   // The log + stat chips narrate the OTHER mode's last render; left visible
   // they read as describing the new plate (a still's "render log" lingering

@@ -2794,6 +2794,11 @@ kbd {
   font-size: var(--fs-out);
 }
 
+.gallery-more {
+  grid-column: 1 / -1;
+  justify-self: center;
+}
+
 @media (max-width: 720px) {
   #gallery {
     inset: 0;

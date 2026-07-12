@@ -69,6 +69,23 @@ test('-w with a non-number is a usage error (exit 2)', () => {
   assert.match(r.stderr.toString(), /-w expects a number/);
 });
 
+test('bounded numeric flags reject fractional and out-of-range values', () => {
+  /** @type {Array<[string[], RegExp]>} */
+  const cases = [
+    [['-w', '1.5', '-'], /-w expects an integer from 1 to 32768/],
+    [['-h', '0', '-'], /-h expects an integer from 1 to 32768/],
+    [['-q', '12', '-'], /-q expects an integer from 0 to 11/],
+    [['--threads', '33', '-'], /--threads expects an integer from 1 to 32/],
+    [['-a', '-0.1', '-'], /-a threshold must be from 0 to 1/],
+    [['-a', '1.1', '-'], /-a threshold must be from 0 to 1/],
+  ];
+  for (const [args, message] of cases) {
+    const r = runCli(args);
+    assert.equal(r.status, 2, `${args.join(' ')} should be a usage error`);
+    assert.match(r.stderr.toString(), message);
+  }
+});
+
 test('bare -a (non-numeric next token) enables AA; -o with no arg fails (exit 2)', () => {
   // `-a` sees `-o` as its next token; `-o` is not a number, so antialias is set
   // to `true` (the ternary's else) and `-o` is reparsed as a flag, which then

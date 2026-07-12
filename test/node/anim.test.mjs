@@ -209,6 +209,17 @@ test('invalid frames reject synchronously without rendering', async () => {
   }
 });
 
+test('non-finite animation clock bounds reject before rendering', async () => {
+  await assert.rejects(
+    renderAnimation(CLOCK_SCENE, { ...TINY, frames: 2, initialClock: Number.NaN }),
+    /initialClock and finalClock must be finite/
+  );
+  await assert.rejects(
+    renderAnimation(CLOCK_SCENE, { ...TINY, frames: 2, finalClock: Number.POSITIVE_INFINITY }),
+    /initialClock and finalClock must be finite/
+  );
+});
+
 test('a pre-aborted signal rejects with AbortError', async () => {
   const controller = new AbortController();
   controller.abort();
