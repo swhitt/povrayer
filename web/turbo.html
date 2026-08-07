@@ -7510,7 +7510,15 @@ blob {
       // is untouched and most rolls stream through as a same-frame tweak.
       function weirder() {
         let rolled = 0;
-        const out = editor.value.replace(/-?\d*\.\d+(?:[eE][+-]?\d+)?/g, (m) => {
+        const out = editor.value.replace(/-?\d*\.\d+(?:[eE][+-]?\d+)?/g, (m, offset, src) => {
+          // #version is a parser directive, not scene data. Jittering it makes the
+          // real renderer reject the whole file ("requires POV-Ray version 4.33 or
+          // later! ... Cannot parse input."), and because turbo itself ignores the
+          // value the damage only surfaces later, in Copy/Download/Ray-trace.
+          const lineStart = src.lastIndexOf('\n', offset - 1) + 1;
+          const nextBreak = src.indexOf('\n', offset);
+          const line = src.slice(lineStart, nextBreak === -1 ? src.length : nextBreak);
+          if (/^\s*#\s*version\b/.test(line)) return m;
           if (Math.random() < 0.45) return m; // leave some be, so it stays recognisable
           const decimals = (m.split('.')[1] || '').replace(/[eE].*/, '').length;
           const v = parseFloat(m);

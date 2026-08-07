@@ -873,6 +873,22 @@ export async function runEditorTools(ctx) {
   );
   assert.equal((await findState()).hidden, true, 'an editor edit closes the find bar');
 
+  // Esc reaches the DOCUMENT keydown handler only when focus has already left the
+  // bar: the bar's own handler stopPropagations so it never double-fires (and so a
+  // close never also aborts a render). That leaves "bar open, caret in the editor"
+  // as the one path through the document-level arm, and it is a real flow, Ctrl+F
+  // then click back into the scene then Esc.
+  await page.keyboard.press('Control+f');
+  assert.equal((await findState()).hidden, false, 'the bar reopens for the blurred-Esc check');
+  await page.evaluate(() => document.getElementById('editor').focus());
+  assert.equal((await findState()).hidden, false, 'focusing the editor leaves the bar open');
+  await page.keyboard.press('Escape');
+  assert.equal(
+    (await findState()).hidden,
+    true,
+    'Esc with the caret in the editor still closes an open find bar'
+  );
+
   // -- go-to-line --------------------------------------------------------------
   await page.evaluate(() => document.getElementById('editor').focus());
   await page.keyboard.press('Control+g');

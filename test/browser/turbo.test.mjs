@@ -200,6 +200,31 @@ try {
     'a valid edit should clear the parse error'
   );
 
+  // "make it weirder" jitters scene numbers, but #version is a parser directive,
+  // not scene data: turbo ignores its value, so a jittered one only fails later,
+  // in the real renderer, via Copy/Download/Ray-trace ("requires POV-Ray version
+  // 4.33 or later! ... Cannot parse input."). Roll it repeatedly (each number has
+  // a 55% chance of moving) and assert #version never drifts while other decimals
+  // do. turbo's inline script is outside checkJs and the coverage gate, so this
+  // behavioral assertion is the only thing guarding it.
+  const weird = await page.evaluate(() => {
+    const ed = /** @type {HTMLTextAreaElement} */ (document.getElementById('editor'));
+    const before = ed.value;
+    let anyOtherChanged = false;
+    for (let i = 0; i < 12; i++) {
+      ed.value = before;
+      /** @type {HTMLElement} */ (document.getElementById('weird')).click();
+      if (!/#version\s+3\.8\s*;/.test(ed.value)) return { versionBroken: true, anyOtherChanged };
+      if (ed.value !== before) anyOtherChanged = true;
+    }
+    return { versionBroken: false, anyOtherChanged };
+  });
+  assert.equal(weird.versionBroken, false, '#version must survive every weirder roll');
+  assert.equal(weird.anyOtherChanged, true, 'weirder should still jitter other numbers');
+  // Put the known-good scene back through the real input path so the Ray-trace
+  // handoff below sees turbo's normal state, not a jittered leftover.
+  assert.equal((await setSource(page, STRUCTURAL)).current, STRUCTURAL);
+
   // Ray-trace handoff carries the exact source and render mode into the real editor.
   await page.evaluate(() => {
     const w = /** @type {TurboWindow} */ (window);

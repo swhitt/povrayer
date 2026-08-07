@@ -1,7 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createSceneState } from '../../web/scene-state.js';
+import { createSceneState, displacesWork } from '../../web/scene-state.js';
+
+test('displacesWork only offers a restore when real text is actually being lost', () => {
+  // The deep-link paths (#hash, ?gist=, ?example=) stash on this verdict, so
+  // both refusal arms matter: no offer for an empty plate, none for a re-load of
+  // identical text, and an offer whenever typed work would vanish.
+  assert.equal(displacesWork('', 'sphere {}'), false);
+  assert.equal(displacesWork('   \n\t ', 'sphere {}'), false, 'whitespace is not work');
+  assert.equal(displacesWork('sphere {}', 'sphere {}'), false, 'a no-op replacement');
+  assert.equal(displacesWork('// MY WORK', 'sphere {}'), true);
+  // Whitespace-only incoming text still displaces real work.
+  assert.equal(displacesWork('// MY WORK', ''), true);
+});
 
 test('example loads update provenance and dirty/reset queries', () => {
   const state = createSceneState({ selectedExample: 'one', loadedSource: 'sphere' });

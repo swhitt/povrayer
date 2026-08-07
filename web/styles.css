@@ -611,14 +611,17 @@ body.ui main > * {
   min-width: 0;
 }
 
+/* No background/font-size here on purpose: this sits inside the already-panelled
+   search row, so it inherits both. It previously named --panel-2 and --fs-ui,
+   neither of which was ever defined, so both declarations were dropped as
+   invalid at computed-value time and the button rendered exactly as it does now.
+   test/node/styles-tokens.test.mjs keeps that class of dead reference out. */
 #example-clear {
   width: 28px;
   height: 28px;
   padding: 0;
   border: 1px solid var(--border);
-  background: var(--panel-2);
   color: var(--dim);
-  font-size: var(--fs-ui);
   line-height: 1;
 }
 

@@ -52,7 +52,7 @@ import {
 } from './example-filters.js';
 import { createRenderFeedback } from './render-feedback.js';
 import { createGallery } from './gallery.js';
-import { createSceneState } from './scene-state.js';
+import { createSceneState, displacesWork } from './scene-state.js';
 
 const isoWarning = document.getElementById('iso-warning');
 ensureCrossOriginIsolation({ warningEl: isoWarning });
@@ -600,6 +600,7 @@ function applyUrlParams() {
   const exampleName = params.get('example');
   if (exampleName && hasExample(exampleName)) {
     const record = getExampleRecord(exampleName);
+    if (displacesWork(editor.value, record.source)) stashScene();
     editor.value = record.source;
     sceneState.loadExample(exampleName, record.source);
     applyExampleClock(record, { syncPlayer: false });
@@ -892,6 +893,7 @@ exampleSearch.addEventListener('keydown', (e) => {
     }
   } else if (e.key === 'Escape') {
     e.preventDefault();
+    e.stopPropagation(); // closing the picker must not also abort a render
     closeBrowser(true);
   }
 });
@@ -3013,6 +3015,7 @@ applyMode();
 // scheduleDraft) PLUS the control writes the gist path doesn't need.
 /** @param {import('./permalink.js').PermalinkState} state */
 function hydrateFromState(state) {
+  if (displacesWork(editor.value, state.source)) stashScene();
   editor.value = state.source;
   // Same control schema as save/restore. coerceHydrate trusts the decoded values
   // but still checks selects against the live options (an old link may name a
@@ -3127,6 +3130,7 @@ async function loadGistScene(raw) {
   // gist query. startRender() supersedes any in-flight draft and
   // self-guards on busy / non-isolated, so it is safe to fire right after.
   sceneState.pinGist(id, source);
+  if (displacesWork(editor.value, source)) stashScene();
   editor.value = source;
   renderGutter();
   paintHighlight();
@@ -3349,12 +3353,19 @@ document.addEventListener('keydown', (e) => {
     if (e.shiftKey) finalRenderOnce = true;
     startRender();
   } else if (e.key === 'Escape') {
+    // Escape closes the topmost open surface, and only aborts a render when
+    // there is nothing left to close. Every closing arm preventDefaults so the
+    // key never also reaches a browser default.
     if (!galleryPanel.hidden) {
       e.preventDefault();
       closeGallery();
-    } else if (!shortcutsPanel.hidden) closeShortcuts();
-    else if (!findBar.hidden) closeFind(false);
-    else abortCtl?.abort();
+    } else if (!shortcutsPanel.hidden) {
+      e.preventDefault();
+      closeShortcuts();
+    } else if (!findBar.hidden) {
+      e.preventDefault();
+      closeFind(false);
+    } else abortCtl?.abort();
   } else if ((e.key === 'f' || e.key === 'F') && mod && !e.shiftKey && !e.altKey) {
     if (!findScopeOk(e.target)) return; // leave the browser's find alone elsewhere
     e.preventDefault();
