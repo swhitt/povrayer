@@ -28,7 +28,7 @@ jobs:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Deploy the exact commit ci tested: workflow_run otherwise defaults to
           # the default-branch HEAD, which can drift past the triggering run.
@@ -44,11 +44,11 @@ jobs:
           # a warm cache makes this a few seconds. The buildCommand in vercel.json
           # (tools/assemble-site.mjs) needs dist/ to exist, so this runs first.
           cache-from: type=gha
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Install Vercel CLI
-        run: npm install --global vercel@55.0.0
+        run: npm install --global vercel@58.7.1
       - name: Pull Vercel project settings (production)
         run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
       - name: Build (assembles _site from dist/ + web/ via buildCommand)

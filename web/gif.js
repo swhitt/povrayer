@@ -49,7 +49,7 @@ const MAX_SAMPLES = 50000;
  * Encode RGBA frames into one looping GIF89a animated GIF.
  * @param {RgbaFrame[]} frames each `.data` is RGBA, length width*height*4
  * @param {GifOptions} opts
- * @returns {Uint8Array} the GIF89a bytes
+ * @returns {Uint8Array<ArrayBuffer>} the GIF89a bytes
  */
 export function encodeGif(frames, opts) {
   const { width, height, delayCs } = opts;
@@ -560,7 +560,7 @@ function writeImageDescriptor(out, width, height) {
 /** Growable little-endian byte buffer. */
 class ByteWriter {
   constructor() {
-    /** @type {Uint8Array} */
+    /** @type {Uint8Array<ArrayBuffer>} */
     this.buf = new Uint8Array(1024);
     this.len = 0;
   }
@@ -597,7 +597,7 @@ class ByteWriter {
     this.len += arr.length;
   }
 
-  /** @returns {Uint8Array} the exact-length written bytes */
+  /** @returns {Uint8Array<ArrayBuffer>} the exact-length written bytes */
   take() {
     return this.buf.slice(0, this.len);
   }

@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": "^20.19.0 || ^22.13.0 || >=24"
   },
   "scripts": {
     "test": "npm run test:node && npm run test:browser",
@@ -32,16 +32,16 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
-    "@types/node": "22.19.20",
-    "c8": "11.0.0",
-    "eslint": "10.7.0",
-    "globals": "17.7.0",
+    "@types/node": "22.20.1",
+    "c8": "12.0.0",
+    "eslint": "10.8.0",
+    "globals": "17.9.0",
     "istanbul-lib-coverage": "3.2.2",
     "istanbul-lib-report": "3.0.1",
     "istanbul-reports": "3.2.0",
     "playwright": "1.61.1",
-    "prettier": "3.9.5",
-    "typescript": "5.8.3",
+    "prettier": "3.9.6",
+    "typescript": "6.0.3",
     "v8-to-istanbul": "9.3.0"
   }
 }

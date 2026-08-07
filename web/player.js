@@ -221,7 +221,7 @@ export function createPlayer(elements) {
 
   // Wrap encoder output bytes in a Blob and trigger a download, revoking the URL
   // after a grace window (the click navigates synchronously; the timeout frees it).
-  /** @param {Uint8Array} bytes @param {string} mime @param {string} name */
+  /** @param {Uint8Array<ArrayBuffer>} bytes @param {string} mime @param {string} name */
   function saveBytes(bytes, mime, name) {
     const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
     triggerDownload(url, name);

@@ -2,6 +2,15 @@
 // are no-ops unless POVRAYER_COVERAGE is set, so a plain `npm test` runs exactly
 // as before; `npm run coverage` flips the env on and dumps one raw V8 file per
 // driver into POVRAYER_COVERAGE_DIR for tools/coverage to convert + merge.
+//
+// playwright is deliberately pinned to 1.61.1: its Chromium reports V8 function
+// coverage for every function in a module, while 1.62.1's under-reports badly
+// (web/ui.js 168 functions -> 167 found / 115 hit, web/repl.js 61 -> 51 / 7),
+// which drops the 100% gate below threshold even though the same tests pass and
+// line coverage is unchanged. The tests are not at fault; the dumps themselves
+// are missing the functions. Re-check on a future Playwright before unpinning:
+// bump it, run `node tools/coverage/collect.mjs ui` and confirm the FNF/FNH in
+// coverage/lcov.info for web/ui.js is 168/168.
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 

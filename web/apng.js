@@ -202,7 +202,7 @@ function fcTLData(seq, width, height, delayNum, delayDen) {
  * @param {{ delayNum: number, delayDen?: number, numPlays?: number }} opts
  *   delayNum/delayDen express the per-frame delay as a fraction of a second
  *   (default den 1000 = milliseconds); numPlays 0 = loop forever
- * @returns {Uint8Array} a valid APNG
+ * @returns {Uint8Array<ArrayBuffer>} a valid APNG
  */
 export function encodeApng(frames, opts) {
   if (frames.length === 0) {

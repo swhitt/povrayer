@@ -410,7 +410,10 @@ async function runEngine<T>(
  *         failure) or the wasm runtime aborts; `AbortError` when cancelled
  *         via `options.signal`.
  */
-export async function render(source: string, options: RenderOptions = {}): Promise<Uint8Array> {
+export async function render(
+    source: string,
+    options: RenderOptions = {},
+): Promise<Uint8Array<ArrayBuffer>> {
     return runEngine(source, options, [], (fs) => Uint8Array.from(fs.readFile("/work/out.png")));
 }
 
@@ -455,7 +458,7 @@ const TRACE_DONE = /^\s*Trace Time:/;
 export async function renderAnimation(
     source: string,
     options: AnimationOptions,
-): Promise<Uint8Array[]> {
+): Promise<Uint8Array<ArrayBuffer>[]> {
     const { frames, initialClock = 0, finalClock = 1, onFrame, onProgress } = options;
 
     if (!Number.isInteger(frames) || frames < 1) {

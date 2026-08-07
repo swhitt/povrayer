@@ -28,7 +28,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Deploy the exact commit ci tested: workflow_run otherwise defaults to
           # the default-branch HEAD, which can drift past the triggering run.
@@ -43,7 +43,7 @@ jobs:
           cache-from: type=gha
           # No cache-to here: ci.yml owns the gha cache (10GB budget); this job
           # only reads it, so a main push reuses the layers ci just wrote.
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with: { node-version: 22 }
       - name: Assemble site (dist + web, flat)
         # Flat layout: web/'s relative URLs (./index.js, ./coi-serviceworker.js, ...)

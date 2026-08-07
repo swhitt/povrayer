@@ -38,7 +38,7 @@ function bytesToBase64url(bytes) {
 
 /**
  * @param {string} s
- * @returns {Uint8Array} the decoded bytes
+ * @returns {Uint8Array<ArrayBuffer>} the decoded bytes
  */
 function base64urlToBytes(s) {
   // Restore the standard alphabet; atob tolerates missing '=' padding but
@@ -53,10 +53,15 @@ function base64urlToBytes(s) {
 
 /**
  * Run bytes through a gzip (de)compression stream.
- * @param {Uint8Array} bytes
+ *
+ * The buffers are spelled `Uint8Array<ArrayBuffer>` rather than plain
+ * `Uint8Array` because this page runs cross-origin-isolated: with
+ * SharedArrayBuffer in scope, a bare `Uint8Array` widens to `ArrayBufferLike`,
+ * which the stream writer (BufferSource) won't accept.
+ * @param {Uint8Array<ArrayBuffer>} bytes
  * @param {'CompressionStream' | 'DecompressionStream'} which
  * @param {'gzip'} format
- * @returns {Promise<Uint8Array>}
+ * @returns {Promise<Uint8Array<ArrayBuffer>>}
  */
 async function pipe(bytes, which, format) {
   const Ctor = which === 'CompressionStream' ? CompressionStream : DecompressionStream;
