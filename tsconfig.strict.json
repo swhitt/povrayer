@@ -1,0 +1,43 @@
+{
+  // The strict tier. tsconfig.checkjs.json checks every first-party JS module at
+  // DEFAULT checkJs strictness (see the long rationale there): good enough to
+  // catch wrong argument types and bad call signatures, deliberately quiet about
+  // "possibly null" across DOM-heavy UI code.
+  //
+  // That leaves real bugs reachable. web/turbo-sw.js shipped a
+  // `.catch(() => caches.match(...))` whose miss path resolves to `undefined`,
+  // handing `respondWith(undefined)` to the service worker spec. Prettier,
+  // eslint, checkJs, and a 100% four-metric coverage gate all pass on it; there
+  // is no conditional, so no branch for the gate to miss. `strictNullChecks`
+  // catches it on one line.
+  //
+  // So this config runs FULL strict over the subset of modules that are already
+  // strict-clean, and CI enforces it. New code in these files has to stay strict,
+  // and files graduate in one at a time by moving a line into this include.
+  //
+  // Graduating a file means fixing its whole import closure, not just the file:
+  // adding complete.js also buys highlight.js, and render-orchestrator.js also
+  // buys live-draft.js. Check with `npx tsc -p tsconfig.strict.json --listFiles`.
+  "extends": "./tsconfig.checkjs.json",
+
+  "compilerOptions": {
+    "strict": true
+  },
+
+  // Alphabetical. Every entry is also enrolled in tools/coverage/paths.mjs
+  // FIRST_PARTY, asserted by test/node/coverage-config.test.mjs so this list
+  // cannot drift away from the coverage manifest.
+  "include": [
+    "web/anim-export.js",
+    "web/apng.js",
+    "web/coi.js",
+    "web/flags.js",
+    "web/gif.js",
+    "web/history.js",
+    "web/repl-scene.js",
+    "web/sdl-strip.js",
+    "web/settings.js",
+    "web/stats.js",
+    "web/url-params.js"
+  ]
+}

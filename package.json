@@ -20,6 +20,7 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit -p wrapper/tsconfig.json",
     "typecheck:js": "tsc --noEmit -p tsconfig.checkjs.json",
+    "typecheck:strict": "tsc --noEmit -p tsconfig.strict.json",
     "coverage": "node tools/coverage/run.mjs",
     "coverage:collect": "node tools/coverage/collect.mjs",
     "coverage:merge": "node tools/coverage/merge.mjs",

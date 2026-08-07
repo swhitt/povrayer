@@ -35,6 +35,11 @@ jobs:
         run: npm run lint
       - name: Typecheck wrapper (tsc --noEmit)
         run: npm run typecheck
+      # The full-strict tier (tsconfig.strict.json). Its import closure is 11
+      # self-contained web modules that need no dist/ types, so it belongs in
+      # this no-wasm gate rather than the dist-bearing typecheck-js job.
+      - name: Typecheck strict tier (tsc --noEmit)
+        run: npm run typecheck:strict
 
   # Build the wasm bundle ONCE (the GHA layer cache makes this a few seconds when
   # warm) and hand it to the parallel shards + typecheck as an artifact, so a cold

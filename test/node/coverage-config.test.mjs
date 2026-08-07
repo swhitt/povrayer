@@ -34,6 +34,14 @@ const parsedTsconfig = ts.parseConfigFileTextToJson('tsconfig.checkjs.json', tsc
 assert.equal(parsedTsconfig.error, undefined, 'tsconfig.checkjs.json should parse');
 const tsIncluded = new Set(parsedTsconfig.config.include);
 
+// tsconfig.strict.json is the FULL-strict tier: a hand-maintained subset of the
+// modules above that graduate one at a time. It is a fourth hand-maintained copy
+// of a first-party file list, so it gets the same drift guard as the others.
+const strictText = readFileSync(resolve(root, 'tsconfig.strict.json'), 'utf8');
+const parsedStrict = ts.parseConfigFileTextToJson('tsconfig.strict.json', strictText);
+assert.equal(parsedStrict.error, undefined, 'tsconfig.strict.json should parse');
+const strictIncluded = parsedStrict.config.include;
+
 test('the first-party manifest covers every web module except explicit vendored code', () => {
   assert.deepEqual(
     [...webModules].sort(),
@@ -56,4 +64,20 @@ test('every first-party web module is type-checked (in tsconfig.checkjs include)
       `${m} is first-party but missing from tsconfig.checkjs.json include`
     );
   }
+});
+
+test('the strict tier is a real, sorted subset of the type-checked first-party set', () => {
+  assert.ok(strictIncluded.length >= 10, 'sanity: the strict tier should be non-trivial');
+  for (const m of strictIncluded) {
+    assert.ok(
+      tsIncluded.has(m),
+      `${m} is in tsconfig.strict.json but not in tsconfig.checkjs.json include`
+    );
+    assert.ok(
+      webModules.includes(m),
+      `${m} is in tsconfig.strict.json but not first-party per tools/coverage/paths.mjs`
+    );
+  }
+  // Kept alphabetical so graduating a file is a one-line, conflict-free diff.
+  assert.deepEqual(strictIncluded, [...strictIncluded].sort(), 'keep the include list sorted');
 });

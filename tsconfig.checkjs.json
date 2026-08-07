@@ -34,7 +34,17 @@
     "skipLibCheck": true,
 
     // Default checkJs strictness (strict:false), plus the high-signal extras.
+    //
+    // The three strict-family flags below are enabled because they cost NOTHING
+    // today (measured: 0 errors each against this exact file set) while the two
+    // expensive ones stay off: noImplicitAny would raise 564 errors and
+    // strictNullChecks 276, almost all of them mechanical. Keeping the free ones
+    // on stops that gap from widening. Modules that are already clean under FULL
+    // strict are enforced separately by tsconfig.strict.json.
     "strict": false,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "noImplicitThis": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
