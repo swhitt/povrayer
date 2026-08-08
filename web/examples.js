@@ -2429,17 +2429,6 @@ export function getExampleRecord(name) {
   return EXAMPLES.find((e) => e.name === name);
 }
 
-// Scenes grouped in CATEGORIES order for the gallery / docs. Branch-free on purpose:
-// no `.length` filter (a dead false-arm under the 100% gate, since the node
-// test guarantees every category has at least one member).
-export function groupAllByCategory() {
-  return CATEGORIES.map((c) => ({
-    key: c.key,
-    label: c.label,
-    items: EXAMPLES.filter((e) => e.category === c.key),
-  }));
-}
-
 // Featured subset for the compact dropdown. Gallery-only examples still load
 // through getExampleRecord()/getExample(); this just keeps the picker curated.
 export function groupByCategory() {

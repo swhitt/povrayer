@@ -6,7 +6,7 @@ import { stripCommentsAndStrings } from './sdl-strip.js';
 // probes run on comment/string-stripped source; a note like "// add camera" must
 // not suppress the default camera.
 /** @type {ReadonlyArray<readonly [RegExp, string]>} */
-export const SCAFFOLD = Object.freeze([
+const SCAFFOLD = Object.freeze([
   [/\bglobal_settings\b/, 'global_settings { assumed_gamma 1.0 }'],
   [/\bcamera\b/, 'camera { location <0, 2, -5> look_at <0, 0.5, 0> }'],
   [/\blight_source\b/, 'light_source { <5, 10, -5> color rgb 1 }'],

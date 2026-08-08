@@ -14,7 +14,6 @@ import {
   RENDER_TIERS,
   getExample,
   getExampleRecord,
-  groupAllByCategory,
   groupByCategory,
 } from '../../web/examples.js';
 
@@ -209,21 +208,25 @@ test('metadata taxonomies are unique and fully represented', () => {
   }
 });
 
-test('groupAllByCategory mirrors CATEGORIES order and partitions every scene', () => {
-  const groups = groupAllByCategory();
-  assert.deepEqual(
-    groups.map((g) => g.key),
-    CATEGORIES.map((c) => c.key),
-    'groups must be in CATEGORIES order'
+// CATEGORIES partitions EXAMPLES: every scene is filed under a real category and
+// none is dropped or double-counted. This used to go through an exported
+// groupAllByCategory() that nothing but this test ever called (a nice example of
+// the coverage gate's blind spot: 100% covered, entirely unused). The function is
+// gone; the data invariant it happened to check is worth keeping, so it is
+// asserted directly against the catalog instead.
+test('CATEGORIES partitions every scene exactly once', () => {
+  const keys = CATEGORIES.map((c) => c.key);
+  assert.equal(new Set(keys).size, keys.length, 'category keys must be unique');
+  const counts = keys.map((k) => EXAMPLES.filter((e) => e.category === k).length);
+  assert.equal(
+    counts.reduce((a, b) => a + b, 0),
+    EXAMPLES.length,
+    'every scene must sit under exactly one known category'
   );
-  assert.deepEqual(
-    groups.map((g) => g.label),
-    CATEGORIES.map((c) => c.label),
-    'group labels must mirror CATEGORIES'
+  assert.ok(
+    counts.every((n) => n > 0),
+    'no category may be empty'
   );
-  // Sum of group sizes equals the library size: nothing misfiled or dropped.
-  const sum = groups.reduce((acc, g) => acc + g.items.length, 0);
-  assert.equal(sum, EXAMPLES.length, 'group items must partition EXAMPLES exactly');
 });
 
 test('groupByCategory mirrors CATEGORIES order and partitions featured scenes', () => {

@@ -7,7 +7,7 @@
 // (MediaRecorder / canvas / DOM); covered by both players' Playwright export tests.
 
 // WebM mimes in preference order; the first MediaRecorder-supported one wins.
-export const WEBM_MIMES = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+const WEBM_MIMES = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
 
 // The best supported WebM mime, or null when MediaRecorder has no WebM codec
 // (some Safari). A null result is the signal to fall back to per-frame PNGs.
