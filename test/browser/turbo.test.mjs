@@ -53,8 +53,12 @@ const STRUCTURAL = `${UNSUPPORTED}sphere {
 const BAD_SOURCE = `${STRUCTURAL}sphere { <0, 0, 0>, }
 `;
 
+// Generous on purpose: this suite loads THREE turbo pages, and each 'load' waits
+// on a real shader compile that a GPU-less CI runner software-rasterises (the two
+// auxiliary gotos below allow 90s each). The watchdog only exists to stop a wedged
+// browser hanging the job forever, so it has to sit well above the sum of those.
 const watchdog = setTimeout(async () => {
-  console.error('watchdog: turbo test still running after 180s, force-exiting');
+  console.error('watchdog: turbo test still running after 420s, force-exiting');
   try {
     await Promise.race([
       page ? saveBrowserCoverage(page, 'turbo') : Promise.resolve(),
@@ -64,7 +68,7 @@ const watchdog = setTimeout(async () => {
     // best-effort; the process is exiting regardless
   }
   process.exit(1);
-}, 180_000);
+}, 420_000);
 
 /** Overlap AREA of two rects, in px². Zero when they do not intersect at all. */
 const overlapArea = (a, b) => {
@@ -455,14 +459,37 @@ try {
   });
   assert.equal(restoredLabel, 'Hide UI', 'the sheet is restored for the layout matrix');
 
+  // Desktop work is done. Flush its coverage and CLOSE it before opening another
+  // turbo page: each one runs a full-screen WebGL2 raymarch loop forever, and on a
+  // software-GL CI runner three of those alive at once starves the box badly enough
+  // that a fresh page.goto never reaches its load event inside 30s (measured: the
+  // phone context's goto timed out on the runner while passing locally on a real
+  // GPU). One live render loop at a time keeps this suite about turbo's behavior
+  // rather than about the runner's GPU budget.
+  await saveBrowserCoverage(page, 'turbo');
+  await page.close();
+  page = null;
+
   // ---- phone context: the floors the 640x360 suite never covered -------------
   phone = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await phone.addInitScript(() => sessionStorage.setItem('turbo-intro', '1'));
   watch(phone);
-  await phone.goto(new URL('turbo.html?pov=/', server.url).href, { waitUntil: 'load' });
+  // waitUntil 'load' on this page does not fire until turbo has parsed the scene
+  // and linked its first shader program. On a GPU-less CI runner that is software
+  // rasterised and legitimately slow, so the default 30s is too tight (measured: it
+  // timed out there while taking a couple of seconds locally). Nothing below cares
+  // how fast the first frame arrives.
+  await phone.goto(new URL('turbo.html?pov=/', server.url).href, {
+    waitUntil: 'load',
+    timeout: 90_000,
+  });
   await phone.waitForFunction(() => !!(/** @type {TurboWindow} */ (window).__curSrc?.()), null, {
     timeout: 30_000,
   });
+  // Quarter-scale like the desktop context above: every assertion from here on is
+  // about layout and state, so paying for full-resolution raymarching each frame
+  // only starves the runner.
+  await phone.evaluate(() => /** @type {TurboWindow} */ (window).__setScale?.(0.25));
   // Same reason as the matrix below: the sheet's slide is far too slow in
   // headless GL to sleep on, and none of these assertions are about the slide.
   await phone.addStyleTag({
@@ -518,6 +545,11 @@ try {
     '"Hide UI" closes the sheet { } opened, instead of stacking a second class'
   );
 
+  // Same as above: flush and close before the third context opens.
+  await saveBrowserCoverage(phone, 'turbo-phone');
+  await phone.close();
+  phone = null;
+
   // ---- layout invariants across the viewport matrix ---------------------------
   // A third context so nothing has been clicked: crossing 760px must re-apply
   // each layout's default, which is what the old boot-time IS_PHONE snapshot
@@ -526,10 +558,17 @@ try {
   const matrix = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   await matrix.addInitScript(() => sessionStorage.setItem('turbo-intro', '1'));
   watch(matrix);
-  await matrix.goto(new URL('turbo.html?pov=/', server.url).href, { waitUntil: 'load' });
+  await matrix.goto(new URL('turbo.html?pov=/', server.url).href, {
+    waitUntil: 'load',
+    timeout: 90_000,
+  });
   await matrix.waitForFunction(() => !!(/** @type {TurboWindow} */ (window).__curSrc?.()), null, {
     timeout: 30_000,
   });
+  // Quarter-scale like the desktop context above: every assertion from here on is
+  // about layout and state, so paying for full-resolution raymarching each frame
+  // only starves the runner.
+  await matrix.evaluate(() => /** @type {TurboWindow} */ (window).__setScale?.(0.25));
   // These are RESTING-layout invariants, so kill the animations first. The sheet's
   // 280ms slide is a main-thread transition behind a backdrop-filter over a live
   // raymarcher, which in headless software GL advances at roughly 5fps (measured:
