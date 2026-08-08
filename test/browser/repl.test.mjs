@@ -294,6 +294,29 @@ try {
       return e[e.length - 1]?.textContent ?? '';
     });
 
+  // :aa stops where the wasm wrapper stops. Its validateRenderOptions throws a
+  // RangeError for any numeric antialias above 1, and REPL settings persist, so
+  // a threshold the guard waved through (it used to allow up to 3) failed EVERY
+  // later render, across reloads, until :reset. The usage error names the range.
+  await runCmd(':aa 2');
+  assert.match(
+    await lastErr(),
+    /usage: :aa \[threshold\|off\] \(threshold 0\.\.1\)/,
+    ':aa above the wrapper ceiling must be rejected with the real range'
+  );
+  assert.doesNotMatch(
+    await page.evaluate(() => document.getElementById('repl-status').textContent),
+    /· aa /,
+    'a rejected :aa must leave the setting alone (the footer stays aa-less)'
+  );
+  // Both ends of the wrapper's range are accepted, so the advertised 0..1 is
+  // literally true (measured against the shipped dist: +A0 and +A1 each render).
+  await runCmd(':aa 0');
+  assert.equal(await lastInfoText(page), 'aa -> 0', ':aa 0 is an accepted threshold, not off');
+  await runCmd(':aa 1');
+  assert.equal(await lastInfoText(page), 'aa -> 1', ':aa 1 is the highest accepted threshold');
+  await runCmd(':aa off'); // back to the default for everything below
+
   // Empty-scene command variants.
   await runCmd(':reset'); // clears scene + settings (-> 320x240)
   await runCmd(':list'); // scene empty
@@ -767,8 +790,49 @@ try {
   await page.fill('#input', ':hel');
   await page.keyboard.press('Tab');
   assert.equal(await inputVal(), ':help ', 'Tab should complete a unique :command');
-  await page.fill('#input', ':e');
-  await page.keyboard.press('Tab'); // ambiguous -> common prefix (no trailing space)
+  // Ambiguous with no progress possible: ':e' matches :example/:edit/:editor,
+  // whose common prefix is the 'e' already typed. Tab used to rewrite the input
+  // to itself, so it read as a dead key (same for :s/:a/:l, 10 of 17 commands);
+  // it now lists the candidates like bash and like the SDL arm.
+  {
+    const before = await infoCount(page);
+    await page.fill('#input', ':e');
+    await page.keyboard.press('Tab');
+    await page.waitForFunction(
+      (n) => document.querySelectorAll('#scrollback .info').length > n,
+      before,
+      { timeout: 5_000 }
+    );
+    const listed = (await lastInfoText(page)).split(/\s+/).filter(Boolean);
+    assert.deepEqual(
+      [...listed].sort(),
+      [':edit', ':editor', ':example'],
+      `':e' + Tab should list exactly the :e commands, got: ${listed.join(' ')}`
+    );
+    assert.equal(await inputVal(), ':e', 'listing command candidates leaves the input untouched');
+  }
+  // The same for the shortest, most-typed prefixes; ':s' is :size and :source.
+  {
+    const before = await infoCount(page);
+    await page.fill('#input', ':s');
+    await page.keyboard.press('Tab');
+    await page.waitForFunction(
+      (n) => document.querySelectorAll('#scrollback .info').length > n,
+      before,
+      { timeout: 5_000 }
+    );
+    const listed = (await lastInfoText(page)).split(/\s+/).filter(Boolean);
+    assert.deepEqual(
+      [...listed].sort(),
+      [':size', ':source'],
+      `':s' + Tab should list :size and :source, got: ${listed.join(' ')}`
+    );
+  }
+  // Ambiguous but with progress to make: :edit/:editor share 'edit', so Tab
+  // extends to it (no trailing space, the token isn't finished yet).
+  await page.fill('#input', ':ed');
+  await page.keyboard.press('Tab');
+  assert.equal(await inputVal(), ':edit', 'an ambiguous Tab extends to the common prefix');
   await page.fill('#input', ':zzz');
   await page.keyboard.press('Tab'); // no candidates -> consumed, unchanged
   await page.fill('#input', 'plain text');
@@ -1236,9 +1300,20 @@ try {
     );
   }
   await runCmd(':list');
+  const fixedList = await lastInfoText(page);
   assert.ok(
-    (await lastInfoText(page)).includes('1: #include "colors.inc"'),
+    fixedList.includes('1: #include "colors.inc"'),
     'the tip click prepends the include as entry 1'
+  );
+  // ...and puts the rolled-back entry back after it. The rollback pops the entry
+  // before the tip is even built, so prepending the include alone rendered
+  // whatever survived (here a lone declare, i.e. an effectively blank plate),
+  // captioned it as a successful render, and left :list without the entry the
+  // fix was for.
+  assert.match(
+    fixedList,
+    /^3: sphere \{ <2,1,0>, 1 pigment \{ color Blue \} \}$/m,
+    `the tip click must restore the rolled-back entry too, got: ${fixedList}`
   );
   // The previously failing entry now succeeds verbatim.
   await submitRender('sphere { <2,1,0>, 1 pigment { color Blue } }');
@@ -1428,6 +1503,25 @@ try {
     })
   );
   assert.match(await lastInfo(), /restored 1 entry\b/, 'a single restored entry reads singular');
+
+  // A persisted antialias the wasm wrapper would reject must be DISCARDED on
+  // load, not restored. 2 passed the old 0..3 validator, and once restored it
+  // failed every render for the rest of the session and survived every reload,
+  // so the REPL came back from a refresh still bricked with no hint but :reset.
+  await seedReload(
+    JSON.stringify({
+      entries: [{ source: 'sphere { 0, 1 pigment { rgb <1,0,0> } }' }],
+      settings: { width: 48, height: 32, antialias: 2 },
+    })
+  );
+  assert.doesNotMatch(
+    await page.evaluate(() => document.getElementById('repl-status').textContent),
+    /· aa /,
+    'an out-of-range persisted antialias must be dropped, not restored'
+  );
+  // Not just cosmetic: the restored scene actually renders, which a smuggled-in
+  // 2 would have made impossible.
+  await submitRender(':render');
 
   // Every field invalid / wrong-typed -> nothing restored, no greeting. The
   // wrong-typed sourceOpen (a string) hits the typeof==='boolean' FALSE side, so

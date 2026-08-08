@@ -64,6 +64,16 @@ const DEFAULT_SETTINGS = Object.freeze({
   args: undefined, // raw POV-Ray switches as one string, e.g. '+UA +AM2'
 });
 
+// Antialias threshold ceiling, mirroring the wasm wrapper exactly: its
+// validateRenderOptions throws `RangeError: antialias must be false, true, or a
+// finite threshold from 0 to 1` for anything outside 0..1 (measured against the
+// shipped dist: +A0 and +A1 both render a PNG, +A2 throws). One constant because
+// three places enforce it (the :aa guard, the persisted-settings validator, and
+// the usage/help strings) and a value the REPL accepts but the wrapper rejects
+// is unusually expensive: settings persist, so it fails every later render and
+// survives reloads, leaving the REPL bricked with no hint but :reset.
+const AA_MAX = 1;
+
 const STORAGE_KEY = 'povrayer.repl.v1';
 
 // rgb literal, not a named color: the assembled scene scaffold never injects
@@ -71,13 +81,17 @@ const STORAGE_KEY = 'povrayer.repl.v1';
 // identifier. The suggested first-contact snippet has to render as-is.
 const TRY_LINE = 'sphere { <0,1,0>, 1 pigment { color rgb <1,0,0> } }';
 
-const entries = []; // [{ id, source }], order = scene order; ids increase from 1
+// Scene entries, in scene order. Positional by design: every consumer (scene
+// assembly, :list, :del/:edit, the assembled-line -> entry mapping, the rollback
+// pop) addresses an entry by its 1-based position, so entries deliberately carry
+// no id. Adding one would advertise an identity that survives :del/:undo, and
+// nothing here renumbers or tracks anything to back that up.
+const entries = []; // [{ source }]
 let history = []; // submitted raw inputs (commands included), newest last
 /** @type {ReplSettings} */
 const settings = { ...DEFAULT_SETTINGS };
 let abortCtl = null; // AbortController for the in-flight render, else null
 
-let nextId = 1;
 let renderCounter = 0; // "render #N" per-session counter
 const HISTORY_MAX = 100;
 let historyIndex = 0; // === history.length means "not recalling"
@@ -130,7 +144,7 @@ function loadState() {
   if (Array.isArray(data.entries)) {
     for (const e of data.entries) {
       if (typeof e?.source === 'string' && e.source.trim()) {
-        entries.push({ id: nextId++, source: e.source });
+        entries.push({ source: e.source });
       }
     }
   }
@@ -142,7 +156,7 @@ function loadState() {
       settings.quality = s.quality;
     if (
       s.antialias === true ||
-      (typeof s.antialias === 'number' && s.antialias > 0 && s.antialias <= 3)
+      (typeof s.antialias === 'number' && s.antialias >= 0 && s.antialias <= AA_MAX)
     ) {
       settings.antialias = s.antialias;
     }
@@ -485,10 +499,21 @@ function findMissingInclude(source) {
   return null;
 }
 
-// The clickable half of the include tip: prepends the missing #include as
-// entry 1 (includes must precede first use) and re-renders. One-shot (disabled
-// after use); ignored while a render is in flight (renders are single-flight).
-function makeIncludeButton(file) {
+// The clickable half of the include tip: prepends the missing #include as entry
+// 1 (includes must precede first use), puts the rolled-back entry back after it,
+// and re-renders. Re-pushing the entry is load-bearing, not belt-and-braces: the
+// rollback pops it before the tip is even built, so an include-only fix renders
+// whatever survived (often nothing but the include, i.e. a blank plate), captions
+// that as a successful render, and leaves :list without the entry being fixed.
+// One-shot (disabled after use); ignored while a render is in flight (renders are
+// single-flight). Like :render it passes no rollback: the user asked for this
+// state, so a still-failing render keeps it and shows the error (:undo backs it
+// out).
+/**
+ * @param {string} file the include file the missing identifier ships in
+ * @param {string} entrySource the rolled-back entry's raw text, restored after the include
+ */
+function makeIncludeButton(file, entrySource) {
   const line = `#include "${file}"`;
   const btn = document.createElement('button');
   btn.type = 'button';
@@ -497,9 +522,13 @@ function makeIncludeButton(file) {
   btn.addEventListener('click', () => {
     if (input.readOnly) return;
     btn.disabled = true;
-    entries.unshift({ id: nextId++, source: line });
+    entries.unshift({ source: line });
+    entries.push({ source: entrySource });
     saveState();
-    appendBlock('info', `${line} added as entry 1`);
+    appendBlock(
+      'info',
+      `${line} added as entry 1 · rolled-back entry restored as entry ${entries.length}`
+    );
     runRender();
   });
   return btn;
@@ -561,7 +590,7 @@ async function runRender({ rollback, echoNode, entrySource } = {}) {
           if (fix) {
             block.append(
               `\ntip: '${fix.name}' ships in ${fix.file} · add an entry: `,
-              makeIncludeButton(fix.file)
+              makeIncludeButton(fix.file, entrySource)
             );
           }
         }
@@ -896,7 +925,11 @@ const COMMANDS = [
   { name: 'editor', usage: ':editor', desc: 'open the assembled scene in the full editor' },
   { name: 'size', usage: ':size WxH', desc: 'render size (each 8..2048)' },
   { name: 'q', usage: ':q N', desc: 'quality 0..11 (default 9)' },
-  { name: 'aa', usage: ':aa [threshold|off]', desc: 'antialias (no arg = 0.3)' },
+  {
+    name: 'aa',
+    usage: ':aa [threshold|off]',
+    desc: `antialias, threshold 0..${AA_MAX} (no arg = 0.3)`,
+  },
   { name: 'threads', usage: ':threads N', desc: 'worker threads 1..32' },
   { name: 'args', usage: ':args [switches]', desc: 'raw POV-Ray switches (:args alone clears)' },
   {
@@ -1160,8 +1193,8 @@ function dispatchCommand(text) {
         appendBlock('info', 'aa -> off');
       } else {
         const t = Number(arg);
-        if (!Number.isFinite(t) || t <= 0 || t > 3) {
-          appendBlock('error', 'usage: :aa [threshold|off]');
+        if (!Number.isFinite(t) || t < 0 || t > AA_MAX) {
+          appendBlock('error', `usage: :aa [threshold|off] (threshold 0..${AA_MAX})`);
           break;
         }
         settings.antialias = t;
@@ -1274,7 +1307,7 @@ function dispatchCommand(text) {
         break;
       }
       entries.length = 0;
-      entries.push({ id: nextId++, source: src });
+      entries.push({ source: src });
       saveState();
       appendBlock(
         'info',
@@ -1341,7 +1374,7 @@ function submitInput() {
     dispatchCommand(text);
     return;
   }
-  entries.push({ id: nextId++, source: text });
+  entries.push({ source: text });
   saveState();
   runRender({ rollback: () => entries.pop(), echoNode, entrySource: text });
 }
@@ -1443,9 +1476,16 @@ function commonPrefix(names) {
   return p;
 }
 
-// Tab inside a leading ':' token completes the command (unique match gets a
-// trailing space; multiple matches extend to the common prefix) instead of
-// dropping focus to the next control. Returns true when Tab was consumed.
+// Tab inside a leading ':' token completes the command instead of dropping focus
+// to the next control: a unique match fills in (plus a trailing space), several
+// matches extend to the longest common prefix, and a Tab that can make no
+// progress prints the candidates into the transcript, the same bash semantics the
+// SDL arm below uses. The listing arm is what makes short prefixes usable at all:
+// `:s`, `:e`, `:a` and `:l` cover 10 of the 17 commands and each has a common
+// prefix no longer than the single letter typed, so without it Tab rewrites the
+// input to itself and reads as a dead key. Candidates keep COMMANDS order so the
+// listing scans like :help rather than alphabetized noise. Returns true when Tab
+// was consumed.
 function completeCommand() {
   if (input.readOnly) return false;
   const m = /^:(\S*)/.exec(input.value);
@@ -1454,11 +1494,15 @@ function completeCommand() {
   const names = COMMANDS.map((c) => c.name).filter((n) => n.startsWith(partial));
   if (names.length) {
     const completion = names.length === 1 ? names[0] : commonPrefix(names);
-    const rest = input.value.slice(m[0].length);
-    const suffix = names.length === 1 && !rest ? ' ' : '';
-    input.value = ':' + completion + suffix + rest;
-    input.selectionStart = input.selectionEnd = 1 + completion.length + suffix.length;
-    autoGrow();
+    if (names.length > 1 && completion.length <= partial.length) {
+      appendBlock('info', names.map((n) => ':' + n).join('  '));
+    } else {
+      const rest = input.value.slice(m[0].length);
+      const suffix = names.length === 1 && !rest ? ' ' : '';
+      input.value = ':' + completion + suffix + rest;
+      input.selectionStart = input.selectionEnd = 1 + completion.length + suffix.length;
+      autoGrow();
+    }
   }
   return true;
 }
