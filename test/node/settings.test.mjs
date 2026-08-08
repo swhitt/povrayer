@@ -5,7 +5,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CONTROL_FIELDS, coerceSaved, coerceParam, coerceHydrate } from '../../web/settings.js';
+import {
+  CONTROL_FIELDS,
+  coerceSaved,
+  coerceParam,
+  coerceHydrate,
+  migrateValue,
+} from '../../web/settings.js';
 
 const byKey = Object.fromEntries(CONTROL_FIELDS.map((f) => [f.key, f]));
 const yes = () => true;
@@ -59,10 +65,38 @@ test('coerceParam: selects still re-check membership', () => {
 });
 
 test('coerceHydrate: selects re-checked, flags defaults to "", rest verbatim', () => {
-  assert.equal(coerceHydrate(byKey.quality, '3', yes), '3');
-  assert.equal(coerceHydrate(byKey.quality, '3', no), null); // an old link's dropped option
-  assert.equal(coerceHydrate(byKey.flags, '+A0.1', yes), '+A0.1');
-  assert.equal(coerceHydrate(byKey.flags, undefined, yes), ''); // link predates the flags field
-  assert.equal(coerceHydrate(byKey.width, '640', yes), '640'); // trusted, taken as-is
-  assert.equal(coerceHydrate(byKey.threads, '8', yes), '8');
+  assert.equal(coerceHydrate(byKey.quality, '3', yes, '9'), '3');
+  assert.equal(coerceHydrate(byKey.flags, '+A0.1', yes, ''), '+A0.1');
+  assert.equal(coerceHydrate(byKey.flags, undefined, yes, ''), ''); // predates the flags field
+  assert.equal(coerceHydrate(byKey.width, '640', yes, '512'), '640'); // trusted, taken as-is
+  assert.equal(coerceHydrate(byKey.threads, '8', yes, ''), '8');
+});
+
+// The bug this pins: a select value the build can't honor used to return null,
+// which left the RECIPIENT's own setting in place. Verified in the app before the
+// fix: an editor sitting at quality 3 that opened a link carrying quality 9 kept
+// showing (and rendering at) 3.
+test('coerceHydrate: an unrepresentable select lands on the default, not the current value', () => {
+  assert.equal(coerceHydrate(byKey.quality, '3', no, '9'), '9');
+  assert.equal(coerceHydrate(byKey.quality, '12', no, '9'), '9'); // past the 0-11 +Q range
+  assert.equal(coerceHydrate(byKey.antialias, 'weird', no, '0.1'), '0.1');
+});
+
+// Quality was persisted/permalinked/handed off as '' while the select spelled 9
+// as `<option value="">`; every one of those old blobs and links has to keep
+// meaning 9 now that the option is an honest '9'.
+test('migrateValue rewrites the legacy empty-string quality onto 9', () => {
+  assert.equal(migrateValue(byKey.quality, ''), '9');
+  assert.equal(migrateValue(byKey.quality, '5'), '5'); // a real level is untouched
+  assert.equal(migrateValue(byKey.antialias, ''), ''); // no legacy table for this field
+  assert.equal(migrateValue(byKey.quality, undefined), undefined); // non-strings pass through
+});
+
+test('every coercion path migrates the legacy quality', () => {
+  assert.equal(coerceSaved(byKey.quality, '', yes), '9'); // a saved blob from before the fix
+  assert.equal(coerceParam(byKey.quality, '', yes), '9'); // ?q= (the old "automatic" spelling)
+  assert.equal(coerceHydrate(byKey.quality, '', yes, '9'), '9'); // an old permalink or REPL handoff
+  // The migrated value is still checked against the live options.
+  assert.equal(coerceSaved(byKey.quality, '', no), null);
+  assert.equal(coerceParam(byKey.quality, '', no), null);
 });

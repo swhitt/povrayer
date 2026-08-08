@@ -44,6 +44,7 @@ import {
   buildDraftOptions,
   createRenderOrchestrator,
   previewReadyStatus,
+  previewingStatus,
   renderDoneStatus,
 } from './render-orchestrator.js';
 import {
@@ -170,6 +171,11 @@ const STORAGE_KEY = 'povrayer.ui.v1';
 const HISTORY_KEY = 'povrayer.ui.history';
 const HISTORY_MAX = 20; // capped + deduped, text-only: keeps localStorage light
 
+// POV-Ray's own default +Q level, and the #quality select's default option. The
+// engine enables reflected/refracted/transmitted rays at 8 and up, so this is
+// also the floor at which glass, mirrors and caustics render at all.
+const DEFAULT_QUALITY = 9;
+
 // 'still' renders a single frame; 'animate' drives POV-Ray's clock loop and
 // plays the frames back in #player-canvas. Restored from saved state below.
 /** @type {'still' | 'animate'} */
@@ -207,7 +213,6 @@ const exampleGroups = [];
 let activeItem = null;
 
 const labelByKey = (items, key) => items.find((item) => item.key === key).label;
-const tierByKey = (key) => RENDER_TIERS.find((tier) => tier.key === key);
 
 // Render one .ex-group per CATEGORIES entry (in order) and one .ex-option per
 // scene. The head is a disclosure toggle (role=button + aria-expanded) carrying
@@ -367,6 +372,20 @@ function setTriggerLabel(name) {
 // still scenes. After boot, setFps keeps the inline player's cadence in sync;
 // during ?example= boot the player does not exist yet and syncs from the input
 // once it is constructed.
+//
+// This is the ONLY control an example load writes, and it writes it because
+// frames/fps are intrinsic to the scene (the loop it was authored for). Quality
+// used to be written here too, from the record's render tier (q7 for
+// instant/fast, q8 for heavy), and that was a false economy: POV-Ray only
+// enables reflected/refracted/transmitted rays at +Q8, so the fast tier rendered
+// the whole "Glass, Refraction & Caustics" category (sourced-wineglass,
+// sourced-magglass, sourced-glass-chess, sourced-crystal, focal-marbles) as
+// opaque solids. Measured against this dist/: sourced-wineglass at q7 is a
+// red-and-black blob, at q9 a transparent goblet, and the tier bought 0.35s. The
+// catalog is render-verified at quality 9 (examples.js), a render-cost
+// preference is the user's and not the scene's, and the old "only when quality
+// is still automatic" guard pinned people at the first tier they ever loaded
+// (writing the tier value made the guard false forever).
 function applyExampleClock(record, { syncPlayer = true } = {}) {
   if (!record.animated) return; // still scenes: leave the inputs alone
   framesInput.value = String(record.frames);
@@ -386,11 +405,6 @@ function canAutoDraftCurrentScene() {
   const record = getExampleRecord(sceneState.selectedExample);
   if (record && sceneIsDirty()) return !record.animated;
   return !record || shouldAutoDraftExample(record);
-}
-
-function applyExampleRenderDefaults(record) {
-  if (qualitySelect.value !== '') return;
-  qualitySelect.value = tierByKey(record.renderTier).quality;
 }
 
 function readSavedState() {
@@ -428,12 +442,24 @@ function readControls() {
   return values;
 }
 
+// Every control's shipped default, snapshotted from the markup BEFORE any saved
+// blob, URL param or permalink can write to it. coerceHydrate needs it: a link
+// carrying a value this build can't honor has to land on the default rather than
+// leave the reader's own setting in place (see settings.js).
+const controlDefaults = readControls();
+
 // Write a foreign value set (keyed by field) into the controls through `coerce`,
 // which returns the string to write or null to leave a control untouched.
-// selectAllows is the live <option> membership check the select coercions need.
+// selectAllows is the live <option> membership check the select coercions need;
+// the field's default is the fallback a coercion may choose instead of null.
 function applyControls(source, coerce) {
   for (const f of CONTROL_FIELDS) {
-    const next = coerce(f, source[f.key], (v) => selectAllows(controlEl[f.key], v));
+    const next = coerce(
+      f,
+      source[f.key],
+      (v) => selectAllows(controlEl[f.key], v),
+      controlDefaults[f.key]
+    );
     if (next !== null) controlEl[f.key].value = next;
   }
 }
@@ -604,7 +630,6 @@ function applyUrlParams() {
     editor.value = record.source;
     sceneState.loadExample(exampleName, record.source);
     applyExampleClock(record, { syncPlayer: false });
-    applyExampleRenderDefaults(record);
     setTriggerLabel(exampleName);
     bootExampleLoaded = true;
   }
@@ -627,7 +652,6 @@ function selectExample(name) {
   editor.value = source;
   sceneState.loadExample(name, source);
   applyExampleClock(record); // BEFORE scheduleDraft
-  applyExampleRenderDefaults(record);
   setTriggerLabel(name); // trigger text + data-name + re-mark loaded option
   reflectSceneReplaced({ autoDraft: shouldAutoDraftExample(record) });
 }
@@ -1816,7 +1840,12 @@ function readRenderOptions() {
   if (Number.isNaN(height)) height = 384;
   height = clamp(height, 8, 2048);
 
-  const quality = qualitySelect.value === '' ? undefined : Number(qualitySelect.value);
+  // Quality 9 is POV-Ray's own default, so it ships no +Q flag at all: the render
+  // is byte-identical and the download name stays unsuffixed. (This used to be
+  // keyed on an empty option value that ALSO stood in for "9", which is why 9
+  // itself was unselectable.)
+  const qualityLevel = Number(qualitySelect.value);
+  const quality = qualityLevel === DEFAULT_QUALITY ? undefined : qualityLevel;
   const antialias = antialiasSelect.value === 'off' ? false : Number(antialiasSelect.value);
 
   let threads;
@@ -2422,6 +2451,34 @@ function showImage(blobUrl, alt, holdWidth = null) {
   plateHint.hidden = true;
 }
 
+// Give the plate back to the empty-state hint. The image and its blob URL stay
+// put (the img is only hidden, so a later render swaps as usual and the existing
+// revoke-on-swap accounting is untouched); this is about not presenting a render
+// as the current scene when the buffer no longer contains that scene.
+function dropStillImage() {
+  hasStillImage = false;
+  // The download link keeps working (that PNG is a real render the user asked
+  // for, and re-rendering to get it back would be a punishment), but it is now
+  // the only trace of a scene the editor no longer holds: dim it like any other
+  // outdated artifact.
+  downloadBtn.classList.add('stale');
+  refreshPlate();
+}
+
+// The stat chips and the render log narrate the last EXPLICIT render. When the
+// plate moves on without them (a live draft landed, or a preview is parked
+// mid-edit), dim them instead of letting them read as a description of what is
+// on screen. Cleared the moment a real render repopulates them.
+function markNarrationStale() {
+  statsList.classList.add('stale');
+  logDetails.classList.add('stale');
+}
+
+function clearNarrationStale() {
+  statsList.classList.remove('stale');
+  logDetails.classList.remove('stale');
+}
+
 // ---- live draft (auto-render as you type, still mode only) ----
 // Reuses render-client's renderScene + the single `busy` singleton + an
 // AbortSignal; it never duplicates orchestration. Explicit renders always win
@@ -2449,14 +2506,30 @@ const renderOrchestrator = createRenderOrchestrator({
   // controller re-schedules itself after an aborted draft settles, and that
   // internal path would otherwise auto-preview heavy/animated examples.
   canAutoDraft: () => canAutoDraftCurrentScene(),
-  sourceReady: (source) => validateScene(source).ready,
+  validateSource: validateScene,
+  // Why no preview is coming. Previously the reason was computed and thrown
+  // away, so a buffer the pre-check rejected left the last image and its stat
+  // chips on screen with no status change at all.
+  onPreviewParked: ({ reason, status }) => {
+    // An empty buffer has no scene to describe, so the held image is of
+    // something that no longer exists: fall back to the empty-state plate (the
+    // same thing a fresh page shows) instead of narrating a ghost.
+    if (reason === 'empty') dropStillImage();
+    // No preview is coming for THIS buffer, so the chips and the log describe a
+    // scene the editor no longer holds. The image itself is left alone (same
+    // non-destructive policy as a draft error): dimming the plate on every
+    // half-typed brace would strobe while the user is mid-keystroke.
+    markNarrationStale();
+    setStatus(status, 'draft');
+  },
   explicitInFlight: () => abortCtl !== null,
   renderBusy: isBusy,
   draftOptions,
   renderDraft: (source, options, signal) =>
     renderScene(source, { ...options, signal, keepBytes: false }),
+  // In flight, not done: the plate still holds the PREVIOUS scene here.
   onStart: (_source, opts) => {
-    setStatus(previewReadyStatus(opts.width, opts.height), 'draft');
+    setStatus(previewingStatus(opts.width, opts.height), 'draft');
   },
   onSuccess: (_source, result, opts) => {
     const dims = `${opts.width}×${opts.height}`;
@@ -2469,6 +2542,11 @@ const renderOrchestrator = createRenderOrchestrator({
     // a width edit mid-draft lands), keeping the plate footprint stable.
     showImage(result.blobUrl, `live draft, ${sceneName()}, ${dims}`, readRenderOptions().width);
     downloadBtn.hidden = true; // the preview is low-res, not a downloadable full render
+    // The plate now shows a draft, so the chips and log under it belong to some
+    // earlier render (measured: "pixels 196,608" from a 512x384 glass render sat
+    // at full opacity under a 320x240 sphere draft, indefinitely, and survived an
+    // example switch). Dim them until an explicit render repopulates them.
+    markNarrationStale();
     setStatus(previewReadyStatus(opts.width, opts.height), 'draft');
   },
   onError: (_source, err) => {
@@ -2537,6 +2615,10 @@ async function startRender() {
   output.classList.add('stale');
   downloadBtn.classList.add('stale');
   statsList.classList.add('stale');
+  // resetLog() emptied the log and this render's lines start landing in it
+  // immediately, so it is live again even though the chips stay dim until the
+  // stats they show are the ones for THIS render.
+  logDetails.classList.remove('stale');
   progressStart();
   setStatus(engineSeen ? 'rendering… parsing' : 'rendering… loading engine', 'busy');
 
@@ -2590,7 +2672,8 @@ async function startRender() {
     downloadBtn.download = downloadName(opts);
     downloadBtn.hidden = false;
     downloadBtn.classList.remove('stale');
-    statsList.classList.remove('stale');
+    // The chips and the log now describe exactly what is on the plate.
+    clearNarrationStale();
     showStats(rawLog, opts);
 
     setStatus(renderDoneStatus(elapsedMs, opts), 'done');
@@ -2672,6 +2755,9 @@ async function runAnimateRender() {
   const opts = collectOptions();
   const { frames, fps } = collectAnimOptions();
   resetLog();
+  // A still-mode draft may have dimmed the log before the mode switch; this
+  // render's lines are landing in it now, so it is live again.
+  logDetails.classList.remove('stale');
   errorBox.hidden = true;
   errorBox.textContent = '';
   clearErrorLine();

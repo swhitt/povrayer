@@ -4,7 +4,9 @@ import assert from 'node:assert/strict';
 import {
   buildDraftOptions,
   createRenderOrchestrator,
+  previewGate,
   previewReadyStatus,
+  previewingStatus,
   renderDoneStatus,
 } from '../../web/render-orchestrator.js';
 
@@ -43,12 +45,47 @@ test('draft options preserve smaller dimensions and explicit quality/threads', (
 });
 
 test('render status helpers keep preview, still, and animation wording consistent', () => {
+  // In flight vs done have to be DIFFERENT lines: both hooks used to call
+  // previewReadyStatus, so "preview ready" appeared the instant a draft started.
+  assert.equal(previewingStatus(320, 240), 'previewing… 320×240');
   assert.equal(previewReadyStatus(320, 180), 'preview ready · 320×180');
   assert.equal(renderDoneStatus(923, { width: 512, height: 384 }), 'done in 0.92s · 512×384');
   assert.equal(
     renderDoneStatus(1840, { width: 256, height: 192 }, 12),
     'done in 1.84s · 256×192 · 12 frames'
   );
+});
+
+test('previewGate parks the preview on the mid-edit reasons and words each one', () => {
+  assert.deepEqual(previewGate('empty'), {
+    ready: false,
+    reason: 'empty',
+    status: 'preview paused · empty scene',
+  });
+  assert.deepEqual(previewGate('unbalanced'), {
+    ready: false,
+    reason: 'unbalanced',
+    status: 'preview paused · unbalanced { } ( ) [ ]',
+  });
+  assert.deepEqual(previewGate('unterminated-comment'), {
+    ready: false,
+    reason: 'unterminated-comment',
+    status: 'preview paused · unterminated comment',
+  });
+  assert.deepEqual(previewGate('unterminated-string'), {
+    ready: false,
+    reason: 'unterminated-string',
+    status: 'preview paused · unterminated string',
+  });
+});
+
+test('previewGate lets a ready scene, and a version-less one, through', () => {
+  const through = { ready: true, reason: null, status: null };
+  assert.deepEqual(previewGate(null), through);
+  // POV-Ray only WARNS about a missing #version (clicking Render succeeds), so
+  // parking the auto-preview on it would make the preview and the Render button
+  // disagree about what is renderable.
+  assert.deepEqual(previewGate('no-version'), through);
 });
 
 function harness(overrides = {}) {
@@ -60,6 +97,8 @@ function harness(overrides = {}) {
   let explicit = false;
   let busy = false;
   let auto = true;
+  /** @type {{ ready: boolean, reason: string | null }} */
+  let validation = { ready: true, reason: null };
   const events = [];
   const controller = createRenderOrchestrator({
     mode: () => mode,
@@ -67,7 +106,8 @@ function harness(overrides = {}) {
     isolated: () => isolated,
     readSource: () => source,
     canAutoDraft: () => auto,
-    sourceReady: () => true,
+    validateSource: () => validation,
+    onPreviewParked: (parked) => events.push(`parked:${parked.reason}:${parked.status}`),
     explicitInFlight: () => explicit,
     renderBusy: () => busy,
     draftOptions: () => ({ width: 64, height: 48 }),
@@ -90,6 +130,7 @@ function harness(overrides = {}) {
     setExplicit: (value) => (explicit = value),
     setBusy: (value) => (busy = value),
     setAuto: (value) => (auto = value),
+    setValidation: (value) => (validation = value),
   };
 }
 
@@ -122,6 +163,28 @@ test('live drafting respects mode, toggle, isolation, readiness, and busy gates'
   h.setSource('box');
   await h.controller.fire();
   assert.deepEqual(h.events, ['start', 'success', 'settled']);
+});
+
+test('a parked preview reports the reason instead of quietly not drafting', async () => {
+  const h = harness();
+  // An animated example: auto-preview is off by policy, which is not a "your
+  // buffer is broken" state, so nothing is reported.
+  h.setAuto(false);
+  await h.controller.fire();
+  assert.deepEqual(h.events, []);
+
+  h.setAuto(true);
+  h.setValidation({ ready: false, reason: 'unbalanced' });
+  h.setSource('box {');
+  await h.controller.fire();
+  assert.deepEqual(h.events, ['parked:unbalanced:preview paused · unbalanced { } ( ) [ ]']);
+
+  // A version-less scene still previews (previewGate lets it through).
+  h.setValidation({ ready: false, reason: 'no-version' });
+  h.setSource('box {}');
+  await h.controller.fire();
+  assert.deepEqual(h.events.slice(1), ['start', 'success', 'settled']);
+  h.controller.cancel();
 });
 
 test('explicit render routing reports every page-level route', () => {

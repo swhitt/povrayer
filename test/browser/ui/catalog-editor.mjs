@@ -528,11 +528,12 @@ export async function runCatalogEditor(ctx) {
 
   // Select an animated scene via Enter on its active option: the panel closes,
   // focus returns to the trigger, and the clock autoset prefills frames/fps.
-  // When quality is still automatic, the example's fast-render tier preselects
-  // a concrete quality value.
+  // frames/fps are intrinsic to an animated scene, so they ARE prefilled; the
+  // quality dialed in here must survive untouched (loading an example no longer
+  // writes a render tier over it).
   // (commitOption, selectExample pristine path, applyExampleClock animated arm,
   // closeBrowser(returnFocus=true), setTriggerLabel re-mark.)
-  await selAdvanced('#quality', '');
+  await selAdvanced('#quality', '4');
   await page.fill('#example-search', 'orbit');
   await page.waitForFunction(
     () => {
@@ -574,7 +575,7 @@ export async function runCatalogEditor(ctx) {
       mode: 'still',
       frames: '24',
       fps: '24',
-      quality: '7',
+      quality: '4',
       focused: 'example-trigger',
       label: 'Orbit (two moons, clock-driven)',
       draftPending: false,
@@ -677,9 +678,9 @@ export async function runCatalogEditor(ctx) {
   );
 
   // Loading a STILL example must leave dialed-in frames/fps untouched (the
-  // applyExampleClock early-return), and a manually-set quality must not be
-  // overwritten by the example tier. This exercises the click-select path.
-  // The animate-only inputs are hidden in still mode, so seed them directly.
+  // applyExampleClock early-return) and must not touch quality at all. This
+  // exercises the click-select path. The animate-only inputs are hidden in still
+  // mode, so seed them directly.
   await selAdvanced('#quality', '8');
   await page.evaluate(() => {
     document.getElementById('frames').value = '7';
@@ -693,13 +694,18 @@ export async function runCatalogEditor(ctx) {
       quality: document.getElementById('quality').value,
     })),
     { frames: '7', fps: '9', quality: '8' },
-    'loading a still example must not touch frames/fps or an explicit quality'
+    'loading a still example must not touch frames/fps or quality'
   );
 
-  // High-fidelity examples rely on ray features stripped by the old +Q5 tier:
-  // glass loses refraction, and radiosity scenes lose their color bounce. When
-  // quality is still automatic, selecting one should preselect the heavy tier.
-  await selAdvanced('#quality', '');
+  // The refraction regression this replaces: loading an example used to write its
+  // render tier (q7 for instant/fast, q8 for heavy) over the quality control.
+  // POV-Ray only enables reflected/refracted/transmitted rays at +Q8, so the
+  // fast-tier q7 rendered the glass catalog (sourced-wineglass, sourced-magglass,
+  // sourced-glass-chess, sourced-crystal, focal-marbles) as opaque solids, and
+  // once written, the "only when quality is automatic" guard pinned the user at
+  // that tier forever. Quality 9 is the default now and must survive both a
+  // fast-tier and a heavy-tier example load.
+  await selAdvanced('#quality', '9');
   await switchExample('glass');
   // Every still example auto-drafts now (heavy included), so each of these
   // waits blocks on a real draft render completing: long render timeout.
@@ -713,10 +719,9 @@ export async function runCatalogEditor(ctx) {
   );
   assert.equal(
     await page.evaluate(() => document.getElementById('quality').value),
-    '8',
-    'loading the glass example from auto quality selects the heavy tier'
+    '9',
+    'a glass example must not pin quality below the +Q8 refraction floor'
   );
-  await selAdvanced('#quality', '');
   await switchExample('cornell-mood');
   await page.waitForFunction(
     () => {
@@ -728,10 +733,12 @@ export async function runCatalogEditor(ctx) {
   );
   assert.equal(
     await page.evaluate(() => document.getElementById('quality').value),
-    '8',
-    'loading the cornell radiosity example from auto quality selects the heavy tier'
+    '9',
+    'a heavy radiosity example leaves the default quality alone too'
   );
-  await selAdvanced('#quality', '');
+  // A quality the USER chose is equally untouchable, in both directions: 7 stays
+  // 7 (their call to trade refraction for speed) across a fast-tier load.
+  await selAdvanced('#quality', '7');
   await switchExample('csg-die');
   await page.waitForFunction(
     () => {
@@ -744,8 +751,9 @@ export async function runCatalogEditor(ctx) {
   assert.equal(
     await page.evaluate(() => document.getElementById('quality').value),
     '7',
-    'loading a fast-tier example from auto quality selects q7'
+    'a user-chosen quality survives loading a fast-tier example'
   );
+  await selAdvanced('#quality', '9');
 
   // A second trigger click closes an open panel (the toggle's close arm).
   await openBrowser();
@@ -1286,7 +1294,7 @@ export async function runCatalogEditor(ctx) {
   await page.fill('#editor', VALID_SCENE);
   await page.fill('#width', '64');
   await page.fill('#height', '48');
-  await selAdvanced('#quality', '8'); // 8 is the highest explicit quality option
+  await selAdvanced('#quality', '8'); // the +Q8 refraction floor, one below the default
   await selAdvanced('#antialias', '0.3');
   await fillAdvanced('#threads', '4');
   await page.evaluate(() => document.getElementById('threads').focus());
@@ -1371,7 +1379,7 @@ export async function runCatalogEditor(ctx) {
   await page.fill('#width', '64');
   await page.fill('#height', '48');
   await selAdvanced('#antialias', 'off');
-  await selAdvanced('#quality', '');
+  await selAdvanced('#quality', '9'); // the default: no +Q flag at all
   await fillAdvanced('#threads', '');
   await page.evaluate(() => {
     window.__origNow = performance.now.bind(performance);

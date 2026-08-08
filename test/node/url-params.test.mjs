@@ -70,6 +70,19 @@ test('quality/antialias pass through raw (validated against the DOM by the calle
   assert.equal(parseRenderParams('?antialias=off').antialias, 'off');
 });
 
+// The #quality options are the twelve POV-Ray +Q levels (the range dist/ itself
+// validates), so every one of them has to survive the parser. ?q=9 and ?q=11 were
+// dead links while 9 was spelled as an empty option value and 10/11 were absent.
+test('every quality level 0-11 survives, under both the full name and ?q', () => {
+  for (let level = 0; level <= 11; level += 1) {
+    assert.equal(parseRenderParams(`?q=${level}`).quality, String(level));
+    assert.equal(parseRenderParams(`?quality=${level}`).quality, String(level));
+  }
+  // An empty ?q= is the legacy spelling of 9; it rides through as '' and
+  // settings.js migrateValue turns it into '9'.
+  assert.equal(parseRenderParams('?q=').quality, '');
+});
+
 test('mode only accepts still | animate', () => {
   assert.equal(parseRenderParams('?mode=still').mode, 'still');
   assert.equal(parseRenderParams('?mode=animate').mode, 'animate');

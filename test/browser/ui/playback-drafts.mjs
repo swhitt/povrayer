@@ -86,7 +86,7 @@ export async function runPlaybackDrafts(ctx) {
       quality: document.getElementById('quality').value,
       antialias: document.getElementById('antialias').value,
     })),
-    { example: 'csg-die', width: '512', quality: '', antialias: '0.1' },
+    { example: 'csg-die', width: '512', quality: '9', antialias: '0.1' },
     'invalid saved fields should fall back to defaults'
   );
 
@@ -996,9 +996,112 @@ export async function runPlaybackDrafts(ctx) {
     'a fresh draft image is not stale'
   );
 
-  // Validity gate: an obviously mid-edit (unbalanced) scene must NOT auto-render.
+  // --- the readout has to describe what is ON the plate ----------------------
+  // The stat chips and the render log narrate the last EXPLICIT render. A draft
+  // replaces the image under them, so they go .stale until a real render
+  // repopulates them. Measured before this: a 512x384 glass render left
+  // "pixels 196,608" at full opacity under a 320x240 sphere draft, indefinitely,
+  // and it survived an example switch. `grep logDetails.classList` found nothing,
+  // so the log was never dimmed at all.
+  const narration = () =>
+    page.evaluate(() => ({
+      stats: document.getElementById('stats').classList.contains('stale'),
+      log: document.getElementById('log-details').classList.contains('stale'),
+    }));
+  const waitDraftReady = (prevSrc) =>
+    page.waitForFunction(
+      (prev) => {
+        const o = document.getElementById('output');
+        const st = document.getElementById('status');
+        return (
+          st.dataset.state === 'draft' &&
+          /^preview ready · /.test(st.textContent) &&
+          o.src.startsWith('blob:') &&
+          o.src !== prev &&
+          !window.__liveDraftProbe().inFlight
+        );
+      },
+      prevSrc,
+      { timeout: 60_000 }
+    );
+  assert.deepEqual(
+    await narration(),
+    { stats: true, log: true },
+    'a draft image must dim the chips + log it does not describe'
+  );
+  await page.click('#render-btn');
+  await waitState('done');
+  assert.deepEqual(
+    await narration(),
+    { stats: false, log: false },
+    'an explicit render repopulates the chips + log, so both read live again'
+  );
+  const fullRenderSrc = await outSrc();
+  await typeScene(LIVE_SCENE + '// nudge the draft\n');
+  await waitDraftReady(fullRenderSrc);
+  assert.deepEqual(
+    await narration(),
+    { stats: true, log: true },
+    'the next draft dims them again (they still describe the full render)'
+  );
+
+  // An EMPTY buffer has no scene to describe, so the plate goes back to its
+  // empty-state hint instead of holding a full-size image of a scene that no
+  // longer exists, and the footer says why no preview is coming. Before this the
+  // reason was computed and dropped: no preview, no error, no status change.
+  await typeScene('');
+  await page.waitForFunction(
+    () => {
+      const st = document.getElementById('status');
+      return st.dataset.state === 'draft' && st.textContent === 'preview paused · empty scene';
+    },
+    null,
+    { timeout: 10_000 }
+  );
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      output: document.getElementById('output').hidden,
+      hint: document.querySelector('#output-plate .hint').hidden,
+      // The link still works (that PNG is a render the user asked for) but reads
+      // as outdated: it is the last trace of a scene the editor no longer holds.
+      downloadStale: document.getElementById('download-btn').classList.contains('stale'),
+    })),
+    { output: true, hint: false, downloadStale: true },
+    'emptying the buffer must hand the plate back to the empty-state hint'
+  );
+
+  // A scene with no #version previews like any other. POV-Ray only WARNS about a
+  // missing #version (clicking Render on this exact text succeeds), so the
+  // pre-check's no-version code must not park the preview: otherwise the preview
+  // and the Render button disagree about what is renderable, which is what left
+  // version-less scenes sitting in total silence.
+  const NO_VERSION_SCENE = LIVE_SCENE.split('\n').slice(1).join('\n');
+  const emptiedSrc = await outSrc();
+  await typeScene(NO_VERSION_SCENE);
+  await waitDraftReady(emptiedSrc);
+  assert.equal(
+    await page.evaluate(() => document.getElementById('output').naturalWidth),
+    320,
+    'a version-less scene must still auto-preview'
+  );
+
+  // Validity gate: an obviously mid-edit (unbalanced) scene must NOT auto-render,
+  // but it must SAY so (the mid-edit reason, in the dim draft state).
+  const noVersionSrc = await outSrc();
+  await typeScene(LIVE_SCENE);
+  await waitDraftReady(noVersionSrc);
   const goodDraftSrc = await outSrc();
   await typeScene(LIVE_SCENE + '\nsphere { 0, 1'); // dangling '{'
+  await page.waitForFunction(
+    () => {
+      const st = document.getElementById('status');
+      return (
+        st.dataset.state === 'draft' && st.textContent === 'preview paused · unbalanced { } ( ) [ ]'
+      );
+    },
+    null,
+    { timeout: 10_000 }
+  );
   await page.waitForTimeout(1200); // well past the (250ms) debounce
   assert.equal(await outSrc(), goodDraftSrc, 'an unbalanced scene must not fire a draft');
   assert.equal(
@@ -1170,12 +1273,12 @@ export async function runPlaybackDrafts(ctx) {
   // scales off.
   await floorDebounce();
 
-  // The radiosity cornell at the default quality (9, the empty option) on one
-  // thread stays in flight for seconds, so every fireDraft below (now firing at
-  // the floored debounce) lands while it is still live. Quality 9 already
-  // computes radiosity (the slow part); 10/11 only add antialiasing/jitter,
-  // which an AA-off draft skips, so the default is as slow as the old +Q11.
-  await selAdvanced('#quality', '');
+  // The radiosity cornell at the default quality (9) on one thread stays in
+  // flight for seconds, so every fireDraft below (now firing at the floored
+  // debounce) lands while it is still live. Quality 9 already computes radiosity
+  // (the slow part); 10/11 only add antialiasing/jitter, which an AA-off draft
+  // skips, so the default is as slow as +Q11.
+  await selAdvanced('#quality', '9');
   await typeScene(cornellA);
   await page.waitForFunction(
     (s) => {
@@ -1192,6 +1295,19 @@ export async function runPlaybackDrafts(ctx) {
     await page.evaluate(() => document.getElementById('status-spinner').hidden),
     false,
     'spinner should show while a live draft is in flight'
+  );
+  // ...and the footer says PREVIEWING, not "preview ready". Both draft hooks used
+  // to print previewReadyStatus, so the finished-preview line appeared the instant
+  // a draft started (measured: 1,650ms of "preview ready" next to a live spinner,
+  // with the previous scene still in the plate). This runs while the cornell draft
+  // is provably in flight, so the two states can't be confused.
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const st = document.getElementById('status');
+      return { text: st.textContent, state: st.dataset.state };
+    }),
+    { text: 'previewing… 320×240', state: 'draft' },
+    'an in-flight draft must announce previewing, not preview ready'
   );
   // Same text: fireDraft sees src === draftingSource and bails (702). The
   // scheduled fire clears the pending timer with the SAME draft still in flight

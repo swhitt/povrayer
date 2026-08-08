@@ -66,6 +66,9 @@ export function parseRenderParams(search) {
 
   // quality/antialias are validated against the live <select> options by the
   // caller (that option set lives in the DOM), so pass the raw string through.
+  // For quality that option set is the twelve POV-Ray +Q levels, '0'..'11' (the
+  // range dist/ itself validates), so ?q=9 and ?q=11 both land now; an empty
+  // ?q= is the legacy spelling of 9 and settings.js migrates it.
   const q = pick('quality', 'q');
   if (q !== null) out.quality = q;
   const aa = pick('antialias', 'aa');

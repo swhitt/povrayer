@@ -29,8 +29,65 @@ export function buildDraftOptions(input) {
   };
 }
 
+/**
+ * The draft's IN-FLIGHT line. Separate from previewReadyStatus because the
+ * onStart and onSuccess hooks used to call the identical helper, so "preview
+ * ready" was printed the instant a draft STARTED: measured 1,650ms of "preview
+ * ready" sitting next to a running spinner with the PREVIOUS scene in the plate.
+ * @param {number} width
+ * @param {number} height
+ */
+export function previewingStatus(width, height) {
+  return `previewing… ${width}×${height}`;
+}
+
+/**
+ * @param {number} width
+ * @param {number} height
+ */
 export function previewReadyStatus(width, height) {
   return `preview ready · ${width}×${height}`;
+}
+
+/**
+ * @typedef {{ ready: true, reason: null, status: null }
+ *   | { ready: false, reason: string, status: string }} PreviewGate
+ */
+
+/**
+ * Preview-path policy for a validateScene() reason: may the auto-preview run,
+ * and if not, what does the footer say while it stays parked? The page used to
+ * throw the reason away, so a buffer the pre-check rejected produced no preview,
+ * no error, and no status change: the plate just kept narrating a scene that was
+ * no longer in the editor.
+ *
+ * 'no-version' is deliberately NOT a blocker. It is the one validateScene code
+ * that is neither a mid-edit signal nor something POV-Ray rejects (clicking
+ * Render on a version-less scene succeeds, POV-Ray only warns and assumes an
+ * older language version), and sdl-validate's stated bias is toward ALLOWING
+ * renders. Parking on it would make the live preview and the Render button
+ * disagree about what is renderable, which is what left version-less scenes
+ * sitting in silence.
+ *
+ * @param {string | null} reason a validateScene() reason (null when ready)
+ * @returns {PreviewGate}
+ */
+export function previewGate(reason) {
+  switch (reason) {
+    // Wording is deliberately uniform: what stopped, then the mid-edit thing to
+    // finish. The dim 'draft' status state carries the "this is preview chatter,
+    // not a render verdict" styling.
+    case 'empty':
+      return { ready: false, reason, status: 'preview paused · empty scene' };
+    case 'unbalanced':
+      return { ready: false, reason, status: 'preview paused · unbalanced { } ( ) [ ]' };
+    case 'unterminated-comment':
+      return { ready: false, reason, status: 'preview paused · unterminated comment' };
+    case 'unterminated-string':
+      return { ready: false, reason, status: 'preview paused · unterminated string' };
+    default:
+      return { ready: true, reason: null, status: null };
+  }
 }
 
 /**
@@ -50,7 +107,8 @@ export function renderDoneStatus(elapsedMs, options, frameCount = null) {
  * @property {() => boolean} isolated
  * @property {() => string} readSource
  * @property {(source: string) => boolean} canAutoDraft
- * @property {(source: string) => boolean} sourceReady
+ * @property {(source: string) => { ready: boolean, reason: string | null }} validateSource
+ * @property {(parked: { reason: string, status: string }) => void} onPreviewParked
  * @property {() => boolean} explicitInFlight
  * @property {() => boolean} renderBusy
  * @property {() => object} draftOptions
@@ -74,7 +132,15 @@ export function createRenderOrchestrator(hooks) {
   const draft = createLiveDraftController({
     enabled: () => hooks.mode() === 'still' && hooks.liveEnabled() && hooks.isolated(),
     readSource: hooks.readSource,
-    sourceReady: (source) => hooks.canAutoDraft(source) && hooks.sourceReady(source),
+    // Readiness is also where the page learns WHY a preview isn't coming: the
+    // scheduler only wants a boolean, so the reason is reported out through
+    // onPreviewParked instead of being dropped on the floor.
+    sourceReady: (source) => {
+      if (!hooks.canAutoDraft(source)) return false;
+      const gate = previewGate(hooks.validateSource(source).reason);
+      if (!gate.ready) hooks.onPreviewParked(gate);
+      return gate.ready;
+    },
     explicitInFlight: hooks.explicitInFlight,
     renderBusy: hooks.renderBusy,
     draftOptions: hooks.draftOptions,

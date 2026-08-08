@@ -28,6 +28,30 @@ export const CONTROL_FIELDS = [
   { key: 'fps', kind: 'int', min: 1, max: 60 },
 ];
 
+// Quality shipped as `<option value="" selected>9</option>` until 2026-08, so an
+// empty string was how "9" (POV-Ray's own default +Q) was persisted, permalinked,
+// and handed off from the REPL. The option is an honest '9' now, so every foreign
+// value set is rewritten through here first: without it, a returning user's saved
+// blob and every link written before the change would carry a quality that is no
+// longer a real option, and get dropped.
+/** @type {Record<string, Record<string, string>>} */
+const LEGACY_SELECT_VALUES = {
+  quality: { '': '9' },
+};
+
+/**
+ * Rewrite a legacy encoding of a control value onto its current option value.
+ * Non-strings and values with no legacy meaning pass through untouched.
+ * @param {ControlField} field
+ * @param {*} value
+ * @returns {*}
+ */
+export function migrateValue(field, value) {
+  if (typeof value !== 'string') return value;
+  const mapped = LEGACY_SELECT_VALUES[field.key]?.[value];
+  return mapped === undefined ? value : mapped;
+}
+
 // A coercion returns the string to WRITE into the control, or null to leave the
 // control's current value untouched.
 
@@ -56,7 +80,10 @@ function coerceInt(value, min, max) {
 export function coerceSaved(field, value, isAllowed) {
   if (field.kind === 'int') return coerceInt(value, Number(field.min), Number(field.max));
   if (typeof value !== 'string') return null;
-  if (field.kind === 'select') return isAllowed(value) ? value : null;
+  if (field.kind === 'select') {
+    const migrated = migrateValue(field, value);
+    return isAllowed(migrated) ? migrated : null;
+  }
   return field.allowEmpty || value ? value : null;
 }
 
@@ -70,7 +97,10 @@ export function coerceSaved(field, value, isAllowed) {
  */
 export function coerceParam(field, value, isAllowed) {
   if (value === undefined) return null;
-  if (field.kind === 'select') return isAllowed(value) ? value : null;
+  if (field.kind === 'select') {
+    const migrated = migrateValue(field, value);
+    return isAllowed(migrated) ? migrated : null;
+  }
   return value;
 }
 
@@ -79,13 +109,25 @@ export function coerceParam(field, value, isAllowed) {
  * re-checked against the options (an old link may name a dropped one), and the
  * flags field normalizes a missing value to '' (links predating the field).
  * Everything else, including the int ranges the encoder already wrote, is verbatim.
+ *
+ * A select value this build no longer offers lands on `fallback` (the control's
+ * own default) rather than being skipped. Skipping it kept whatever the RECIPIENT
+ * had dialed in, so a link whose quality didn't survive decoding rendered at the
+ * reader's setting (verified: an editor sitting at quality 3 stayed at 3), which
+ * silently misdescribes the shared scene. A permalink is a complete state
+ * description: when a value can't be honored, the honest answer is the default.
+ *
  * @param {ControlField} field
  * @param {*} value
  * @param {(v: string) => boolean} isAllowed
+ * @param {string} fallback the control's default value (`''` for a text field)
  * @returns {string | null}
  */
-export function coerceHydrate(field, value, isAllowed) {
-  if (field.kind === 'select') return isAllowed(value) ? value : null;
+export function coerceHydrate(field, value, isAllowed, fallback) {
+  if (field.kind === 'select') {
+    const migrated = migrateValue(field, value);
+    return isAllowed(migrated) ? migrated : fallback;
+  }
   if (field.key === 'flags') return typeof value === 'string' ? value : '';
   return value;
 }

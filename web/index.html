@@ -305,10 +305,17 @@
           <summary>advanced</summary>
           <div class="advanced-body">
             <span class="ctl-group">
-              <label title="render quality 0-9 (lower is faster); 9 is the default"
+              <!-- Values are the literal POV-Ray +Q levels, 0-11 (what the
+                   library validates and what the REPL's :q accepts). 9 is the
+                   default and is a real option value: it used to be an empty
+                   string doubling as "automatic", which made 9 unrepresentable,
+                   so ?q=9 and both cross-surface handoffs silently did nothing.
+                   8 is the level that first enables reflected/refracted/
+                   transmitted rays, so anything below it renders glass opaque. -->
+              <label
+                title="render quality 0-11 (lower is faster); 9 is the default, below 8 drops reflection/refraction"
                 >quality
                 <select id="quality">
-                  <option value="" selected>9</option>
                   <option>0</option>
                   <option>1</option>
                   <option>2</option>
@@ -318,6 +325,9 @@
                   <option>6</option>
                   <option>7</option>
                   <option>8</option>
+                  <option value="9" selected>9</option>
+                  <option>10</option>
+                  <option>11</option>
                 </select></label
               >
               <label title="antialias threshold (off is fastest)"
