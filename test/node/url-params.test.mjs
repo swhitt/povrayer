@@ -1,10 +1,10 @@
-// Unit tests for web/url-params.js: the pure query-param parser ui.js uses to
+// Unit tests for web/url-params.ts: the pure query-param parser ui.js uses to
 // seed the controls from a deep link. Exhaustive so the module hits 100% without
 // needing a browser.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseRenderParams, applyExampleShareTarget } from '../../web/url-params.js';
+import { parseRenderParams, applyExampleShareTarget } from '../../_build/web/url-params.js';
 
 test('empty / no params yields an empty object', () => {
   assert.deepEqual(parseRenderParams(''), {});

@@ -27,15 +27,18 @@ export const ORB_CORE = 'ffd23f';
 /** The core stop while a render is in flight: --dim (#98a1ab) in web/styles.css. */
 export const ORB_BUSY_CORE = '98a1ab';
 
-/** The three characters a data: URI cannot carry literally in these contexts. */
-const URI_ESCAPES = { '<': '%3C', '>': '%3E', '#': '%23' };
+// The three characters a data: URI cannot carry literally in these contexts.
+// Typed as a plain string map rather than a union of the three keys: the lookup
+// below is driven by the /[<>#]/g match that produced them, so narrowing the key
+// type would only buy a cast at the call site (which is exactly what it used to
+// cost).
+const URI_ESCAPES: Record<string, string> = { '<': '%3C', '>': '%3E', '#': '%23' };
 
 /**
  * The orb as a standalone SVG document.
- * @param {string} core hex (no leading #) for the bright core stop
- * @returns {string}
+ * @param core hex (no leading #) for the bright core stop
  */
-export function orbSvg(core) {
+export function orbSvg(core: string): string {
   return (
     "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'>" +
     "<radialGradient id='g' cx='.33' cy='.28' r='.75'>" +
@@ -51,12 +54,8 @@ export function orbSvg(core) {
 /**
  * The same orb as a `data:image/svg+xml` URI, ready for an icon href, a CSS
  * url("...") or an img src.
- * @param {string} core hex (no leading #) for the bright core stop
- * @returns {string}
+ * @param core hex (no leading #) for the bright core stop
  */
-export function orbDataUri(core) {
-  return (
-    'data:image/svg+xml,' +
-    orbSvg(core).replace(/[<>#]/g, (c) => URI_ESCAPES[/** @type {'<'} */ (c)])
-  );
+export function orbDataUri(core: string): string {
+  return 'data:image/svg+xml,' + orbSvg(core).replace(/[<>#]/g, (c) => URI_ESCAPES[c]);
 }

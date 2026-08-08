@@ -25,6 +25,11 @@ export const rawBrowserDir = (root) => resolve(root, 'browser-v8');
 // three views (gate set, browser map, pragma-scan set) can never drift apart;
 // adding a file is a one-line edit here. Order is the gate's display order.
 //
+// `path` is always the SOURCE path, and for web/*.ts that is also the key the
+// gate sees: tsconfig.build.json emits an inline source map, so both c8 and
+// build-map.mjs re-key their coverage from _build/web/foo.js back to web/foo.ts.
+// The gate therefore reports on TypeScript source, never on compiled output.
+//
 // Per-file flags:
 //   browser - also measured in the browser via Playwright V8 coverage. These
 //             web/ modules run in Chromium against the real DOM; the rest are
@@ -45,48 +50,80 @@ const FILES = [
   { path: 'web/examples-sourced.js', browser: true },
   { path: 'web/example-filters.js', browser: true },
   { path: 'web/gallery.js', browser: true },
-  { path: 'web/orb.js' },
+  { path: 'web/orb.ts' },
   { path: 'web/highlight.js', browser: true },
   { path: 'web/glsl-highlight.js' },
-  { path: 'web/sdl-strip.js', browser: true },
+  { path: 'web/sdl-strip.ts', browser: true },
   { path: 'web/complete.js', browser: true },
   { path: 'web/context.js', browser: true },
   { path: 'web/assets.js', browser: true },
   { path: 'web/sliders.js', browser: true },
-  { path: 'web/settings.js', browser: true },
-  { path: 'web/history.js', browser: true },
+  { path: 'web/settings.ts', browser: true },
+  { path: 'web/history.ts', browser: true },
   { path: 'web/render-feedback.js', browser: true },
   { path: 'web/render-client.js', browser: true },
   { path: 'web/render-orchestrator.js', browser: true },
   { path: 'web/sdl-validate.js', browser: true },
   { path: 'web/scene-state.js', browser: true },
   { path: 'web/permalink.js', browser: true },
-  { path: 'web/url-params.js' },
-  { path: 'web/flags.js' },
-  { path: 'web/stats.js' },
+  { path: 'web/url-params.ts' },
+  { path: 'web/flags.ts' },
+  { path: 'web/stats.ts' },
   { path: 'web/apng.js' },
   { path: 'web/gif.js' },
   { path: 'web/ui.js', browser: true },
   { path: 'web/player.js', browser: true },
   { path: 'web/repl.js', browser: true },
-  { path: 'web/repl-scene.js', browser: true },
+  { path: 'web/repl-scene.ts', browser: true },
   { path: 'web/anim-export.js', browser: true },
   { path: 'web/asset-drop.js', browser: true },
-  { path: 'web/coi.js', browser: true },
+  { path: 'web/coi.ts', browser: true },
   { path: 'web/live-draft.js', browser: true },
   { path: 'web/turbo-sw.js' },
 ];
 
+// The ARTIFACT a given source is loaded as at runtime. A web/*.ts module is
+// never loaded directly (no browser reads .ts, and neither does Node 20), so its
+// artifact is the compiled _build/web/*.js that tools/build-web.mjs produces and
+// that both test/browser/serve.mjs and tools/assemble-site.mjs overlay. Anything
+// still written in JavaScript is its own artifact, shipped byte-identical.
+//
+// This is what keeps the basename lookup below honest through the migration: the
+// served name stays `ui.js` whether the source is ui.js or ui.ts.
+//
+// It is also the set .c8rc.json has to enroll, because c8 filters V8 scripts by
+// the path Node actually loaded, BEFORE the source map is applied: a compiled
+// module listed as `web/foo.ts` would simply never be measured.
+// test/node/coverage-config.test.mjs asserts .c8rc.json against this function so
+// the two cannot drift.
+/**
+ * @param {string} sourcePath a repo-relative first-party source path
+ * @returns {string} the repo-relative path of the artifact that is actually loaded
+ */
+export function servedPath(sourcePath) {
+  return sourcePath.startsWith('web/') && sourcePath.endsWith('.ts')
+    ? `_build/${sourcePath.slice(0, -3)}.js`
+    : sourcePath;
+}
+
 // Browser modules measured via Playwright V8 coverage, keyed by the basename the
-// dev server serves them under, valued by their absolute repo path (so the
-// converted istanbul map keys match the Node map for shared modules like
-// web/examples.js and merge cleanly).
+// dev server serves them under, valued by the absolute path of the artifact the
+// browser actually loaded. Handing v8-to-istanbul the COMPILED path matters for
+// a .ts module: the inline map's `sources` is relative to the emitted file, so
+// resolving it from anywhere else would invent a path that does not exist. Once
+// resolved, the map keys land on web/foo.ts and merge with the Node map for
+// shared modules like web/examples.js exactly as before.
 export const WEB_FILES = Object.fromEntries(
-  FILES.filter((f) => f.browser).map((f) => [basename(f.path), resolve(repoRoot, f.path)])
+  FILES.filter((f) => f.browser).map((f) => [
+    basename(servedPath(f.path)),
+    resolve(repoRoot, servedPath(f.path)),
+  ])
 );
 
 // The 100%-or-bust set. Every file the gate enforces; a file missing from the
-// merged map is itself a failure (a test stopped exercising it).
+// merged map is itself a failure (a test stopped exercising it). Keyed on SOURCE
+// (see the note on `path` above), so converting a module to TypeScript moves its
+// gate entry rather than dropping it.
 export const FIRST_PARTY = FILES.map((f) => resolve(repoRoot, f.path));
 
 // Source files scanned for `c8 ignore` / `istanbul ignore` pragmas, using each

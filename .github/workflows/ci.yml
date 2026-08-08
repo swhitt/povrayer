@@ -65,6 +65,11 @@ jobs:
   # checkJs needs the built wrapper's types in dist/ (resolved by the .d.ts shims),
   # so it runs in a dist-bearing job rather than the no-wasm lint job. Parallel
   # with the test shards.
+  #
+  # No explicit `build:web` step anywhere in this workflow, on purpose: every job
+  # that needs _build/web gets it from an npm pre-hook (pretypecheck:js, pretest:node)
+  # or from test/browser/serve.mjs, which builds before it serves. Adding one here
+  # would be a second place to forget. See tools/build-web.mjs.
   typecheck-js:
     needs: build
     runs-on: ubuntu-latest

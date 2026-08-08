@@ -1,10 +1,10 @@
-// Unit tests for web/stats.js: the pure label/value row builder behind the stats
+// Unit tests for web/stats.ts: the pure label/value row builder behind the stats
 // chip readout. Exhaustive (every optional row + every compact() branch) so the
 // module hits 100% without a browser.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { formatStats } from '../../web/stats.js';
+import { formatStats } from '../../_build/web/stats.js';
 
 const meta = { width: 512, height: 384 };
 

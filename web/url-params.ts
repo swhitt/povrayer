@@ -9,49 +9,42 @@
 // mode that isn't still|animate is dropped (its key omitted) so a junk param
 // never clobbers a good control value.
 
-/**
- * @param {string | null} v
- * @param {number} lo
- * @param {number} hi
- * @returns {number | null} the clamped integer, or null when v is absent/non-numeric
- */
-function clampInt(v, lo, hi) {
+/** @returns the clamped integer, or null when v is absent/non-numeric */
+function clampInt(v: string | null, lo: number, hi: number): number | null {
   if (v === null) return null;
   const n = parseInt(v, 10);
   if (Number.isNaN(n)) return null;
   return Math.min(hi, Math.max(lo, n));
 }
 
-/**
- * @typedef {object} RenderParams
- * @property {string} [width]
- * @property {string} [height]
- * @property {string} [quality]
- * @property {string} [antialias]
- * @property {string} [draft]
- * @property {string} [threads]
- * @property {string} [mode]
- * @property {string} [frames]
- * @property {string} [fps]
- * @property {string} [flags]
- */
+// Every value is a STRING because these land in <input>/<select> .value. The keys
+// mirror settings.ts's CONTROL_FIELDS plus `mode`; each is optional because an
+// absent (or rejected) param must leave the control alone, which is why the
+// parser omits keys rather than writing null or ''.
+export interface RenderParams {
+  width?: string;
+  height?: string;
+  quality?: string;
+  antialias?: string;
+  draft?: string;
+  threads?: string;
+  mode?: 'still' | 'animate';
+  frames?: string;
+  fps?: string;
+  flags?: string;
+}
 
-/**
- * @param {string} search a `location.search` string (the leading `?` is optional)
- * @returns {RenderParams}
- */
-export function parseRenderParams(search) {
+/** @param search a `location.search` string (the leading `?` is optional) */
+export function parseRenderParams(search: string): RenderParams {
   const p = new URLSearchParams(search);
-  /** @param {string[]} keys */
-  const pick = (...keys) => {
+  const pick = (...keys: string[]) => {
     for (const k of keys) {
       const v = p.get(k);
       if (v !== null) return v;
     }
     return null;
   };
-  /** @type {RenderParams} */
-  const out = {};
+  const out: RenderParams = {};
 
   const w = clampInt(pick('width', 'w'), 8, 2048);
   if (w !== null) out.width = String(w);
@@ -68,7 +61,7 @@ export function parseRenderParams(search) {
   // caller (that option set lives in the DOM), so pass the raw string through.
   // For quality that option set is the twelve POV-Ray +Q levels, '0'..'11' (the
   // range dist/ itself validates), so ?q=9 and ?q=11 both land now; an empty
-  // ?q= is the legacy spelling of 9 and settings.js migrates it.
+  // ?q= is the legacy spelling of 9 and settings.ts migrates it.
   const q = pick('quality', 'q');
   if (q !== null) out.quality = q;
   const aa = pick('antialias', 'aa');
@@ -100,11 +93,10 @@ const EXAMPLE_SHORT_LINK_HOSTS = new Set(['povrayer.com', 'localhost', '127.0.0.
  * hosts that can redirect it, the ?example= query form everywhere else.
  * Mutates and returns `url` (render params are appended by the caller either way).
  *
- * @param {URL} url the app-root base URL to share
- * @param {string} name the example slug
- * @returns {URL}
+ * @param url the app-root base URL to share
+ * @param name the example slug
  */
-export function applyExampleShareTarget(url, name) {
+export function applyExampleShareTarget(url: URL, name: string): URL {
   if (EXAMPLE_SHORT_LINK_HOSTS.has(url.hostname) || url.hostname.endsWith('.vercel.app')) {
     url.pathname = `/e/${name}`;
   } else {

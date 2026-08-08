@@ -1,4 +1,4 @@
-// Unit tests for web/settings.js: the control-field schema and the three coercion
+// Unit tests for web/settings.ts: the control-field schema and the three coercion
 // rules (untrusted saved blob, pre-parsed URL params, decoded permalink). Pure, so
 // exhaustive over every kind x value branch hits 100% without a browser. The five
 // ui.js call sites share this, so a drift here would silently change persistence.
@@ -11,7 +11,7 @@ import {
   coerceParam,
   coerceHydrate,
   migrateValue,
-} from '../../web/settings.js';
+} from '../../_build/web/settings.js';
 
 const byKey = Object.fromEntries(CONTROL_FIELDS.map((f) => [f.key, f]));
 const yes = () => true;
@@ -70,6 +70,22 @@ test('coerceHydrate: selects re-checked, flags defaults to "", rest verbatim', (
   assert.equal(coerceHydrate(byKey.flags, undefined, yes, ''), ''); // predates the flags field
   assert.equal(coerceHydrate(byKey.width, '640', yes, '512'), '640'); // trusted, taken as-is
   assert.equal(coerceHydrate(byKey.threads, '8', yes, ''), '8');
+});
+
+// `draft` is the one select PermalinkState marks optional, so a link minted before
+// the live-draft control existed decodes without it. The honest answer for an
+// absent value is the same as for an unrepresentable one: the control's default.
+test('coerceHydrate: an absent select value lands on the default', () => {
+  assert.equal(coerceHydrate(byKey.draft, undefined, yes, '256'), '256');
+});
+
+// The mirror case for a text/int field. Every one of those is REQUIRED in
+// PermalinkState, so this is only reachable by calling in directly, but the
+// answer has to be "leave the control alone" (null) rather than the `undefined`
+// the untyped version returned, which ui.js would have written into .value as the
+// literal string "undefined".
+test('coerceHydrate: an absent text value leaves the control untouched', () => {
+  assert.equal(coerceHydrate(byKey.width, undefined, yes, '512'), null);
 });
 
 // The bug this pins: a select value the build can't honor used to return null,

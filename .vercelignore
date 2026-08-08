@@ -1,6 +1,7 @@
 .git/
 .vercel/
 _site/
+_build/
 coverage/
 .nyc_output/
 .playwright-cli/

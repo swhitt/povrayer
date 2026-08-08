@@ -12,7 +12,7 @@
 // `<link rel="icon">` hrefs (parsed before any script runs), the .orb wordmark
 // background in web/styles.css, the same wordmark in turbo.html (which cannot
 // import ESM, see tools/gen-turbo.mjs), and the render-time favicon swap in
-// web/render-feedback.js. Only the last one can import web/orb.js, so the other
+// web/render-feedback.js. Only the last one can import web/orb.ts, so the other
 // four are copies and this test is what keeps them honest.
 //
 // It exists because they HAD drifted. index.html carried r='.75' and repl.html
@@ -27,7 +27,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 
-import { ORB_CORE, ORB_BUSY_CORE, orbSvg, orbDataUri } from '../../web/orb.js';
+// The compiled artifact, not the .ts source: Node 20 cannot import .ts, so the
+// suite loads what tools/build-web.mjs emits (see build-web.mjs for the whole
+// argument). Coverage still keys on web/orb.ts through the inline source map.
+import { ORB_CORE, ORB_BUSY_CORE, orbSvg, orbDataUri } from '../../_build/web/orb.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (p) => readFileSync(resolve(root, p), 'utf8');
@@ -89,7 +92,7 @@ test('every hand-copied orb is byte-identical to orbDataUri(ORB_CORE)', () => {
   ]) {
     assert.ok(
       text.includes(READY),
-      `${name} does not carry the canonical orb; copy orbDataUri(ORB_CORE) from web/orb.js`
+      `${name} does not carry the canonical orb; copy orbDataUri(ORB_CORE) from web/orb.ts`
     );
   }
 });
@@ -236,7 +239,7 @@ test('theme-color matches the background each surface actually paints', () => {
   assert.match(turbo, /background: #06070d;/, "turbo's theme-color must match what it paints");
 });
 
-test('render-feedback.js derives its favicons from web/orb.js', () => {
+test('render-feedback.js derives its favicons from web/orb.ts', () => {
   // The one copy that does not have to be a copy: it imports the module, so it
   // must not restate the URI or the hexes.
   assert.match(feedback, /import \{[^}]*orbDataUri[^}]*\} from '\.\/orb\.js'/);

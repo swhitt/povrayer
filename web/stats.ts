@@ -12,24 +12,33 @@
 // missing (or a derived value that would divide by zero) is omitted entirely, so
 // the readout never shows a blank, NaN, or Infinity.
 
-/**
- * @param {number} n
- * @returns {string} a compact magnitude: 1.2M, 13.8k, or a bare integer
- */
-function compact(n) {
+/** What render-client's log parser managed to pull out of a render. */
+export interface RenderStats {
+  traceSeconds?: number;
+  parseSeconds?: number;
+  rays?: number;
+  threads?: number;
+  warnings?: number;
+}
+
+/** One chip in the readout. */
+export interface StatRow {
+  label: string;
+  value: string;
+}
+
+/** @returns a compact magnitude: 1.2M, 13.8k, or a bare integer */
+function compact(n: number): string {
   if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
   if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
   return String(Math.round(n));
 }
 
-/**
- * @param {{ traceSeconds?: number, parseSeconds?: number, rays?: number, threads?: number, warnings?: number }} stats
- * @param {{ width: number, height: number }} meta
- * @returns {{ label: string, value: string }[]}
- */
-export function formatStats(stats, meta) {
-  /** @type {{ label: string, value: string }[]} */
-  const rows = [];
+export function formatStats(
+  stats: RenderStats,
+  meta: { width: number; height: number }
+): StatRow[] {
+  const rows: StatRow[] = [];
   const { width, height } = meta;
 
   rows.push({ label: 'pixels', value: (width * height).toLocaleString('en-US') });

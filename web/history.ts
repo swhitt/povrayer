@@ -4,20 +4,25 @@
 // version. Pure and DOM-free: callers supply `now`, storage, and any DOM rendering,
 // so it node-tests to 100%. Text only by design (no thumbnails) to stay lightweight.
 
-/** @typedef {{ t: number, source: string }} Snapshot */
+export interface Snapshot {
+  /** epoch ms the snapshot was taken */
+  t: number;
+  source: string;
+}
 
 /**
  * Prepend a snapshot (newest-first), skipping the no-op when the source is
  * identical to the current newest entry, and capping the list to `max`.
  * Returns the SAME array reference on a dedup skip so the caller can avoid a
  * redundant save/re-render.
- * @param {Snapshot[]} list
- * @param {string} source
- * @param {number} now epoch ms
- * @param {number} max
- * @returns {Snapshot[]}
+ * @param now epoch ms
  */
-export function addSnapshot(list, source, now, max) {
+export function addSnapshot(
+  list: Snapshot[],
+  source: string,
+  now: number,
+  max: number
+): Snapshot[] {
   if (list[0] && list[0].source === source) return list;
   return [{ t: now, source }, ...list].slice(0, max);
 }
@@ -25,15 +30,29 @@ export function addSnapshot(list, source, now, max) {
 /**
  * Load history snapshots from best-effort string storage. Malformed JSON starts
  * fresh, and mixed arrays keep only records that match the snapshot shape.
- * @param {{ getItem(key: string): string | null }} storage
- * @param {string} key
- * @returns {Snapshot[]}
  */
-export function loadSnapshots(storage, key) {
+export function loadSnapshots(
+  storage: { getItem(key: string): string | null },
+  key: string
+): Snapshot[] {
   try {
-    const raw = JSON.parse(storage.getItem(key) || '[]');
+    const raw: unknown = JSON.parse(storage.getItem(key) || '[]');
+    // The filter IS the validation, and saying so as a type PREDICATE is what
+    // keeps JSON.parse's `any` from leaking into the return type: `unknown` goes
+    // in, a real Snapshot[] comes out, with no assertion anywhere. The narrowing
+    // is spelled out (`typeof`/`in`) rather than reaching straight for `.source`
+    // on an untrusted value, which is the same check the JSDoc version made,
+    // just one tsc believes.
     return Array.isArray(raw)
-      ? raw.filter((e) => e && typeof e.source === 'string' && typeof e.t === 'number')
+      ? raw.filter(
+          (e: unknown): e is Snapshot =>
+            typeof e === 'object' &&
+            e !== null &&
+            'source' in e &&
+            typeof e.source === 'string' &&
+            't' in e &&
+            typeof e.t === 'number'
+        )
       : [];
   } catch {
     return [];
@@ -42,12 +61,13 @@ export function loadSnapshots(storage, key) {
 
 /**
  * Persist history snapshots to best-effort string storage.
- * @param {{ setItem(key: string, value: string): void }} storage
- * @param {string} key
- * @param {Snapshot[]} list
- * @returns {boolean} true when storage accepted the write
+ * @returns true when storage accepted the write
  */
-export function saveSnapshots(storage, key, list) {
+export function saveSnapshots(
+  storage: { setItem(key: string, value: string): void },
+  key: string,
+  list: Snapshot[]
+): boolean {
   try {
     storage.setItem(key, JSON.stringify(list));
     return true;
@@ -59,10 +79,8 @@ export function saveSnapshots(storage, key, list) {
 /**
  * A short human label for a snapshot: its first non-blank line with any leading
  * comment marker stripped, trimmed and truncated; '(blank scene)' if there is none.
- * @param {string} source
- * @returns {string}
  */
-export function snapshotPreview(source) {
+export function snapshotPreview(source: string): string {
   const line = source.split('\n').find((l) => l.trim() !== '');
   if (line === undefined) return '(blank scene)';
   const text = line.replace(/^\s*(\/\/|\/\*)\s*/, '').trim();
@@ -76,16 +94,17 @@ export function snapshotPreview(source) {
  * LCS/ordering: a reordered scene legitimately reads "+0 −0"). Returns null
  * when the two texts are byte-identical so the caller can label the entry
  * "current" instead of "+0 −0".
- * @param {string} source the snapshot text
- * @param {string} current the current editor text
- * @returns {{ added: number, removed: number } | null}
+ *
+ * @param source the snapshot text
+ * @param current the current editor text
  */
-export function lineDelta(source, current) {
+export function lineDelta(
+  source: string,
+  current: string
+): { added: number; removed: number } | null {
   if (source === current) return null;
-  /** @param {string} text */
-  const tally = (text) => {
-    /** @type {Map<string, number>} */
-    const m = new Map();
+  const tally = (text: string) => {
+    const m = new Map<string, number>();
     for (const line of text.split('\n')) m.set(line, (m.get(line) ?? 0) + 1);
     return m;
   };
@@ -100,11 +119,10 @@ export function lineDelta(source, current) {
 
 /**
  * A coarse "2m ago"-style age. Pure: the caller passes the current time.
- * @param {number} then epoch ms
- * @param {number} now epoch ms
- * @returns {string}
+ * @param then epoch ms
+ * @param now epoch ms
  */
-export function relativeTime(then, now) {
+export function relativeTime(then: number, now: number): string {
   const s = Math.max(0, Math.round((now - then) / 1000));
   if (s < 45) return 'just now';
   const m = Math.round(s / 60);

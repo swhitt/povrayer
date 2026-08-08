@@ -13,11 +13,8 @@
  * valid), the delimiters of strings are kept as `"` `"`, and comment bodies
  * become blanks. Block comments nest exactly like POV-Ray 3.8; an unterminated
  * comment or string runs to EOF/EOL.
- *
- * @param {string} src
- * @returns {string}
  */
-export function stripCommentsAndStrings(src) {
+export function stripCommentsAndStrings(src: string): string {
   const n = src.length;
   let out = '';
   let i = 0;

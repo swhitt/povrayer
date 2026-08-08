@@ -10,7 +10,10 @@
 // requirement (the result is committed): files are processed in name order,
 // duplicate identifiers resolve first-wins, and the symbol list is sorted by
 // name, so the same inputs always yield byte-identical output.
-import { stripCommentsAndStrings } from '../../web/sdl-strip.js';
+// web/sdl-strip.ts, via its compiled artifact: Node cannot import .ts on the
+// Node 20 line the project still supports, so `npm run gen:manifest` builds
+// _build/web first (see the pregen:manifest hook and tools/build-web.mjs).
+import { stripCommentsAndStrings } from '../../_build/web/sdl-strip.js';
 
 // Color constructors and the `color`/`colour` keyword: all collapse to one kind.
 const COLOR = new Set([

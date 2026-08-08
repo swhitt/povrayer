@@ -1,5 +1,7 @@
 # Generated build output (emscripten + tsc)
 dist/
+# Compiled web/ TypeScript (tools/build-web.mjs); tsc's own formatting, not ours
+_build/
 # Gitignored symlink to the built wrapper (tools/link-wrapper.mjs)
 src/index.js
 # Vendored third-party (MIT, pinned)

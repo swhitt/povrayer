@@ -1,9 +1,13 @@
-// Unit tests for web/flags.js: the raw POV-Ray flags tokenizer behind the
+// Unit tests for web/flags.ts: the raw POV-Ray flags tokenizer behind the
 // advanced controls field. Exhaustive so the module hits 100% without a browser.
+//
+// Imports the COMPILED module out of _build/web (see tools/build-web.mjs for why
+// the .ts source cannot be imported directly on Node 20). The inline source map
+// re-keys coverage back to web/flags.ts, so the gate still reports on source.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseFlags } from '../../web/flags.js';
+import { parseFlags } from '../../_build/web/flags.js';
 
 test('empty / whitespace-only input yields no tokens', () => {
   assert.deepEqual(parseFlags(''), []);

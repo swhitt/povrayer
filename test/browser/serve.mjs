@@ -9,12 +9,23 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { buildWeb } from '../../tools/build-web.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
-// dist/ first so /index.js and /povray.{mjs,wasm} win; web/ next so / serves the real UI
-// page exactly as deployed on Pages (web/ also holds turbo.html now); test/browser/
-// last for the test harness.
-const ROOTS = [resolve(here, '../../dist'), resolve(here, '../../web'), resolve(here)];
+// dist/ first so /index.js and /povray.{mjs,wasm} win; _build/web/ next for the
+// modules compiled from TypeScript; web/ after it so / serves the real UI page
+// exactly as deployed (web/ also holds turbo.html and every non-JS asset);
+// test/browser/ last for the test harness.
+//
+// _build/web and web never hold the same name (tools/build-web.mjs prunes its
+// output down to exactly the .ts-derived modules, and a module is either .ts or
+// .js), so this order is belt-and-braces rather than load-bearing.
+const ROOTS = [
+  resolve(here, '../../dist'),
+  resolve(here, '../../_build/web'),
+  resolve(here, '../../web'),
+  resolve(here),
+];
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -74,6 +85,13 @@ async function handle(req, res) {
 }
 
 export function startServer(port = 0) {
+  // Make sure web/'s TypeScript is compiled before the first request, every time.
+  // The browser cannot load .ts, so a converted module only exists as _build/web
+  // output, and "someone remembered to rebuild" is not a property a test suite
+  // should depend on: a stale ui.js would pass or fail against code nobody is
+  // looking at. buildWeb() no-ops when the output already matches the sources, so
+  // this costs a few stats on the common path.
+  buildWeb();
   return new Promise((resolveStart, rejectStart) => {
     const server = createServer((req, res) => {
       /* c8 ignore start -- defensive 500: handle() catches its own errors and always responds, so this net never fires */

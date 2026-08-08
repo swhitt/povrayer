@@ -1,0 +1,58 @@
+{
+  // The EMIT config. tsconfig.checkjs.json and tsconfig.strict.json both set
+  // noEmit and answer "is this code correct?"; this one answers "what do we
+  // ship?". It compiles the TypeScript modules in web/ down to the plain ESM the
+  // browser and the Node tests load, into _build/web/.
+  //
+  // Deliberately extends the checkJs config so module/target/lib/moduleResolution
+  // are single-sourced. Only the emit knobs differ.
+  "extends": "./tsconfig.checkjs.json",
+
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "_build/web",
+
+    // Required, not optional: without an explicit rootDir tsc computes the common
+    // source directory of the program (TS5011 when that is ambiguous) and the
+    // output nesting shifts the moment the closure pulls in a file from another
+    // directory. Pinning it to web/ guarantees web/ui.ts emits at
+    // _build/web/ui.js, which is the name index.html already references.
+    "rootDir": "web",
+
+    // The whole coverage story rides on this. v8-to-istanbul (9.3.0, the same
+    // converter c8 uses) auto-detects an inline sourceMappingURL in the file it
+    // is handed and re-keys the coverage it produces to the ORIGINAL source, so
+    // the 100% gate keeps reporting against web/foo.ts rather than the compiled
+    // artifact. inlineSources embeds the .ts text so the converter needs nothing
+    // but the emitted file (Playwright hands us only the served bytes, never a
+    // sibling .map), and so a stack trace from the deployed page still points at
+    // real source.
+    "inlineSourceMap": true,
+    "inlineSources": true,
+
+    // This config's job is emit, not verification: `npm run typecheck:js` and
+    // `npm run typecheck:strict` own the .js side, and running checkJs here too
+    // would just double the wall clock of every test run for the same errors.
+    // .ts files are still fully checked (they cannot opt out), and
+    // tools/build-web.mjs fails the build on any diagnostic, so a broken module
+    // can never reach _build/.
+    "checkJs": false,
+
+    // Declarations are what keep the COMPILED output from being type-checked as
+    // JavaScript. The Node tests import `../../_build/web/foo.js`, which puts
+    // that file in the checkJs program, and generated JS re-checked as JS loses
+    // everything the source knew: web/repl-scene.ts's `readonly [RegExp, string]`
+    // tuple comes back as `(RegExp | string)[]` and `re.test(...)` becomes an
+    // error in code that is provably correct. With foo.d.ts sitting next to it,
+    // TS resolves the import to the declaration instead, so the tests are checked
+    // against the REAL strict types and the emitted body is never re-analyzed.
+    "declaration": true
+  },
+
+  // Only the TypeScript modules are named here. tsc still pulls the .js they
+  // import into the program (allowJs) and emits those too, which is why
+  // tools/build-web.mjs prunes _build/web/ down to the .ts-derived outputs: the
+  // remaining .js modules ship straight from web/, byte-identical and with no
+  // inline-sourcemap tax on the 93KB examples.js.
+  "include": ["web/**/*.ts"]
+}

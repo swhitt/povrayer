@@ -10,17 +10,19 @@
 // and a bad flag simply surfaces in the render log like any other engine error.
 
 /**
- * @param {string} input the raw flags field text
- * @returns {string[]} argv tokens (no surrounding quotes)
+ * @param input the raw flags field text
+ * @returns argv tokens (no surrounding quotes)
  */
-export function parseFlags(input) {
-  /** @type {string[]} */
-  const out = [];
+export function parseFlags(input: string): string[] {
+  const out: string[] = [];
   // Alternatives in priority order: a "double" run, a 'single' run, then a bare
   // non-whitespace run. \S+ skips the inter-token whitespace for free.
   const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
   let m;
   while ((m = re.exec(input)) !== null) {
+    // Exactly one of the three alternatives matched, so the ?? chain always
+    // lands on a string; the group indices are `string | undefined` to tsc
+    // because it cannot know the alternation is exhaustive.
     out.push(m[1] ?? m[2] ?? m[3]);
   }
   return out;

@@ -27,18 +27,26 @@
   // Alphabetical. Every entry is also enrolled in tools/coverage/paths.mjs
   // FIRST_PARTY, asserted by test/node/coverage-config.test.mjs so this list
   // cannot drift away from the coverage manifest.
+  //
+  // Mixed .ts and .js on purpose. A module renamed to .ts is real TypeScript with
+  // real annotations and lands here; the three .js holdouts below are strict-clean
+  // but blocked on a RUNTIME edge, not a type one: web/player.js imports all three
+  // and test/node/player-runtime.test.mjs loads player.js straight out of web/, so
+  // compiling them into _build/web (which is the only way Node 20 can load a .ts
+  // module, see tools/build-web.mjs) would leave player.js importing ./gif.js from
+  // a directory that no longer has it. They convert together with player.js.
   "include": [
     "web/anim-export.js",
     "web/apng.js",
-    "web/coi.js",
-    "web/flags.js",
+    "web/coi.ts",
+    "web/flags.ts",
     "web/gif.js",
-    "web/history.js",
-    "web/orb.js",
-    "web/repl-scene.js",
-    "web/sdl-strip.js",
-    "web/settings.js",
-    "web/stats.js",
-    "web/url-params.js"
+    "web/history.ts",
+    "web/orb.ts",
+    "web/repl-scene.ts",
+    "web/sdl-strip.ts",
+    "web/settings.ts",
+    "web/stats.ts",
+    "web/url-params.ts"
   ]
 }

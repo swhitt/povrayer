@@ -1,9 +1,9 @@
-// Unit tests for web/coi.js: the shared cross-origin-isolation retry helper
+// Unit tests for web/coi.ts: the shared cross-origin-isolation retry helper
 // used by both browser entry points.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ensureCrossOriginIsolation } from '../../web/coi.js';
+import { ensureCrossOriginIsolation } from '../../_build/web/coi.js';
 
 function fakeSession(initial = null) {
   const store = new Map();

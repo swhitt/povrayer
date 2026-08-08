@@ -24,6 +24,10 @@ test-output/
 # Assembled Vercel static output (dist/ + web/, built by tools/assemble-site.mjs)
 /_site/
 
+# Compiled web/ TypeScript (tools/build-web.mjs -> tsconfig.build.json). Wiped and
+# regenerated on every serve/assemble/test run, so it is pure derived output.
+/_build/
+
 # Vercel CLI local state + prebuilt output
 .vercel/
 .vercel

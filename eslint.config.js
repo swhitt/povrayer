@@ -14,11 +14,17 @@ export default [
     // Not first-party / not lintable here:
     // - dist/**: emscripten + tsc build output (generated)
     // - web/coi-serviceworker.js: vendored third-party (MIT, pinned)
-    // - **/*.ts: type-checked by tsc, formatted by Prettier
+    // - **/*.ts: type-checked by tsc, formatted by Prettier. Same deal the
+    //   wrapper has always had: eslint here has no TS parser (adding one means a
+    //   new dev dep and a second rule set), and tsc under tsconfig.strict.json
+    //   already covers what js.configs.recommended would catch on these files,
+    //   no-undef via real resolution, no-unused-vars via noUnusedLocals /
+    //   noUnusedParameters, no-fallthrough via noFallthroughCasesInSwitch.
     // - coverage/**: generated reports
     ignores: [
       'dist/**',
       '_site/**', // assembled deploy output (dist/ + web/, see tools/assemble-site.mjs)
+      '_build/**', // compiled web/ TypeScript (see tools/build-web.mjs)
       '.vercel/**', // Vercel CLI local state + prebuilt output
       'node_modules/**',
       'coverage/**',

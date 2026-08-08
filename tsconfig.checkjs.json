@@ -1,7 +1,15 @@
 {
-  // Static type-checking for the first-party plain JS (JSDoc types, no .ts
-  // rewrite). The wrapper (wrapper/src/*.ts) has its own tsconfig and is checked
-  // separately by `npm run typecheck` -> the wrapper line; it is excluded here.
+  // The WIDE tier: every first-party module in web/, plus the CLI, tooling and
+  // test drivers, in one program. The wrapper (wrapper/src/*.ts) has its own
+  // tsconfig and is checked separately by `npm run typecheck`; it is excluded here.
+  //
+  // The include list below is mixed .js and .ts because web/ is mid-migration.
+  // Both are named explicitly (no globs) so a module cannot join or leave the
+  // program by accident, and test/node/coverage-config.test.mjs asserts the list
+  // covers every first-party web module whichever extension it currently wears.
+  // A .ts module gets checked twice, loosely here and at full strict by
+  // tsconfig.strict.json; the point of listing it here anyway is program
+  // MEMBERSHIP, so ui.js's calls into it are checked against real types.
   //
   // Strictness: deliberately the DEFAULT `checkJs` behavior (NOT `strict`). That
   // catches the bugs worth catching here, wrong argument types, bad call
@@ -55,34 +63,34 @@
   "include": [
     "web/apng.js",
     "web/gif.js",
-    "web/flags.js",
-    "web/stats.js",
+    "web/flags.ts",
+    "web/stats.ts",
     "web/ui.js",
     "web/gallery.js",
     "web/player.js",
     "web/repl.js",
-    "web/repl-scene.js",
+    "web/repl-scene.ts",
     "web/anim-export.js",
     "web/asset-drop.js",
-    "web/coi.js",
+    "web/coi.ts",
     "web/live-draft.js",
-    "web/orb.js",
+    "web/orb.ts",
     "web/render-feedback.js",
     "web/render-client.js",
     "web/render-orchestrator.js",
     "web/highlight.js",
     "web/glsl-highlight.js",
-    "web/sdl-strip.js",
+    "web/sdl-strip.ts",
     "web/complete.js",
     "web/context.js",
     "web/assets.js",
     "web/sliders.js",
-    "web/settings.js",
-    "web/history.js",
+    "web/settings.ts",
+    "web/history.ts",
     "web/sdl-validate.js",
     "web/scene-state.js",
     "web/permalink.js",
-    "web/url-params.js",
+    "web/url-params.ts",
     "web/examples.js",
     "web/examples-sourced.js",
     "web/example-filters.js",

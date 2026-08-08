@@ -1,4 +1,4 @@
-// Unit tests for web/history.js: the pure scene-history primitives. Exhaustive
+// Unit tests for web/history.ts: the pure scene-history primitives. Exhaustive
 // over the dedup/cap, preview, and relative-time branches so the module hits 100%
 // without a browser (the DOM glue in ui.js is browser-tested separately).
 import { test } from 'node:test';
@@ -11,7 +11,7 @@ import {
   snapshotPreview,
   relativeTime,
   lineDelta,
-} from '../../web/history.js';
+} from '../../_build/web/history.js';
 
 test('addSnapshot prepends newest-first', () => {
   const a = addSnapshot([], 'one', 1000, 20);

@@ -3,6 +3,8 @@
 .git
 .github
 dist/
+_build/
+_site/
 **/node_modules
 **/*.log
 **/.DS_Store

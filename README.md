@@ -306,17 +306,33 @@ npm run lint             # eslint .
 npm run format:check     # prettier --check .
 npm run format           # prettier --write .
 npm run typecheck        # tsc --noEmit on wrapper/tsconfig.json
-npm run typecheck:js     # tsc --noEmit on tsconfig.checkjs.json (web/ + tools/ via JSDoc)
-npm run typecheck:strict # tsc --noEmit on tsconfig.strict.json (full strict, graduated modules)
+npm run typecheck:js     # tsc --noEmit on tsconfig.checkjs.json (web/ + tools/, JS and TS)
+npm run typecheck:strict # tsc --noEmit on tsconfig.strict.json (full strict tier)
+npm run build:web        # tsc -p tsconfig.build.json: web/*.ts -> _build/web/*.js
 ```
 
-The browser code is plain JS type-checked through JSDoc, deliberately: `web/`
-ships unbundled with no build step, so the files the browser loads are the files
-in the repo. `tsconfig.checkjs.json` runs default `checkJs` strictness over all
-of it (see the rationale in that file), and `tsconfig.strict.json` runs _full_
-strict over the subset of modules that are already clean under it. Modules
-graduate into the strict list one at a time; graduating one means fixing its
-whole import closure, not just the file.
+`web/` is mid-migration to TypeScript, and both languages are gated. The `.js`
+modules are type-checked through JSDoc by `tsconfig.checkjs.json` at default
+`checkJs` strictness (see the rationale in that file); the `.ts` modules carry
+real annotations and go straight into `tsconfig.strict.json`, which runs _full_
+strict and is enforced in CI. `test/node/coverage-config.test.mjs` asserts that
+every module is one or the other and never neither.
+
+The `.ts` modules are compiled to `_build/web/` by `tools/build-web.mjs`, because
+nothing that loads them can read TypeScript: not the browser, and not the Node 20
+line `engines` still supports (`--experimental-strip-types` does not exist there).
+The output keeps the same filenames, so `index.html`'s `<script src="./ui.js">`
+never changes; `test/browser/serve.mjs` serves `_build/web/` ahead of `web/` and
+`tools/assemble-site.mjs` overlays it into `_site`. Both call the build themselves
+and it re-verifies its output against the sources, so there is no path that serves
+or ships a stale module. Coverage still reports on the `.ts` source: the emitted
+files carry an inline source map and v8-to-istanbul re-keys through it.
+
+One constraint falls out of that split. A module can only become `.ts` once
+nothing Node loads out of `web/` imports it, since the compiled copy sits in a
+different directory and the importer's `./foo.js` would stop resolving. So
+`web/{gif,apng,anim-export}.js` are strict-clean but still JavaScript: they
+convert with `web/player.js`, which imports them.
 
 ### Coverage
 
@@ -328,8 +344,10 @@ to istanbul. The two are merged into `coverage/`.
 
 `tools/coverage/paths.mjs` is the single source of truth for that file set, so
 read it rather than trusting a list here. `test/node/coverage-config.test.mjs`
-force-enrolls every new `web/*.js` into it plus `.c8rc.json` and
+force-enrolls every new `web/` module into it plus `.c8rc.json` and
 `tsconfig.checkjs.json`, so a module cannot be added and silently skip the gate.
+That guard is extension-agnostic on purpose: renaming a module to `.ts` used to be
+the cheapest way to fall out of every list at once.
 
 ```sh
 npm run coverage        # run the whole suite, write coverage/ (final json, lcov, html)

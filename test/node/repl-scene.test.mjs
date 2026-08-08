@@ -1,9 +1,9 @@
-// Unit tests for web/repl-scene.js: the pure REPL scene assembler. These keep
+// Unit tests for web/repl-scene.ts: the pure REPL scene assembler. These keep
 // scaffold injection and assembled-line mapping covered without a browser.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { VERSION_LINE, assembleReplScene } from '../../web/repl-scene.js';
+import { VERSION_LINE, assembleReplScene } from '../../_build/web/repl-scene.js';
 
 test('assembleReplScene always starts with the version line and default scaffold', () => {
   const out = assembleReplScene([{ source: 'sphere { <0,0,0>, 1 }' }]);

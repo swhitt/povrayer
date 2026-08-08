@@ -1,11 +1,11 @@
-// Unit tests for web/sdl-strip.js: the shared comment/string-stripping scanner.
+// Unit tests for web/sdl-strip.ts: the shared comment/string-stripping scanner.
 // Exhaustive over the line/nested-block/string branches (terminated AND
 // unterminated each), so the module hits 100% without a browser. The manifest
 // parser and the REPL scaffold probe both rely on it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { stripCommentsAndStrings as strip } from '../../web/sdl-strip.js';
+import { stripCommentsAndStrings as strip } from '../../_build/web/sdl-strip.js';
 
 test('blanks a line comment but keeps the newline and length', () => {
   const out = strip('a // secret\nb');
