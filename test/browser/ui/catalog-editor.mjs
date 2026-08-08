@@ -532,7 +532,7 @@ export async function runCatalogEditor(ctx) {
   // quality dialed in here must survive untouched (loading an example no longer
   // writes a render tier over it).
   // (commitOption, selectExample pristine path, applyExampleClock animated arm,
-  // closeBrowser(returnFocus=true), setTriggerLabel re-mark.)
+  // closeBrowser(returnFocus=true), renderSceneIdentity re-mark.)
   await selAdvanced('#quality', '4');
   await page.fill('#example-search', 'orbit');
   await page.waitForFunction(
@@ -1048,6 +1048,77 @@ export async function runCatalogEditor(ctx) {
     },
     'a gallery-only selection can reopen the compact picker without a featured row'
   );
+  await page.keyboard.press('Escape');
+
+  // ---------------------------------------------------------------------------
+  // The picker holds a curated 34 of the 96 shipped scenes, so a search for a
+  // gallery-only name (photon, god rays, mandel, abyss, pavement, gyroid) matches
+  // nothing here. Its empty state therefore has to HAND OFF to the gallery
+  // carrying the query, instead of confidently reporting that a scene the app
+  // ships does not exist.
+  // ---------------------------------------------------------------------------
+  const emptyLead = () =>
+    page.evaluate(() => document.querySelector('#example-empty span').textContent);
+  await openBrowser();
+  await page.fill('#example-search', 'photon');
+  await page.waitForFunction(() => !document.getElementById('example-empty').hidden, null, {
+    timeout: 5_000,
+  });
+  assert.match(
+    await emptyLead(),
+    /^No featured scene matches\./,
+    'a gallery-only query is a curation miss, not a nonexistent scene'
+  );
+  assert.match(
+    await page.evaluate(() => document.querySelector('#example-empty button').textContent),
+    /search all 96 in the Gallery/,
+    'the empty state offers the whole catalog by count'
+  );
+  await page.click('#example-empty button');
+  await page.waitForFunction(
+    () =>
+      !document.getElementById('gallery').hidden &&
+      document.getElementById('gallery-search').value === 'photon',
+    null,
+    { timeout: 5_000 }
+  );
+  assert.deepEqual(
+    await visibleGalleryNames(),
+    ['photon-caustics'],
+    'the handoff carries the query, so the gallery opens already showing the scene'
+  );
+  assert.equal(await browserExpanded(), 'false', 'the handoff closes the picker behind it');
+
+  // The strictly worse half: with that gallery-only scene LOADED, the picker used
+  // to show its title in the trigger directly above "no examples match", denying
+  // the scene it was itself displaying.
+  await page.click('.gallery-card[data-name="photon-caustics"]');
+  await page.waitForFunction(
+    () =>
+      document.getElementById('gallery').hidden &&
+      document.getElementById('example-trigger').dataset.name === 'photon-caustics',
+    null,
+    { timeout: 5_000 }
+  );
+  await openBrowser();
+  await page.fill('#example-search', 'photon');
+  await page.waitForFunction(() => !document.getElementById('example-empty').hidden, null, {
+    timeout: 5_000,
+  });
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      lead: document.querySelector('#example-empty span').textContent,
+      trigger: document.getElementById('example-trigger-text').textContent,
+    })),
+    {
+      lead: '"Caustic ring (photons)" is loaded, from the Gallery. ',
+      trigger: 'Caustic ring (photons)',
+    },
+    'the empty state must not deny the scene the trigger is displaying'
+  );
+  await page.keyboard.press('Escape');
+  await page.click('#gallery-btn');
+  await page.click('#gallery-clear'); // leave the gallery filters clean for later steps
   await page.keyboard.press('Escape');
 
   // Pristine editor (=== the loaded scene) switches with no confirm.

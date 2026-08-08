@@ -98,6 +98,20 @@ export async function runDeepLinks(ctx) {
     true,
     'a successful gist load surfaces no error'
   );
+  // A gist is a foreign scene: the picker names the gist, marks no example row,
+  // and Reset stays disabled. The control used to keep the recipient's last
+  // example in the trigger and report `current` for a scene it had never seen
+  // (the boot label was simply never revisited on this path).
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      label: document.getElementById('example-trigger-text').textContent,
+      selected: document.getElementById('example-trigger').dataset.name,
+      chip: document.getElementById('scene-dirty').textContent,
+      resetDisabled: document.getElementById('reset-scene-btn').disabled,
+    })),
+    { label: 'gist abc1', selected: '', chip: 'as received', resetDisabled: true },
+    'a loaded gist labels itself and cannot be Reset into an example'
+  );
 
   // Pinned permalink: while the gist scene is unmodified, Copy Link copies the
   // short ?gist URL (not a compressed #hash), and the bar keeps ?gist with no hash.
@@ -124,6 +138,15 @@ export async function runDeepLinks(ctx) {
   const unpinned = await page.evaluate(() => ({ search: location.search, hash: location.hash }));
   assert.equal(/gist=/.test(unpinned.search), false, 'editing a pinned gist drops ?gist');
   assert.equal(unpinned.hash, '', 'editing a pinned gist leaves the hash clean');
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      label: document.getElementById('example-trigger-text').textContent,
+      chip: document.getElementById('scene-dirty').textContent,
+      resetDisabled: document.getElementById('reset-scene-btn').disabled,
+    })),
+    { label: 'gist abc1', chip: 'modified', resetDisabled: true },
+    'the dead URL pin does not drag the label down with it: the scene still came from that gist'
+  );
 
   // Leniency: a `user/id` and a full gist URL both resolve to the same id, so
   // they hit the same success path (the gist .pov lands in the editor).
@@ -487,6 +510,260 @@ export async function runDeepLinks(ctx) {
     cleanEditUrl.hash,
     '',
     'ordinary editing leaves the visible URL free of scene payloads'
+  );
+
+  // ===========================================================================
+  // Scene PROVENANCE: a scene this page received (a shared #hash, a turbo or
+  // REPL handoff, a ?gist) must be labeled as one. The editor used to name every
+  // one of them after whichever example the RECIPIENT last selected, chip it as
+  // `current`, and hand it an armed Reset that replaced it with that example's
+  // source. The undo is session-only and turbo persists nothing of its own, so
+  // this editor's localStorage can hold the only copy of the visitor's work.
+  // ===========================================================================
+
+  // Seed a saved blob through the URL so a restored-state case can run inside
+  // this section: the per-load init script above unconditionally clears
+  // localStorage, and init scripts run in registration order, so this one (last
+  // registered) wins whenever ?seed is present and no-ops otherwise.
+  await page.addInitScript(() => {
+    const seed = new URLSearchParams(location.search).get('seed');
+    if (seed) {
+      localStorage.clear();
+      localStorage.setItem('povrayer.ui.v1', seed);
+    }
+  });
+
+  const sceneIdentity = () =>
+    page.evaluate(() => ({
+      label: document.getElementById('example-trigger-text').textContent,
+      selected: document.getElementById('example-trigger').dataset.name,
+      chip: document.getElementById('scene-dirty').textContent,
+      resetDisabled: document.getElementById('reset-scene-btn').disabled,
+      markedRow: document.querySelector('.ex-option[data-loaded="true"]')?.dataset.name ?? null,
+    }));
+  const savedBlob = () => page.evaluate(() => JSON.parse(localStorage.getItem('povrayer.ui.v1')));
+
+  const TURBO_SCENE = '#version 3.8;\n// HANDED OFF FROM TURBO\nsphere { 0, 1 }\n';
+  const handoffPayload = (source, origin) =>
+    encodeState({
+      source,
+      width: '160',
+      height: '120',
+      quality: '9',
+      antialias: 'off',
+      threads: '',
+      mode: 'still',
+      frames: '24',
+      fps: '12',
+      ...(origin === undefined ? {} : { origin }),
+    });
+
+  // A turbo handoff: labeled as turbo's, chipped as received, and Reset stays
+  // disabled because there is no example behind it to reset TO. Editing it flips
+  // the chip but must NOT arm Reset.
+  await plBootGoto('', '#' + (await handoffPayload(TURBO_SCENE, 'turbo')));
+  await page.waitForFunction((v) => document.getElementById('editor').value === v, TURBO_SCENE, {
+    timeout: 10_000,
+  });
+  assert.deepEqual(
+    await sceneIdentity(),
+    {
+      label: 'from turbo',
+      selected: '',
+      chip: 'as received',
+      resetDisabled: true,
+      markedRow: null,
+    },
+    'a turbo handoff names turbo, selects no example, and cannot be Reset away'
+  );
+  await page.evaluate(() => {
+    const ed = document.getElementById('editor');
+    ed.value += '// my own edit on top of the handoff\n';
+    ed.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      chip: document.getElementById('scene-dirty').textContent,
+      resetDisabled: document.getElementById('reset-scene-btn').disabled,
+    })),
+    { chip: 'modified', resetDisabled: true },
+    'editing a handed-off scene must not arm a Reset that would replace it'
+  );
+  // The provenance is what survives into localStorage; without it a reload cannot
+  // tell a received scene from a scene loaded out of the catalog.
+  await page.waitForFunction(
+    () => {
+      const raw = localStorage.getItem('povrayer.ui.v1');
+      return raw !== null && JSON.parse(raw).provenance === 'turbo';
+    },
+    null,
+    { timeout: 5_000 }
+  );
+  assert.equal(
+    (await savedBlob()).example,
+    '',
+    'a foreign scene persists no example name to be relabeled with'
+  );
+
+  // The reproduced destruction: a bare reload of that tab (the hash is stripped
+  // by the first debounced save) used to land at modified / Reset-enabled, one
+  // click away from replacing the handoff with the recipient's dice. The restored
+  // blob now keeps its provenance and is its own baseline.
+  const turboBlob = JSON.stringify({ source: TURBO_SCENE, provenance: 'turbo', liveDraft: false });
+  await plBootGoto('?seed=' + encodeURIComponent(turboBlob));
+  assert.deepEqual(
+    await sceneIdentity(),
+    {
+      label: 'from turbo',
+      selected: '',
+      chip: 'as received',
+      resetDisabled: true,
+      markedRow: null,
+    },
+    'a reload keeps the handoff labeled and un-Resettable'
+  );
+  assert.equal(
+    await editorValue(),
+    TURBO_SCENE,
+    'the reload restores the handed-off scene, not an example'
+  );
+  // Opening the picker over a foreign scene focuses no row, credits nobody, and
+  // still reports honestly when a search matches nothing.
+  await page.click('#example-trigger');
+  await page.waitForFunction(
+    () => document.getElementById('example-trigger').getAttribute('aria-expanded') === 'true',
+    null,
+    { timeout: 5_000 }
+  );
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      active: document.querySelector('.ex-option.is-active')?.dataset.name ?? null,
+      attr: document.querySelector('#example-attribution .ex-attr-text').textContent,
+      srcHidden: document.querySelector('#example-attribution .ex-attr-src').hidden,
+    })),
+    { active: null, attr: 'from turbo · author unknown', srcHidden: true },
+    'a foreign scene credits nobody instead of borrowing an example byline'
+  );
+  await page.fill('#example-search', 'zzz-no-match');
+  await page.waitForFunction(() => !document.getElementById('example-empty').hidden, null, {
+    timeout: 5_000,
+  });
+  assert.match(
+    await page.evaluate(() => document.querySelector('#example-empty span').textContent),
+    /^No featured scene matches\./,
+    'with no catalog record loaded the empty state has no scene to point at'
+  );
+  await page.keyboard.press('Escape');
+
+  // The other two foreign origins: a plain shared link (no origin field, which is
+  // every link the editor's own Copy Link mints) and the REPL handoff.
+  await plBootGoto('', '#' + (await handoffPayload('// A STRANGER SCENE\nbox {}\n')));
+  await page.waitForFunction(
+    () => document.getElementById('example-trigger-text').textContent === 'shared scene',
+    null,
+    { timeout: 10_000 }
+  );
+  assert.deepEqual(
+    await sceneIdentity(),
+    {
+      label: 'shared scene',
+      selected: '',
+      chip: 'as received',
+      resetDisabled: true,
+      markedRow: null,
+    },
+    'a permalink from a stranger is a shared scene, not the recipient last pick'
+  );
+  await plBootGoto('', '#' + (await handoffPayload('// FROM THE REPL\nbox {}\n', 'repl')));
+  await page.waitForFunction(
+    () => document.getElementById('example-trigger-text').textContent === 'from the REPL',
+    null,
+    { timeout: 10_000 }
+  );
+
+  // Regression guard for the curated half of this: a normal catalog round trip
+  // (Copy Link on a pristine example -> open that link) still PRESERVES the
+  // example identity, with the picker row marked and Reset behaving as before.
+  await plBootGoto('?example=blobs');
+  await page.waitForFunction(
+    () => document.getElementById('example-trigger').dataset.name === 'blobs',
+    null,
+    { timeout: 10_000 }
+  );
+  assert.deepEqual(
+    await sceneIdentity(),
+    {
+      label: 'Liquid chrome (blob / metaballs)',
+      selected: 'blobs',
+      chip: 'current',
+      resetDisabled: true,
+      markedRow: 'blobs',
+    },
+    'an ?example round trip keeps the example name, row marker and chip'
+  );
+  await page.evaluate(() => {
+    const ed = document.getElementById('editor');
+    ed.value = '// edited away from the example\nsphere { 0, 1 }\n';
+    ed.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.waitForFunction(() => !document.getElementById('reset-scene-btn').disabled, null, {
+    timeout: 5_000,
+  });
+  assert.equal(
+    (await sceneIdentity()).chip,
+    'modified',
+    'editing a real example still arms Reset back to it'
+  );
+  await page.click('#reset-scene-btn');
+  await page.waitForFunction(
+    () => document.getElementById('scene-dirty').textContent === 'current',
+    null,
+    { timeout: 5_000 }
+  );
+  assert.match(await editorValue(), /blob/i, 'Reset still restores the loaded example source');
+
+  // ===========================================================================
+  // Dropped-asset references that a reload cannot honor: the bytes are
+  // session-only, the scene that references them is persisted. The render does
+  // fail loudly, but only once asked, so the boot advisory names the files while
+  // re-dropping them is still an option.
+  // ===========================================================================
+  const MISSING_ASSET_SCENE = [
+    '#version 3.8;',
+    'camera { location <0,0,-4> look_at 0 }',
+    'light_source { <2,4,-3> rgb 1 }',
+    '#include "colors.inc"',
+    '#declare P_tile = pigment { image_map { png "tile.png" } }',
+    'plane { z, 2 pigment { P_tile } }',
+    'sphere { 0, 1 pigment { image_map { jpeg "ground.jpg" } } }',
+    '',
+  ].join('\n');
+  await plBootGoto(
+    '?seed=' +
+      encodeURIComponent(
+        JSON.stringify({ source: MISSING_ASSET_SCENE, provenance: 'custom', liveDraft: false })
+      )
+  );
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      note: document.getElementById('asset-note').textContent,
+      noteHidden: document.getElementById('asset-note').hidden,
+      stripHidden: document.getElementById('assets').hidden,
+    })),
+    {
+      note: "dropped images aren't saved · re-drop to render: tile.png, ground.jpg",
+      noteHidden: false,
+      stripHidden: true,
+    },
+    'a reloaded scene names the images it has no bytes for, before any render'
+  );
+  // The other arm: the stdlib #include is NOT reported (it resolves from the
+  // build own include path), and an ordinary boot posts no advisory at all.
+  await plBootGoto('');
+  assert.equal(
+    await page.evaluate(() => document.getElementById('asset-note').hidden),
+    true,
+    'a scene with no dropped-image references boots without an advisory'
   );
 
   // ===========================================================================

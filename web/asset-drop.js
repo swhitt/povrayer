@@ -108,10 +108,39 @@ export function referencedAssetFiles(source, registry) {
 }
 
 /**
+ * The image files `source` references that are NOT staged: the drops a reload
+ * lost. referencedAssetFiles cannot answer this, in two ways: it early-returns
+ * on an empty registry, which is exactly the boot condition, and it returns the
+ * referenced INTERSECTION rather than the complement.
+ *
+ * Scoped to image references on purpose. A blanket "referenced but not staged"
+ * scan false-positives across most of the shipped catalog, which #includes
+ * colors.inc / woods.inc / textures.inc / stones.inc / metals.inc / golds.inc /
+ * glass.inc out of the wasm build's own include path (colors.inc alone appears in
+ * 27 scenes). Text includes are not blanket-skipped by EXTENSION though, because
+ * a staged colors.inc override deliberately wins over the stdlib copy; they are
+ * skipped because a missing one still resolves, so its absence is not a failure
+ * this scan could warn about. A missing image is: nothing else can supply it.
+ *
+ * @param {string} source
+ * @param {ReadonlyMap<string, string | Uint8Array>} registry
+ * @returns {string[]} the missing image names, in first-reference order
+ */
+export function missingImageReferences(source, registry) {
+  const missing = [];
+  for (const literal of scanFileReferences(source).strings) {
+    const name = referenceName(literal);
+    if (classifyAsset(name) !== 'image') continue;
+    if (registry.has(name) || missing.includes(name)) continue;
+    missing.push(name);
+  }
+  return missing;
+}
+
+/**
  * Self-queries its DOM contract from the page: #editor-wrap (drop target),
  * #asset-chips + #assets (the staged-asset strip), and #asset-note (skip feedback).
  * @param {{ insertSnippet: (text: string) => void, replaceScene: (text: string) => void }} hooks
- * @returns {{ assetFiles: (source: string) => Record<string, Uint8Array | string> | undefined }}
  */
 export function createAssetDrop({ insertSnippet, replaceScene }) {
   const editorWrap = document.getElementById('editor-wrap');
@@ -127,6 +156,14 @@ export function createAssetDrop({ insertSnippet, replaceScene }) {
   // followed transitively; dynamic include expressions conservatively stage all.
   function assetFiles(source) {
     return referencedAssetFiles(source, assetRegistry);
+  }
+
+  // The images `source` references that this session has no bytes for. The
+  // registry is memory-only, so the page asks on boot: the scene survives a
+  // reload in localStorage, the dropped bytes never do.
+  /** @param {string} source */
+  function missingImages(source) {
+    return missingImageReferences(source, assetRegistry);
   }
 
   function renderAssetChips() {
@@ -155,15 +192,22 @@ export function createAssetDrop({ insertSnippet, replaceScene }) {
     assetsStrip.hidden = assetRegistry.size === 0;
   }
 
+  // Write the shared asset-status line, or clear it with ''. Exposed so the page
+  // can post its own advisory (the boot "these images need re-dropping" note)
+  // through the one element that owns this feedback; the strip has room for a
+  // single message, so a later drop's skip report deliberately replaces it.
+  /** @param {string} text */
+  function showNote(text) {
+    assetNote.textContent = text;
+    assetNote.hidden = text === '';
+  }
+
   // Report the files a drop couldn't import (unsupported type or unreadable), or
   // clear the note when the drop was fully clean.
   function showDropNote(skipped) {
-    if (skipped.length > 0) {
-      assetNote.textContent = `skipped (unsupported or unreadable): ${skipped.join(', ')}`;
-      assetNote.hidden = false;
-    } else {
-      assetNote.hidden = true;
-    }
+    showNote(
+      skipped.length > 0 ? `skipped (unsupported or unreadable): ${skipped.join(', ')}` : ''
+    );
   }
 
   async function handleDrop(fileList) {
@@ -216,5 +260,5 @@ export function createAssetDrop({ insertSnippet, replaceScene }) {
     handleDrop(e.dataTransfer.files);
   });
 
-  return { assetFiles };
+  return { assetFiles, missingImages, showNote };
 }

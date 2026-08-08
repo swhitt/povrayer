@@ -21,10 +21,25 @@
  * @property {string} threads
  * @property {string} [flags] raw POV-Ray flags; optional so links predating the field still decode
  * @property {string} [draft] live-draft preview edge; optional so links predating the field still decode
+ * @property {'turbo' | 'repl'} [origin] which handoff minted the link, when it
+ *   wasn't the editor's own Copy Link. The reader needs it because a foreign
+ *   scene has to be LABELED as one: the editor used to name every hydrated link
+ *   after whatever example the recipient last selected. Optional, so an ordinary
+ *   shared link (and every link predating the field) still decodes.
  * @property {'still' | 'animate'} mode
  * @property {string} frames
  * @property {string} fps
  */
+
+// The handoff producers allowed to stamp `origin`: web/turbo.html's Ray-trace
+// button and the REPL's `:editor`. Copy Link inside the editor leaves it off,
+// and the reader treats a missing origin as a plain shared scene.
+const ORIGINS = ['turbo', 'repl'];
+
+/** @param {unknown} value */
+function isOrigin(value) {
+  return ORIGINS.includes(/** @type {string} */ (value));
+}
 
 /**
  * @param {Uint8Array} bytes
@@ -127,7 +142,12 @@ export async function decodeState(payload) {
     const bytes = base64urlToBytes(payload);
     const raw = await pipe(bytes, 'DecompressionStream', 'gzip'); // throws on non-gzip
     const obj = JSON.parse(new TextDecoder().decode(raw)); // throws on bad JSON
-    return isPermalinkState(obj) ? obj : null;
+    if (!isPermalinkState(obj)) return null;
+    // An `origin` this build doesn't recognize is DROPPED rather than rejected,
+    // unlike a bad `mode`: a newer producer must not brick an older reader's
+    // link over a provenance tag it can simply treat as a plain shared scene.
+    if (obj.origin !== undefined && !isOrigin(obj.origin)) delete obj.origin;
+    return obj;
   } catch {
     return null;
   }

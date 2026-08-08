@@ -53,7 +53,7 @@ import {
 } from './example-filters.js';
 import { createRenderFeedback } from './render-feedback.js';
 import { createGallery } from './gallery.js';
-import { createSceneState, displacesWork } from './scene-state.js';
+import { createSceneState, displacesWork, foreignProvenance } from './scene-state.js';
 
 const isoWarning = document.getElementById('iso-warning');
 ensureCrossOriginIsolation({ warningEl: isoWarning });
@@ -221,6 +221,19 @@ let activeItem = null;
 
 const labelByKey = (items, key) => items.find((item) => item.key === key).label;
 
+// One example's search haystack, built from the same labels the visitor can see
+// (so "modeling" or "heavy" match by category / cost, not just by title). Shared
+// by the row index below and the empty state's "is the loaded scene what you
+// searched for?" check, which has to ask the question about a scene that has no
+// row at all.
+function exampleHaystack(ex) {
+  return exampleSearchText(ex, {
+    categoryLabel: labelByKey(CATEGORIES, ex.category),
+    difficultyLabel: labelByKey(DIFFICULTIES, ex.difficulty),
+    tierLabel: labelByKey(RENDER_TIERS, ex.renderTier),
+  });
+}
+
 // Render one .ex-group per CATEGORIES entry (in order) and one .ex-option per
 // scene. The head is a disclosure toggle (role=button + aria-expanded) carrying
 // a caret, the label, and a scene count. No `if (items.length)` guard: the node
@@ -269,7 +282,7 @@ function buildExampleBrowser() {
       const desc = document.createElement('span');
       desc.className = 'ex-desc';
       desc.textContent = ex.description;
-      // The byline span always exists (setTriggerLabel reuses it for the
+      // The byline span always exists (renderSceneIdentity reuses it for the
       // quiet `loaded` marker) but hides when it has nothing beyond what the
       // attribution footer already shows.
       const by = document.createElement('span');
@@ -290,12 +303,7 @@ function buildExampleBrowser() {
       opt.append(thumb, text);
 
       groupEl.appendChild(opt);
-      const haystack = exampleSearchText(ex, {
-        categoryLabel: group.label,
-        difficultyLabel: labelByKey(DIFFICULTIES, ex.difficulty),
-        tierLabel: labelByKey(RENDER_TIERS, ex.renderTier),
-      });
-      opts.push({ el: opt, ex, haystack });
+      opts.push({ el: opt, ex, haystack: exampleHaystack(ex) });
       optionEls.push(opt);
     }
     exampleListbox.insertBefore(groupEl, exampleEmpty);
@@ -348,15 +356,22 @@ function updateAttribution(ex) {
   exampleAttrSrc.setAttribute('aria-label', `source for ${ex.title}`);
 }
 
-function syncLoadedGalleryCard(name) {
-  gallery.setSelected(name);
-}
-
-// Reflect the loaded scene in the trigger label + data-name, and re-mark the
-// loaded option (bold + a quiet `loaded` byline, never aria-selected).
-function setTriggerLabel(name) {
-  const record = getExampleRecord(name);
-  exampleTriggerText.textContent = record.title;
+// Reflect the CURRENT scene's identity in the picker: the trigger label, its
+// data-name, and the loaded marker on the featured rows + gallery cards (bold + a
+// quiet `loaded` byline, never aria-selected).
+//
+// A catalog example is named by its title. Anything FOREIGN (a shared link, a
+// gist, a turbo/REPL handoff, a dropped .pov) is named by where it came from and
+// marks NO row, because there is no catalog scene to point at. The editor used to
+// label every one of those with whichever example the recipient last selected,
+// which also armed Reset to replace the visitor's only copy of it with that
+// example's source.
+function renderSceneIdentity() {
+  const origin = sceneState.originLabel();
+  // '' matches no option and no gallery card, which is the honest answer for a
+  // foreign scene: nothing in the catalog is loaded.
+  const name = origin === null ? sceneState.selectedExample : '';
+  exampleTriggerText.textContent = origin ?? getExampleRecord(name).title;
   exampleTrigger.dataset.name = name;
   for (const opt of optionEls) {
     const r = getExampleRecord(opt.dataset.name);
@@ -370,7 +385,22 @@ function setTriggerLabel(name) {
     if (loaded) opt.dataset.loaded = 'true';
     else delete opt.dataset.loaded;
   }
-  syncLoadedGalleryCard(name);
+  gallery.setSelected(name);
+}
+
+// Attribution for the loaded scene, used when the picker opens with no row to
+// focus. A gallery-only example still has a record to credit; a foreign scene has
+// nobody, so the footer says where it came from rather than leaving the previously
+// browsed scene's byline standing over someone else's work.
+function updateLoadedAttribution() {
+  const origin = sceneState.originLabel();
+  if (origin === null) {
+    updateAttribution(getExampleRecord(sceneState.selectedExample));
+    return;
+  }
+  exampleAttrText.textContent = `${origin} · author unknown`;
+  exampleAttrSrc.href = '';
+  exampleAttrSrc.hidden = true;
 }
 
 // Animated examples ship a suggested frame count + fps; prefill the animate
@@ -479,6 +509,10 @@ function saveState() {
         source: editor.value,
         ...readControls(),
         example: sceneState.selectedExample,
+        // Where the persisted source came from. Without it a reload cannot tell a
+        // scene the visitor received from a scene they loaded out of the catalog,
+        // so it re-pinned every one to `example` and handed it an armed Reset.
+        provenance: sceneState.provenance,
         mode,
         liveDraft,
         advancedOpen: advanced.open,
@@ -596,14 +630,30 @@ window.addEventListener('pagehide', () => {
 
 {
   const saved = readSavedState();
-  const example =
-    saved && typeof saved.example === 'string' && hasExample(saved.example)
-      ? saved.example
-      : DEFAULT_EXAMPLE;
-  /* c8 ignore next -- example is always a real EXAMPLES entry (hasExample-validated or DEFAULT_EXAMPLE), so getExample never returns undefined here */
-  sceneState.loadExample(example, getExample(example) ?? '');
-  setTriggerLabel(example);
-  editor.value = saved && typeof saved.source === 'string' ? saved.source : sceneState.loadedSource;
+  const savedSource = saved && typeof saved.source === 'string' ? saved.source : null;
+  // A provenance with no source behind it is nothing to restore, so it falls to
+  // the example path below rather than adopting an empty foreign scene.
+  const origin = savedSource === null ? null : foreignProvenance(saved.provenance);
+  if (origin !== null) {
+    // A restored FOREIGN scene keeps its provenance and becomes its own baseline.
+    // This blob can be the only copy in existence (turbo persists nothing of its
+    // own, and the handoff hash is stripped from the address bar by the first
+    // debounced save), so pinning it to whatever example the picker last pointed
+    // at is how a reload plus one Reset click used to destroy it. Only the text
+    // is persisted, not the as-received baseline, so a reload treats the scene in
+    // hand as unmodified rather than storing a second copy of it.
+    sceneState.adoptSource(savedSource, origin);
+    editor.value = savedSource;
+  } else {
+    const example =
+      saved && typeof saved.example === 'string' && hasExample(saved.example)
+        ? saved.example
+        : DEFAULT_EXAMPLE;
+    /* c8 ignore next -- example is always a real EXAMPLES entry (hasExample-validated or DEFAULT_EXAMPLE), so getExample never returns undefined here */
+    sceneState.loadExample(example, getExample(example) ?? '');
+    editor.value = savedSource ?? sceneState.loadedSource;
+  }
+  renderSceneIdentity();
   if (saved) {
     applyControls(saved, coerceSaved);
     if (typeof saved.liveDraft === 'boolean') liveDraft = saved.liveDraft;
@@ -637,7 +687,7 @@ function applyUrlParams() {
     editor.value = record.source;
     sceneState.loadExample(exampleName, record.source);
     applyExampleClock(record, { syncPlayer: false });
-    setTriggerLabel(exampleName);
+    renderSceneIdentity();
     bootExampleLoaded = true;
   }
   const p = parseRenderParams(location.search);
@@ -659,7 +709,7 @@ function selectExample(name) {
   editor.value = source;
   sceneState.loadExample(name, source);
   applyExampleClock(record); // BEFORE scheduleDraft
-  setTriggerLabel(name); // trigger text + data-name + re-mark loaded option
+  renderSceneIdentity(); // trigger text + data-name + re-mark loaded option
   reflectSceneReplaced({ autoDraft: shouldAutoDraftExample(record) });
 }
 
@@ -671,10 +721,12 @@ function canResetScene() {
   return sceneState.canReset(editor.value);
 }
 
+// The dirty chip + Reset both read PROVENANCE, not just the text diff: 'current'
+// claims the scene matches its catalog example, and Reset does replace it with
+// that example, so neither may speak for a scene that never came from one.
 function updateSceneActions() {
-  const dirty = sceneIsDirty();
-  sceneDirty.textContent = dirty ? 'modified' : 'current';
-  sceneDirty.dataset.dirty = String(dirty);
+  sceneDirty.textContent = sceneState.dirtyLabel(editor.value);
+  sceneDirty.dataset.dirty = String(sceneIsDirty());
   resetSceneBtn.disabled = !canResetScene();
 }
 
@@ -767,13 +819,51 @@ function matchesExampleFilters(ex) {
   });
 }
 
-function openGallery() {
-  closeBrowser(false);
-  gallery.open();
+/**
+ * @param {string} [query] a search carried over from the picker's empty state, so
+ *   "nothing featured matches" hands the visitor to the full catalog without
+ *   making them retype it
+ */
+function openGallery(query = '') {
+  closeBrowser(false); // resets the picker's filters, so the query is read first
+  gallery.open(query);
 }
 
 function closeGallery() {
   gallery.close();
+}
+
+// The picker deliberately holds a curated subset (examples.js
+// FEATURED_EXAMPLE_NAMES, 34 of 96), so plenty of scenes the app actually ships
+// have no row here: `photon`, `god rays`, `mandel`, `abyss`, `pavement` and
+// `gyroid` all match nothing in the picker while the gallery has every one of
+// them. A flat "no examples match" is a confident false negative, so the empty
+// state is a HANDOFF instead: it carries the query into the gallery.
+const exampleEmptyLead = document.createElement('span');
+const exampleEmptyMore = document.createElement('button');
+exampleEmptyMore.type = 'button';
+exampleEmptyMore.className = 'linkish';
+exampleEmptyMore.textContent = `search all ${EXAMPLES.length} in the Gallery`;
+exampleEmpty.replaceChildren(exampleEmptyLead, exampleEmptyMore);
+// Same focus discipline as the listbox rows: a mousedown here must not blur the
+// search and focusout-close the panel out from under the click.
+exampleEmptyMore.addEventListener('mousedown', (e) => e.preventDefault());
+exampleEmptyMore.addEventListener('click', () => openGallery(exampleSearch.value.trim()));
+
+// The loaded scene's title when the query that just came up empty WOULD have
+// matched it, else null. Anything reaching here is necessarily gallery-only (a
+// featured scene would have matched its own row), and the picker must not report
+// that nothing matches the very scene it is displaying in its trigger.
+function loadedGalleryTitle(query) {
+  const record = getExampleRecord(sceneState.selectedExample);
+  if (record === undefined) return null; // a foreign scene has no catalog record
+  return exampleHaystack(record).includes(query) ? record.title : null;
+}
+
+function paintExampleEmpty(query) {
+  const title = loadedGalleryTitle(query);
+  exampleEmptyLead.textContent =
+    title === null ? 'No featured scene matches. ' : `"${title}" is loaded, from the Gallery. `;
 }
 
 function renderList() {
@@ -792,7 +882,9 @@ function renderList() {
     g.headEl.setAttribute('aria-expanded', String(filtering ? groupHasMatch : !g.collapsed));
     if (groupHasMatch) anyMatch = true;
   }
-  exampleEmpty.hidden = !(filtering && !anyMatch);
+  const empty = filtering && !anyMatch;
+  exampleEmpty.hidden = !empty;
+  if (empty) paintExampleEmpty(q);
 }
 
 function setGroupCollapsed(g, collapsed) {
@@ -817,13 +909,15 @@ function openBrowser() {
   exampleTrigger.setAttribute('aria-expanded', 'true');
   resetExampleFilters();
   // Open COMPACT: collapse every category except the loaded scene's, so its
-  // rows are the only ones showing and the panel isn't a 29-row wall.
+  // rows are the only ones showing and the panel isn't a 34-row wall.
   const loaded = document.getElementById(`ex-opt-${sceneState.selectedExample}`);
   const loadedGroup = loaded ? groupFor(loaded) : null;
   for (const g of exampleGroups) g.collapsed = loadedGroup ? g !== loadedGroup : true;
   renderList();
   setActive(loaded ?? null); // gallery-only scenes have no featured row to focus
-  if (!loaded) updateAttribution(getExampleRecord(sceneState.selectedExample));
+  // A gallery-only example and a foreign scene both open with no active row, so
+  // the footer has to credit (or disclaim) the loaded scene itself.
+  if (!loaded) updateLoadedAttribution();
   exampleSearch.focus();
 }
 
@@ -858,7 +952,7 @@ exampleTrigger.addEventListener('keydown', (e) => {
   }
 });
 
-galleryBtn.addEventListener('click', openGallery);
+galleryBtn.addEventListener('click', () => openGallery());
 
 exampleSearch.addEventListener('input', () => {
   renderList();
@@ -1525,9 +1619,13 @@ function stashScene() {
 }
 
 // Restore the stashed scene and dismiss the note. Wired to the restore link.
+// restoreStash rewinds the scene's IDENTITY along with its text, so undoing a
+// permalink/gist/handoff replacement puts the trigger label and Reset back on
+// the example the visitor was working from.
 function restoreScene() {
   editor.value = sceneState.restoreStash();
   restoreNote.hidden = true;
+  renderSceneIdentity();
   reflectSceneReplaced();
 }
 
@@ -1555,11 +1653,25 @@ function resetSceneToExample() {
 }
 
 // Replace the whole scene with `text`, stashing the outgoing one first so the swap
-// is undoable via the restore note. Shared by the scene-drop import and loading a
-// version from history.
-function replaceScene(text) {
+// is undoable via the restore note. Shared by the scene-drop import, loading a
+// version from history, and Reset.
+//
+// `origin` is passed only when the text has no catalog example behind it: a
+// dropped .pov is somebody else's scene, so it must not keep wearing the loaded
+// example's name (which would also leave Reset armed to overwrite it). Reset and
+// a history load leave it off, since both are replaying text this session already
+// owns under its current identity.
+/**
+ * @param {string} text
+ * @param {import('./scene-state.js').Provenance} [origin]
+ */
+function replaceScene(text, origin) {
   stashScene();
   editor.value = text;
+  if (origin !== undefined) {
+    sceneState.adoptSource(text, origin);
+    renderSceneIdentity();
+  }
   reflectSceneReplaced();
 }
 
@@ -1582,7 +1694,7 @@ function insertAtCaret(text) {
 // editor (insert a snippet, or replace the scene the way an example switch does).
 const assetDrop = createAssetDrop({
   insertSnippet: insertAtCaret,
-  replaceScene,
+  replaceScene: (text) => replaceScene(text, 'custom'),
 });
 
 // ---- scene history ----
@@ -3127,9 +3239,13 @@ function hydrateFromState(state) {
   // var + applyMode() directly so the plate/toggles always reflect the payload.
   mode = state.mode;
   applyMode();
-  // A permalink replaces "what counts as the loaded scene": clear the example
-  // dirty-baseline so the next example switch doesn't treat this as example text.
-  sceneState.adoptSource(state.source);
+  // A permalink replaces "what counts as the loaded scene", identity included: it
+  // becomes its own dirty/reset baseline and the picker stops claiming the
+  // recipient's last example. `origin` is set only by the handoff producers
+  // (turbo's Ray-trace, the REPL's :editor); a plain shared link has none, and a
+  // link from a stranger is exactly as foreign either way.
+  sceneState.adoptSource(state.source, state.origin ?? 'permalink');
+  renderSceneIdentity();
   reflectSceneReplaced();
 }
 
@@ -3233,6 +3349,14 @@ async function loadGistScene(raw) {
   sceneState.pinGist(id, source);
   if (displacesWork(editor.value, source)) stashScene();
   editor.value = source;
+  // The gist is a foreign scene, so it becomes its own baseline and the trigger
+  // names the gist. Before this, the picker kept showing the recipient's last
+  // example over the gist's text, and the scene chip kept reporting `current`
+  // with Reset disabled for a scene the control had never seen (the boot label
+  // was simply never revisited).
+  sceneState.adoptSource(source, 'gist', id);
+  renderSceneIdentity();
+  updateSceneActions();
   renderGutter();
   paintHighlight();
   scheduleSave();
@@ -3289,6 +3413,20 @@ if (permalinkPayload) {
   loadGistScene(gistParam);
 } else {
   startInitialView();
+}
+
+// Dropped image bytes are session-only (raw bytes, deliberately not in the saved
+// blob or a permalink), but the SCENE that references them IS persisted, so a
+// reload comes back with the image_map snippet, an empty chip strip, and nothing
+// behind the reference. The failure isn't opaque once you ask for it (the render
+// names the file and highlights the line, and the strip already discloses that
+// staged bytes aren't saved in links), but nothing says so BEFORE the visitor
+// hits Render, which is the one moment they could still re-drop the file.
+{
+  const missing = assetDrop.missingImages(editor.value);
+  if (missing.length > 0) {
+    assetDrop.showNote(`dropped images aren't saved · re-drop to render: ${missing.join(', ')}`);
+  }
 }
 
 // Warm the renderer (glue module + wasm fetch/compile) off the first render's

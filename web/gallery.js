@@ -180,8 +180,22 @@ export function createGallery(options) {
     license.value = 'all';
   }
 
-  function open() {
-    if (!built) render();
+  /**
+   * Show the gallery, optionally seeded with a search carried in from elsewhere.
+   * The picker's empty state uses that: it holds a curated subset, so a query
+   * naming a gallery-only scene has to hand off here WITH the query rather than
+   * report that a scene the app ships does not exist.
+   *
+   * @param {string} [query] replaces the gallery's own filters when non-empty
+   */
+  function open(query = '') {
+    if (query === '') {
+      if (!built) render();
+    } else {
+      resetFilters();
+      search.value = query;
+      render();
+    }
     panel.hidden = false;
     search.focus();
   }

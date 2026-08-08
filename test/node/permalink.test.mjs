@@ -67,6 +67,35 @@ test('a non-object JSON payload (null / primitive) returns null', async () => {
   assert.equal(await decodeState(await encodeState(/** @type {any} */ (5))), null);
 });
 
+test('a handoff origin round-trips so the reader can label the scene as foreign', async () => {
+  // turbo's Ray-trace and the REPL's :editor stamp `origin`; the editor's own
+  // Copy Link leaves it off. Both producers matter because the reader turns the
+  // tag into the picker's label instead of naming the scene after whatever
+  // example the recipient last selected.
+  for (const origin of ['turbo', 'repl']) {
+    const s = { ...fullState(), origin: /** @type {any} */ (origin) };
+    assert.deepEqual(await decodeState(await encodeState(s)), s);
+  }
+});
+
+test('an old payload with no origin decodes without inventing one', async () => {
+  const s = fullState();
+  assert.equal('origin' in s, false, 'the fixture predates the field');
+  const decoded = await decodeState(await encodeState(s));
+  assert.deepEqual(decoded, s);
+  assert.equal('origin' in decoded, false, 'a missing origin stays missing');
+});
+
+test('an unrecognized origin is dropped, not rejected', async () => {
+  // Forward compatibility: a newer producer must not brick an older reader's
+  // link over a provenance tag, so the field is discarded and the rest of the
+  // payload still hydrates (as a plain shared scene).
+  const payload = await encodeState(/** @type {any} */ ({ ...fullState(), origin: 'sculptor' }));
+  assert.deepEqual(await decodeState(payload), fullState());
+  const numeric = await encodeState(/** @type {any} */ ({ ...fullState(), origin: 7 }));
+  assert.deepEqual(await decodeState(numeric), fullState());
+});
+
 test('a large scene round-trips and the payload is far smaller than the source', async () => {
   const source = 'sphere{<0,0,0>,1 pigment{rgb<1,1,1>}}\n'.repeat(2000);
   const s = { ...fullState(), source };
