@@ -14,7 +14,11 @@
     <link rel="manifest" href="turbo.webmanifest" />
     <link rel="icon" type="image/png" href="turbo-icon-192.png" />
     <link rel="apple-touch-icon" href="turbo-apple-icon.png" />
-    <title>untitled_render_final_FINAL2.pov - povrayer turbo</title>
+    <!-- Stable, deliberately. The joke filenames still live in #fileName (where
+         they read as the scene's name and are part of the gag), but the title is
+         identity: it is what history entries, tab lists and crawlers record, and
+         a random one per load meant six visits produced four different titles. -->
+    <title>povrayer turbo</title>
     <style>
       :root {
         color-scheme: dark;
@@ -29,6 +33,12 @@
         --syn-string: #9bb56b;
         --syn-number: #c890a0;
         --syn-directive: #a98fd0;
+        /* The bottom-right strip #transport owns. Both code panels start above it
+           so nothing is ever painted over the clock and nothing steals its
+           clicks: a centered transport used to cover a 203x42 patch of live
+           editor text at 1280px wide, and elementFromPoint inside that patch
+           returned #transport, so those keystrokes went nowhere. */
+        --panel-b: 72px;
       }
       * {
         box-sizing: border-box;
@@ -83,6 +93,20 @@
         border-radius: 3px;
       }
 
+      /* ONE row, always. Wrapping made the bar 56-76px tall at every width under
+         1690px (measured: 76px at 1024 and 1280, 70px at 1366-1600), which ate
+         canvas, stranded the old flex:1 spacer as a 72px-wide 0px-tall box, and
+         pushed #camChip's hard-coded offsets out of sync so the chip landed on
+         top of the yellow CTA in the 761-960px band. 19 flat children can never
+         fit one line at 320px, so they are four labelled groups in a scroller
+         instead: the row is exactly one control tall and swipes/wheels sideways
+         when it overflows (desktop content is 1663px, so everything is visible
+         from about 1700px up). The scrollbar is suppressed because a classic
+         15px one would cost more canvas than the whole row saves.
+
+         The bar is no longer pointer-events:none: a scroll container has to take
+         pointer events. That trades away starting a canvas orbit inside the bar's
+         empty space, which is worth it against a bar that reliably fits. */
       .bar {
         position: fixed;
         top: 12px;
@@ -92,18 +116,42 @@
         display: flex;
         gap: 8px;
         align-items: center;
-        flex-wrap: wrap;
-        pointer-events: none;
+        flex-wrap: nowrap;
+        justify-content: space-between;
+        overflow-x: auto;
+        overflow-y: hidden;
+        overscroll-behavior-x: contain;
+        scrollbar-width: none;
       }
-      .bar > * {
-        pointer-events: auto;
+      .bar::-webkit-scrollbar {
+        display: none;
+      }
+      .grp {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex: 0 0 auto;
+      }
+      /* The primary CTA and the UI toggle must never be the thing that scrolled
+         off, so this group sticks to the scroller's right edge. Sticky in the
+         inline axis needs its own backdrop or the presets slide visibly through
+         it. */
+      .grp.pin {
+        position: sticky;
+        right: 0;
+        padding: 0 2px;
+        border-radius: 10px;
+        background: rgba(6, 7, 13, 0.72);
+        backdrop-filter: blur(8px);
       }
       .brand {
+        margin: 0 4px 0 0;
+        font-size: 16px;
+        font-weight: 400;
         color: #e7e9ff;
         opacity: 0.92;
-        margin-right: 4px;
         text-shadow: 0 2px 12px #000;
-        pointer-events: none;
+        flex: 0 0 auto;
       }
       .brand b {
         font-weight: 700;
@@ -164,9 +212,6 @@
           background: rgba(120, 30, 30, 0.78);
         }
       }
-      .spacer {
-        flex: 1;
-      }
       .fps {
         color: #8af0c0;
         font-size: 12px;
@@ -182,31 +227,59 @@
         border: 1px solid rgba(255, 200, 90, 0.35);
         border-radius: 999px;
         padding: 4px 10px;
-        cursor: pointer;
         backdrop-filter: blur(8px);
         display: none;
       }
       .chip.show {
         display: inline-block;
       }
+      /* cursor:pointer belongs to the chips that ARE buttons (#warnChip), not to
+         #camChip, which is a status label wrapping one. The global button rule
+         above would otherwise repaint a chip as a square toolbar pill on hover. */
+      button.chip {
+        cursor: pointer;
+      }
+      button.chip:hover {
+        background: rgba(85, 64, 14, 0.78);
+      }
       #camChip {
         position: fixed;
         right: 14px;
-        top: 56px;
+        /* --bar-b is the toolbar's measured bottom edge, published by a
+           ResizeObserver. The old values were hard-coded guesses (56px desktop,
+           160px phone) that only held at the widths someone happened to check:
+           in the 761-960px band the chip covered the yellow Ray-trace CTA with a
+           span that has no click handler, so the primary action silently stopped
+           responding after any orbit drag. Note the measured bottom ALREADY
+           includes the safe-area inset .bar's own top applies, so adding
+           env(safe-area-inset-top) here would double-count it. */
+        top: calc(var(--bar-b, 46px) + 8px);
         z-index: 10;
         color: #bcd0ff;
         background: rgba(20, 28, 55, 0.6);
         border-color: rgba(140, 160, 255, 0.35);
       }
-      #camChip b {
+      #camReset {
+        font: inherit;
+        font-size: inherit;
         color: #fff;
+        background: none;
+        border: 0;
+        border-radius: 4px;
+        padding: 0;
+        text-decoration: underline;
         cursor: pointer;
+        backdrop-filter: none;
+      }
+      #camReset:hover {
+        background: none;
+        color: var(--accent);
       }
 
       #editorWrap {
         position: fixed;
         left: 12px;
-        bottom: 12px;
+        bottom: var(--panel-b);
         z-index: 9;
         width: min(46vw, 600px);
         height: min(56vh, 560px);
@@ -219,7 +292,15 @@
         backdrop-filter: blur(10px);
         box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
       }
-      #editorWrap.hidden {
+      /* ONE class, ONE owner: setEditorVisible() writes it, and both "Hide UI"
+         and the phone { } button go through that. Before, #toggle owned .hidden
+         plus the label while { } owned .collapsed and never touched the label,
+         so the two states could disagree in five different combinations (a
+         "Show UI" button that made things MORE hidden, a { } press that changed
+         nothing). Defined OUTSIDE the phone query on purpose: .collapsed used to
+         live inside it, which made the { } button a silent no-op at 761px+ and
+         let a portrait-to-landscape rotation pop the sheet open unbidden. */
+      #editorWrap.closed {
         display: none;
       }
       #edHead {
@@ -419,7 +500,7 @@
       #glslWrap {
         position: fixed;
         right: 12px;
-        bottom: 12px;
+        bottom: var(--panel-b);
         z-index: 8;
         width: min(40vw, 520px);
         height: min(56vh, 560px);
@@ -456,11 +537,15 @@
         font: inherit;
       }
 
+      /* Bottom-RIGHT at every width, not centered on desktop and right-aligned on
+         a phone. The right-hand slot used to be phone-only, which is how a
+         centered transport ended up sitting on top of the editor panel at every
+         desktop width under ~1690px. */
       #transport {
         position: fixed;
-        left: 50%;
+        left: auto;
+        right: 12px;
         bottom: 18px;
-        transform: translateX(-50%);
         z-index: 11;
         display: flex;
         align-items: center;
@@ -471,7 +556,9 @@
         border-radius: 12px;
         backdrop-filter: blur(10px);
         opacity: 0.35;
-        transition: opacity 0.2s;
+        transition:
+          opacity 0.2s,
+          bottom 0.28s cubic-bezier(0.32, 0.72, 0.22, 1);
       }
       #transport.live {
         opacity: 1;
@@ -525,16 +612,18 @@
       }
 
       /* phone: canvas-first. The editor becomes a bottom sheet behind a code
-         button, the toolbar scrolls sideways, and everything respects the
-         notch/home-bar safe areas. */
+         button, and everything respects the notch/home-bar safe areas. The
+         sideways-scrolling toolbar is NOT a phone special case: it is the base
+         layout (see .bar), so all this query does is tighten the insets. */
       @media (max-width: 760px) {
         .bar {
           top: calc(8px + env(safe-area-inset-top));
           left: 8px;
           right: 8px;
           gap: 6px;
-          /* inherit the desktop flex-wrap: every control stays reachable instead of
-             scrolling off-screen (still canvas-first, just no hidden horizontal row) */
+        }
+        .grp {
+          gap: 6px;
         }
         .brand {
           font-size: 13px;
@@ -566,8 +655,17 @@
           padding-bottom: env(safe-area-inset-bottom);
           transition: transform 0.28s cubic-bezier(0.32, 0.72, 0.22, 1);
         }
-        #editorWrap.collapsed {
+        /* Same .closed state, phone presentation: the sheet SLIDES instead of
+           vanishing, so it keeps its transition. visibility flips only after the
+           slide finishes (and instantly on the way in), which keeps an offscreen
+           sheet out of the tab order without display:none killing the animation. */
+        #editorWrap.closed {
+          display: flex;
           transform: translateY(calc(100% + 24px));
+          visibility: hidden;
+          transition:
+            transform 0.28s cubic-bezier(0.32, 0.72, 0.22, 1),
+            visibility 0s 0.28s;
         }
         #editor,
         #editorCode {
@@ -589,11 +687,13 @@
           box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
         }
         #transport {
-          left: auto;
-          right: 12px;
-          transform: none;
           bottom: calc(14px + env(safe-area-inset-bottom));
           padding: 10px 12px;
+        }
+        /* The sheet owns the bottom of a phone screen, so the transport rides on
+           top of it instead of being buried under a panel it draws over. */
+        #editorWrap:not(.closed) ~ #transport {
+          bottom: calc(56vh + 10px);
         }
         #scrub {
           width: 32vw;
@@ -604,9 +704,6 @@
         }
         #period {
           display: none;
-        }
-        #camChip {
-          top: calc(160px + env(safe-area-inset-top)); /* clear the wrapped bar */
         }
         .toast {
           bottom: calc(86px + env(safe-area-inset-bottom));
@@ -620,53 +717,124 @@
     </style>
   </head>
   <body>
-    <canvas id="gl"></canvas>
+    <!-- The canvas IS the document, so it is the <main> landmark. role="img" with
+         a refreshed label mirrors web/player.js: the label describes the shape of
+         the scene, never the clock, which would re-announce every frame.
+         tabindex makes the camera reachable without a pointer (arrow keys orbit,
+         +/- zoom, Home/0 resets), which matters because a shared #t= link can
+         restore an off-script camera at load. -->
+    <main id="stage">
+      <canvas
+        id="gl"
+        tabindex="0"
+        role="img"
+        aria-label="live raymarched preview"
+        aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight Plus Minus Home"
+        title="drag to orbit, scroll to zoom. focused: arrows orbit, +/- zoom, Home resets"
+      ></canvas>
+    </main>
 
     <div id="intro" hidden>
       <div id="introShade"></div>
       <div id="introStatus">Rendering... line 0 of 540</div>
     </div>
 
+    <!-- One scrolling row of labelled groups, never a wrapping stack: see the .bar
+         rule for why. The last group is sticky so the primary CTA and the UI
+         toggle stay on screen even when the row overflows. -->
     <div class="bar">
-      <span class="brand"
-        ><b>povrayer turbo</b><small>real-time POV-Ray SDL, on the GPU</small></span
-      >
-      <button class="preset" data-preset="hello">hello, 1994</button>
-      <button class="preset" data-preset="farm">render farm</button>
-      <button class="preset" data-preset="carousel">the carousel</button>
-      <button class="preset" data-preset="csg">csg lab</button>
-      <button class="preset" data-preset="skyvase">skyvase.pov</button>
-      <button id="weird" title="Roll the dice: nudge every number toward a happy accident">
-        🎲 weirder
-      </button>
-      <span class="spacer"></span>
-      <span class="chip" id="warnChip"></span>
-      <button id="copyPov" title="Copy the current Turbo scene as POV-Ray SDL">Copy .pov</button>
-      <button id="downloadPov" title="Download the current Turbo scene as a .pov file">
-        Download .pov
-      </button>
-      <button
-        id="glow"
-        class="tog"
-        title="Bloom, vignette, film grain. The rendered-photograph look"
-      >
-        ✨ glow
-      </button>
-      <button id="snap" title="Save a PNG of this exact frame">📸</button>
-      <button id="rec" title="Record one clock loop as a video">🎬 rec</button>
-      <button id="share">Share</button>
-      <button id="glslBtn">glsl</button>
-      <button
-        id="raytrace"
-        title="Opens povrayer: real POV-Ray 3.8, traced on CPU. Same code, every pixel honest. Takes a minute."
-      >
-        Ray-trace it &rarr;
-      </button>
-      <button id="toggle">Hide UI</button>
-      <span class="fps" id="fps">0 fps</span>
+      <h1 class="brand"><b>povrayer turbo</b><small>real-time POV-Ray SDL, on the GPU</small></h1>
+      <div class="grp" role="group" aria-label="presets">
+        <button type="button" class="preset" data-preset="hello" aria-pressed="false">
+          hello, 1994
+        </button>
+        <button type="button" class="preset" data-preset="farm" aria-pressed="false">
+          render farm
+        </button>
+        <button type="button" class="preset" data-preset="carousel" aria-pressed="false">
+          the carousel
+        </button>
+        <button type="button" class="preset" data-preset="csg" aria-pressed="false">csg lab</button>
+        <button type="button" class="preset" data-preset="skyvase" aria-pressed="false">
+          skyvase.pov
+        </button>
+        <button
+          type="button"
+          id="weird"
+          title="Roll the dice: nudge every number toward a happy accident"
+        >
+          🎲 weirder
+        </button>
+      </div>
+      <div class="grp" role="group" aria-label="scene">
+        <button type="button" class="chip" id="warnChip"></button>
+        <button type="button" id="copyPov" title="Copy the current Turbo scene as POV-Ray SDL">
+          Copy .pov
+        </button>
+        <button
+          type="button"
+          id="downloadPov"
+          title="Download the current Turbo scene as a .pov file"
+        >
+          Download .pov
+        </button>
+        <button type="button" id="share">Share</button>
+      </div>
+      <div class="grp" role="group" aria-label="view and export">
+        <button
+          type="button"
+          id="glow"
+          class="tog"
+          aria-pressed="false"
+          title="Bloom, vignette, film grain. The rendered-photograph look"
+        >
+          ✨ glow
+        </button>
+        <button
+          type="button"
+          id="snap"
+          aria-label="Save a PNG of this frame"
+          title="Save a PNG of this exact frame"
+        >
+          📸
+        </button>
+        <button
+          type="button"
+          id="rec"
+          aria-pressed="false"
+          title="Record one clock loop as a video"
+        >
+          🎬 rec
+        </button>
+        <button type="button" id="glslBtn" aria-expanded="false" aria-controls="glslWrap">
+          glsl
+        </button>
+      </div>
+      <!-- Pinned, and deliberately SMALL: a sticky group can only stick while it
+           fits the scrollport, and at 320px only ~190px of it does. So the pin
+           holds the two controls whose absence breaks the page (the handoff to
+           the real tracer, and the way to get the UI back) and nothing else. -->
+      <div class="grp pin" role="group" aria-label="handoff">
+        <button
+          type="button"
+          id="raytrace"
+          title="Opens povrayer: real POV-Ray 3.8, traced on CPU. Same code, every pixel honest. Takes a minute."
+        >
+          Ray-trace it &rarr;
+        </button>
+        <button type="button" id="toggle" aria-expanded="true" aria-controls="editorWrap">
+          Hide UI
+        </button>
+        <span class="fps" id="fps">0 fps</span>
+      </div>
     </div>
 
-    <span class="chip" id="camChip">camera off-script &middot; <b id="camReset">reset</b></span>
+    <!-- A status chip, not a control: the pill used to advertise cursor:pointer
+         across all 188px of itself while only the nested <b> did anything. The
+         reset is a real button now, and the chip's own cursor tells the truth. -->
+    <span class="chip" id="camChip"
+      >camera off-script &middot; <button type="button" id="camReset">reset</button></span
+    >
 
     <div id="editorWrap">
       <div id="edHead">
@@ -686,7 +854,12 @@
         ></textarea>
         <ul id="complete" role="listbox" aria-label="completions" hidden></ul>
       </div>
-      <div id="errDetail"></div>
+      <!-- Polite, not an alert: parse errors arrive while you type and the last
+           good scene keeps rendering, so nothing is urgent enough to interrupt.
+           showParseError() reveals the region BEFORE writing into it, since a
+           display:none live region is out of the a11y tree and its first fill
+           would go unannounced. -->
+      <div id="errDetail" role="status" aria-live="polite"></div>
     </div>
 
     <div id="glslWrap">
@@ -695,10 +868,30 @@
     </div>
 
     <div id="transport">
-      <button id="play" title="space">&#9654;</button>
-      <input id="scrub" type="range" min="0" max="1" step="0.001" value="0" />
+      <!-- The glyph is decoration; syncPlayGlyph() owns both it and the label, so
+           the two can never disagree. It ships PAUSED-looking because the clock
+           is already running on the first frame. -->
+      <button
+        type="button"
+        id="play"
+        aria-label="Pause the clock"
+        aria-keyshortcuts="Space"
+        title="Play/pause the clock (Space)"
+      >
+        <span id="playGlyph" aria-hidden="true">&#10074;&#10074;</span>
+      </button>
+      <input
+        id="scrub"
+        type="range"
+        min="0"
+        max="1"
+        step="0.001"
+        value="0"
+        aria-label="clock"
+        aria-valuetext="clock = 0.000"
+      />
       <span id="clockOut">clock = 0.000</span>
-      <select id="period" title="loop length">
+      <select id="period" title="loop length" aria-label="loop length">
         <option value="4">4s</option>
         <option value="8" selected>8s</option>
         <option value="16">16s</option>
@@ -706,8 +899,21 @@
       </select>
     </div>
 
-    <div class="toast" id="toast"></div>
-    <button id="codeBtn" title="show the code" aria-label="toggle code editor">{ }</button>
+    <!-- The one announcement channel. showToast() carries every real failure
+         ("clipboard blocked; use Download .pov", "no webm encoder here"), so it
+         is a polite live region. #pill is deliberately NOT one: it flips back to
+         "live" 700-900ms after every build and would announce twice a keystroke. -->
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <button
+      type="button"
+      id="codeBtn"
+      title="show the code"
+      aria-label="toggle code editor"
+      aria-expanded="true"
+      aria-controls="editorWrap"
+    >
+      { }
+    </button>
 
     <!-- gen:lang:start -->
     <script>
@@ -2297,7 +2503,13 @@
       }
 
       // ---------------------------------------------------------------------------
-      // colors.inc (the canon subset). Typing a 30-year-old incantation should work.
+      // colors.inc. Typing a 30-year-old incantation should work, and it has to
+      // give the SAME color the pinned wasm gives: an unknown name falls back to
+      // gray and lands in the "N things only the real tracer can do" chip, so a
+      // gap here is turbo lying about a color BOTH renderers have. The values are
+      // the #declare lines from the include tree dist/povray.wasm embeds, and
+      // test/node/turbo-colors.test.mjs cross-checks this key set against
+      // web/includes-manifest.json so it can't drift again.
       // ---------------------------------------------------------------------------
       const COLORS_INC = {
         Red: [1, 0, 0],
@@ -2347,6 +2559,7 @@
         DarkOrchid: [0.6, 0.196078, 0.8],
         DarkSlateBlue: [0.119608, 0.137255, 0.556863],
         DarkSlateGray: [0.184314, 0.309804, 0.309804],
+        DarkSlateGrey: [0.184314, 0.309804, 0.309804],
         DarkTurquoise: [0.439216, 0.576471, 0.858824],
         Firebrick: [0.556863, 0.137255, 0.137255],
         ForestGreen: [0.137255, 0.556863, 0.137255],
@@ -2397,11 +2610,13 @@
         Brass: [0.71, 0.65, 0.26],
         Copper: [0.72, 0.45, 0.2],
         Bronze: [0.55, 0.47, 0.14],
+        Bronze2: [0.65, 0.49, 0.24],
         Silver: [0.9, 0.91, 0.98],
         BrightGold: [0.85, 0.85, 0.1],
         OldGold: [0.81, 0.71, 0.23],
         Feldspar: [0.82, 0.57, 0.46],
         Quartz: [0.85, 0.85, 0.95],
+        Mica: [0, 0, 0], // colors.inc really does declare Mica as Black (textures.inc layers over it)
         NeonPink: [1, 0.43, 0.78],
         DarkPurple: [0.53, 0.12, 0.47],
         NeonBlue: [0.3, 0.3, 1],
@@ -2424,6 +2639,9 @@
         DustyRose: [0.52, 0.39, 0.39],
         HuntersGreen: [0.13, 0.37, 0.31],
         Scarlet: [0.55, 0.09, 0.09],
+        Med_Purple: [0.73, 0.16, 0.96],
+        Light_Purple: [0.87, 0.58, 0.98],
+        Very_Light_Purple: [0.94, 0.81, 0.99],
       };
 
       // ---------------------------------------------------------------------------
@@ -6019,6 +6237,12 @@ void main(){
       function orbitActive() {
         return orbitX !== 0 || orbitY !== 0 || zoom !== 0;
       }
+      function resetCam() {
+        orbitX = 0;
+        orbitY = 0;
+        zoom = 0;
+        camChip.classList.remove('show');
+      }
 
       let cur = null; // the live build: {program, build, data, ...}
       let pending = null; // a program still linking in the background
@@ -6522,6 +6746,7 @@ void main(){
       const scrubEl = document.getElementById('scrub');
       const clockOut = document.getElementById('clockOut');
       const playBtn = document.getElementById('play');
+      const playGlyph = document.getElementById('playGlyph');
       const transport = {
         playing: true,
         value: 0,
@@ -6534,7 +6759,14 @@ void main(){
             this.value = (this.anchor + (now - this.anchorT) / this.periodMs) % 1;
             scrubEl.value = String(this.value);
           }
-          clockOut.textContent = 'clock = ' + this.value.toFixed(3);
+          const read = 'clock = ' + this.value.toFixed(3);
+          // Guarded so the range's accessible value isn't rewritten on frames
+          // where the rounded readout hasn't actually moved. Without the
+          // valuetext the slider announces a bare "0.557" with no units.
+          if (read !== clockOut.textContent) {
+            clockOut.textContent = read;
+            scrubEl.setAttribute('aria-valuetext', read);
+          }
           return this.value;
         },
         setPlaying(p) {
@@ -6544,9 +6776,20 @@ void main(){
             this.anchorT = performance.now();
           }
           this.playing = p;
-          playBtn.innerHTML = p ? '&#10074;&#10074;' : '&#9654;';
+          syncPlayGlyph();
         },
       };
+      // The button's face is DERIVED from transport.playing, never set alongside
+      // it. The clock runs from the first frame (playing starts true) while the
+      // markup used to ship ▶, and setPlaying early-returns on a no-op, so that
+      // first wrong glyph was never corrected: the button read "Play" while the
+      // scrub bar visibly advanced.
+      function syncPlayGlyph() {
+        const p = transport.playing;
+        playGlyph.innerHTML = p ? '&#10074;&#10074;' : '&#9654;';
+        playBtn.setAttribute('aria-label', p ? 'Pause the clock' : 'Play the clock');
+      }
+      syncPlayGlyph();
       playBtn.addEventListener('click', () => transport.setPlaying(!transport.playing));
       scrubEl.addEventListener('input', () => {
         transport.setPlaying(false);
@@ -6559,11 +6802,20 @@ void main(){
         transport.anchorT = performance.now();
         transport.periodMs = v;
       });
+      // Space is play/pause, but ONLY when focus is somewhere inert. Space is also
+      // the activation key for every focused control, so the old "anything but
+      // #editor" test cancelled the synthetic click on all 16 toolbar buttons:
+      // focus ✨ glow, press Space, and nothing happened except a silently paused
+      // clock, which reads as a dead button with no visible cause. The canvas is
+      // tabbable (keyboard orbit, below) but has no activation of its own, so
+      // play/pause still belongs to it.
+      const ACTIVATES_ON_SPACE = 'button,a,input,select,textarea,[tabindex],[contenteditable]';
       document.addEventListener('keydown', (e) => {
-        if (e.code === 'Space' && document.activeElement !== document.getElementById('editor')) {
-          e.preventDefault();
-          transport.setPlaying(!transport.playing);
-        }
+        if (e.code !== 'Space') return;
+        const el = e.target instanceof Element ? e.target : null;
+        if (el && el !== canvas && el.closest(ACTIVATES_ON_SPACE)) return;
+        e.preventDefault();
+        transport.setPlaying(!transport.playing);
       });
 
       // ---- editor pipeline --------------------------------------------------------
@@ -6598,6 +6850,15 @@ void main(){
           warnChip.title = b.warnings.join('\n');
           warnChip.classList.add('show');
         } else warnChip.classList.remove('show');
+        // Describe the SHAPE of the scene, mirroring web/player.js. Deliberately
+        // not the clock: the canvas is a live view and a per-frame label change
+        // would re-announce forever.
+        canvas.setAttribute(
+          'aria-label',
+          `live raymarched preview, ${b.comp.leaves.length} object${
+            b.comp.leaves.length === 1 ? '' : 's'
+          }, ${b.comp.materials.length} material${b.comp.materials.length === 1 ? '' : 's'}`
+        );
         document.getElementById('transport').classList.toggle('live', b.usesClock);
         window.__povgl = {
           leaves: b.comp.leaves.length,
@@ -6646,8 +6907,10 @@ void main(){
         setPill('err', `✗ line ${ln}`);
         const lines = editor.value.split('\n');
         const srcLine = lines[ln - 1] || '';
-        errDetail.textContent = `Parse Error: ${e.message}\n  line ${ln}: ${srcLine.trim()}\n(kept your last good scene running)`;
+        // Reveal BEFORE filling: while display:none the region is out of the a11y
+        // tree, so a fill-then-show would land its first message unannounced.
         errDetail.classList.add('show');
+        errDetail.textContent = `Parse Error: ${e.message}\n  line ${ln}: ${srcLine.trim()}\n(kept your last good scene running)`;
       }
       pill.addEventListener('click', () => {
         if (lastError) errDetail.classList.toggle('show');
@@ -6952,10 +7215,7 @@ void main(){
         if (pointers.size === 0 && !tapMoved && e.pointerType === 'touch') {
           const now = performance.now();
           if (now - lastTap < 320) {
-            orbitX = 0;
-            orbitY = 0;
-            zoom = 0;
-            camChip.classList.remove('show');
+            resetCam();
             showToast('camera back on script');
             lastTap = 0;
           } else lastTap = now;
@@ -6993,11 +7253,46 @@ void main(){
         },
         { passive: false }
       );
-      document.getElementById('camReset').addEventListener('click', () => {
-        orbitX = 0;
-        orbitY = 0;
-        zoom = 0;
-        camChip.classList.remove('show');
+      document.getElementById('camReset').addEventListener('click', resetCam);
+
+      // Keyboard camera, on the same orbit/zoom state the pointer handlers write.
+      // Without it the only way back from an off-script camera was a mouse-only
+      // <b>, and boot() restores an off-script camera straight from a shared #t=
+      // link, so a keyboard-only visitor could arrive stuck with no recovery.
+      canvas.addEventListener('keydown', (e) => {
+        if (e.altKey || e.ctrlKey || e.metaKey) return;
+        const step = e.shiftKey ? 40 : 12; // ~1 slow drag vs ~1 fast flick
+        switch (e.key) {
+          case 'ArrowLeft':
+            orbitX -= step;
+            break;
+          case 'ArrowRight':
+            orbitX += step;
+            break;
+          case 'ArrowUp':
+            orbitY -= step;
+            break;
+          case 'ArrowDown':
+            orbitY += step;
+            break;
+          case '+':
+          case '=':
+            zoom = clampZoom(zoom - 1.5);
+            break;
+          case '-':
+          case '_':
+            zoom = clampZoom(zoom + 1.5);
+            break;
+          case 'Home':
+          case '0':
+            e.preventDefault();
+            resetCam();
+            return;
+          default:
+            return;
+        }
+        e.preventDefault();
+        camChip.classList.add('show');
       });
 
       // ---------------------------------------------------------------------------
@@ -7256,22 +7551,30 @@ blob {
 
       function loadSource(src, opts) {
         editor.value = src;
-        if (opts && opts.resetCam) {
-          orbitX = 0;
-          orbitY = 0;
-          zoom = 0;
-          camChip.classList.remove('show');
-        }
+        if (opts && opts.resetCam) resetCam();
         onSource(true);
+      }
+      // .on and aria-pressed are ONE piece of state, so one statement writes both.
+      // Splitting them is how the toolbar ended up looking toggled to sighted
+      // users and permanently unpressed to a screen reader.
+      function setPressed(el, on) {
+        el.classList.toggle('on', on);
+        el.setAttribute('aria-pressed', on ? 'true' : 'false');
       }
       document.querySelectorAll('[data-preset]').forEach((b) => {
         b.addEventListener('click', () => {
-          document.querySelectorAll('.preset').forEach((x) => x.classList.remove('on'));
-          b.classList.add('on');
+          document.querySelectorAll('.preset').forEach((x) => setPressed(x, x === b));
           loadSource(PRESETS[b.dataset.preset], { resetCam: true });
         });
       });
 
+      // The joke filenames are a gag about 1994 scene-file hygiene and they earn
+      // their place in the editor's title bar, where they read as this scene's
+      // name. They do NOT belong anywhere a machine or a stranger reads them: the
+      // <title> is identity (a random one per load meant crawlers indexed turbo
+      // as untitled_render_final_FINAL2.pov), and a saved file lands in someone's
+      // Downloads folder, where povrayer's own editor already agrees on scene.pov
+      // (web/ui.js). So the gag stays cosmetic and the exports are stable.
       const FILENAMES = [
         'untitled_render_final_FINAL2.pov',
         'chrome_dreams_03.pov',
@@ -7279,9 +7582,9 @@ blob {
         'test2_realone.pov',
         'vase_backup_USE_THIS.pov',
       ];
-      const fileName = FILENAMES[(Math.random() * FILENAMES.length) | 0];
-      document.getElementById('fileName').textContent = fileName;
-      document.title = fileName + ' - povrayer turbo';
+      document.getElementById('fileName').textContent =
+        FILENAMES[(Math.random() * FILENAMES.length) | 0];
+      const saveName = (ext) => 'scene.' + ext;
 
       function currentPovSource() {
         const src = editor.value;
@@ -7315,12 +7618,12 @@ blob {
         );
         const a = document.createElement('a');
         a.href = url;
-        a.download = fileName;
+        a.download = saveName('pov');
         document.body.appendChild(a);
         a.click();
         a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 30000);
-        showToast(`${fileName} downloaded`);
+        showToast(`${saveName('pov')} downloaded`);
       }
 
       document.getElementById('copyPov').addEventListener('click', async () => {
@@ -7379,45 +7682,91 @@ blob {
         );
       });
 
-      document.getElementById('glslBtn').addEventListener('click', () => {
-        document.getElementById('glslWrap').classList.toggle('show');
-      });
+      // ---- panel visibility: ONE owner per panel ----------------------------------
+      // "Hide UI" and the phone { } button used to own DIFFERENT classes (.hidden
+      // vs .collapsed) and only one of them touched the label, so the pair could
+      // deadlock: "" -> hidden ("Show UI") -> collapsed (label still "Show UI",
+      // and the sheet parked below the viewport so { } visibly did nothing) ->
+      // "collapsed hidden", where pressing "Show UI" made it MORE hidden. Both
+      // controls call setEditorVisible() now, and it owns the class, the label
+      // and aria-expanded together.
       const wrap = document.getElementById('editorWrap');
-      document.getElementById('toggle').addEventListener('click', (e) => {
-        const hidden = wrap.classList.toggle('hidden');
-        document.getElementById('glslWrap').classList.remove('show');
-        e.target.textContent = hidden ? 'Show UI' : 'Hide UI';
-      });
+      const toggleBtn = document.getElementById('toggle');
+      const codeBtn = document.getElementById('codeBtn');
+      const glslWrap = document.getElementById('glslWrap');
+      const glslBtn = document.getElementById('glslBtn');
+      const editorVisible = () => !wrap.classList.contains('closed');
+      function setEditorVisible(on) {
+        wrap.classList.toggle('closed', !on);
+        toggleBtn.textContent = on ? 'Hide UI' : 'Show UI';
+        toggleBtn.setAttribute('aria-expanded', on ? 'true' : 'false');
+        codeBtn.setAttribute('aria-expanded', on ? 'true' : 'false');
+      }
+      function setGLSLVisible(on) {
+        glslWrap.classList.toggle('show', on);
+        glslBtn.setAttribute('aria-expanded', on ? 'true' : 'false');
+      }
+      glslBtn.addEventListener('click', () => setGLSLVisible(!glslWrap.classList.contains('show')));
 
-      // phone: the editor is a bottom sheet behind the { } button
-      const IS_PHONE = matchMedia('(max-width: 760px)').matches;
       const buzz = (ms) => {
         if (navigator.vibrate) navigator.vibrate(ms);
       };
-      document.getElementById('codeBtn').addEventListener('click', () => {
-        wrap.classList.remove('hidden');
-        const closed = wrap.classList.toggle('collapsed');
-        buzz(8);
-        if (!closed) editor.blur(); // sheet opens showing code, keyboard on demand
+      // Live, not the boot-time snapshot it replaces: rotating a phone or dragging
+      // a desktop window across 760px moves the editor between "panel" and "bottom
+      // sheet", each with its own default (canvas-first on a phone, open on
+      // desktop). Re-apply that default on a crossing, but never over a choice the
+      // visitor already made.
+      const phoneMQ = matchMedia('(max-width: 760px)');
+      let editorChosen = false;
+      phoneMQ.addEventListener('change', (e) => {
+        if (!editorChosen) setEditorVisible(!e.matches);
       });
+      toggleBtn.addEventListener('click', () => {
+        editorChosen = true;
+        setEditorVisible(!editorVisible());
+        setGLSLVisible(false);
+      });
+      codeBtn.addEventListener('click', () => {
+        editorChosen = true;
+        const on = !editorVisible();
+        setEditorVisible(on);
+        buzz(8);
+        if (on) editor.blur(); // sheet opens showing code, keyboard on demand
+      });
+
+      // Publish the toolbar's real bottom edge for #camChip to hang from. A
+      // ResizeObserver catches height changes (a longer warn chip, a bigger
+      // browser font); the window listener catches the bar moving without
+      // resizing, which is what an orientation change does to the safe-area
+      // inset in its `top`.
+      const barEl = document.querySelector('.bar');
+      function publishBarBottom() {
+        document.documentElement.style.setProperty(
+          '--bar-b',
+          barEl.getBoundingClientRect().bottom.toFixed(1) + 'px'
+        );
+      }
+      new ResizeObserver(publishBarBottom).observe(barEl);
+      addEventListener('resize', publishBarBottom);
+      publishBarBottom();
+
       document
         .querySelectorAll('.preset, #share')
         .forEach((b) => b.addEventListener('click', () => buzz(10)));
 
       // ---- the glow toggle --------------------------------------------------------
       const glowBtn = document.getElementById('glow');
-      if (post && post.on) glowBtn.classList.add('on');
+      if (post && post.on) setPressed(glowBtn, true);
       glowBtn.addEventListener('click', () => {
         if (!post) return;
         post.on = !post.on;
         localStorage.setItem('turbo-glow', post.on ? '1' : '0');
-        glowBtn.classList.toggle('on', post.on);
+        setPressed(glowBtn, post.on);
         buzz(8);
         showToast(post.on ? 'glow on. bloom, grain, the works ✨' : 'glow off. raw raymarcher');
       });
 
       // ---- one-tap export: a PNG of this frame, or one clock loop as a video ------
-      const exportName = (ext) => fileName.replace(/\.pov$/i, '') + '.' + ext;
       const saveBlob = (blob, name) => {
         const u = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -7459,8 +7808,8 @@ blob {
         }
         ctx.putImageData(img, 0, 0);
         c2.toBlob((blob) => {
-          saveBlob(blob, exportName('png'));
-          showToast(exportName('png') + ' saved · ' + w + '×' + h);
+          saveBlob(blob, saveName('png'));
+          showToast(saveName('png') + ' saved · ' + w + '×' + h);
         }, 'image/png');
         buzz(12);
       }
@@ -7489,15 +7838,15 @@ blob {
         });
         recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
         recorder.onstop = () => {
-          saveBlob(new Blob(chunks, { type: 'video/webm' }), exportName('webm'));
+          saveBlob(new Blob(chunks, { type: 'video/webm' }), saveName('webm'));
           recorder = null;
-          recBtn.classList.remove('on');
+          setPressed(recBtn, false);
           recBtn.textContent = '🎬 rec';
           transport.setPlaying(wasPlaying);
-          showToast(exportName('webm') + ' saved · one perfect loop');
+          showToast(saveName('webm') + ' saved · one perfect loop');
         };
         recorder.start();
-        recBtn.classList.add('on');
+        setPressed(recBtn, true);
         recBtn.textContent = '● rec';
         buzz(20);
         showToast('recording one ' + transport.periodMs / 1000 + 's loop…');
@@ -7589,7 +7938,7 @@ blob {
         }
         if (!src) {
           src = PRESETS.hello;
-          document.querySelector('[data-preset="hello"]').classList.add('on');
+          setPressed(document.querySelector('[data-preset="hello"]'), true);
         }
         editor.value = src;
         if (Array.isArray(orbitInit) && orbitInit.length === 3) {
@@ -7601,7 +7950,7 @@ blob {
           transport.value = clockInit;
           scrubEl.value = String(clockInit);
         }
-        if (IS_PHONE) wrap.classList.add('collapsed'); // canvas-first on phones
+        setEditorVisible(!phoneMQ.matches); // canvas-first on phones, editor open on desktop
         onSource(true);
         requestAnimationFrame(frame);
         introGag();
