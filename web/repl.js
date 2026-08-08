@@ -1423,6 +1423,9 @@ function captureEditorState() {
     mode: 'still',
     frames: '24',
     fps: '12',
+    // See the same stamp in web/turbo.html: the editor labels this "from the
+    // REPL" rather than reusing the recipient's last example name.
+    origin: 'repl',
   };
 }
 

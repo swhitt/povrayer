@@ -851,10 +851,14 @@ exampleEmptyMore.addEventListener('mousedown', (e) => e.preventDefault());
 exampleEmptyMore.addEventListener('click', () => openGallery(exampleSearch.value.trim()));
 
 // The loaded scene's title when the query that just came up empty WOULD have
-// matched it, else null. Anything reaching here is necessarily gallery-only (a
-// featured scene would have matched its own row), and the picker must not report
-// that nothing matches the very scene it is displaying in its trigger.
+// matched it, else null. The picker must not report that nothing matches the very
+// scene it is displaying in its own trigger.
 function loadedGalleryTitle(query) {
+  // An empty query means the panel emptied because of the filter SELECTS, not the
+  // search box (`filtering` is true for any of the five controls). Every haystack
+  // contains '', so without this guard the loaded scene gets named for a query
+  // nobody typed, including a featured scene that has its own row right there.
+  if (query === '') return null;
   const record = getExampleRecord(sceneState.selectedExample);
   if (record === undefined) return null; // a foreign scene has no catalog record
   return exampleHaystack(record).includes(query) ? record.title : null;
@@ -862,8 +866,11 @@ function loadedGalleryTitle(query) {
 
 function paintExampleEmpty(query) {
   const title = loadedGalleryTitle(query);
+  // Deliberately does NOT say "from the Gallery": a featured scene can also be
+  // filtered out by the selects while matching the text, and claiming the wrong
+  // provenance is the same class of lie this whole change set is removing.
   exampleEmptyLead.textContent =
-    title === null ? 'No featured scene matches. ' : `"${title}" is loaded, from the Gallery. `;
+    title === null ? 'No featured scene matches. ' : `"${title}" is loaded but filtered out. `;
 }
 
 function renderList() {

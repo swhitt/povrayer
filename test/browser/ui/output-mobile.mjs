@@ -21,7 +21,7 @@ export async function runOutputMobile(ctx) {
   // page: live draft is off, and the page's ONE render so far (the 64x48
   // final-quality chord) means prevUrl is still empty.
   // ===========================================================================
-  const BASE_TITLE = 'povrayer, POV-Ray in the browser';
+  const BASE_TITLE = 'povrayer · POV-Ray in the browser';
   const tabState = () =>
     page.evaluate(() => ({
       title: document.title,

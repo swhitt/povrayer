@@ -1111,7 +1111,11 @@ export async function runCatalogEditor(ctx) {
       trigger: document.getElementById('example-trigger-text').textContent,
     })),
     {
-      lead: '"Caustic ring (photons)" is loaded, from the Gallery. ',
+      // Deliberately not "from the Gallery": the empty state also fires when the
+      // filter SELECTS empty the panel, and a FEATURED scene can be filtered out
+      // that way while still matching the text, so claiming gallery provenance
+      // would be wrong in exactly the case this change set exists to fix.
+      lead: '"Caustic ring (photons)" is loaded but filtered out. ',
       trigger: 'Caustic ring (photons)',
     },
     'the empty state must not deny the scene the trigger is displaying'

@@ -2049,9 +2049,15 @@ figure.result.pending > div {
   border-top: 1px solid var(--border);
 }
 
+/* min-width is 20ch, NOT 0: the footer beside this is `white-space: nowrap` and
+   therefore unshrinkable (~250px), so with min-width:0 this readout collapsed
+   instead of forcing the row to wrap (measured at 320px: 34px wide, showing
+   "idle…"). 20ch is the longest routine form, "rendering… · 320×240", so the flex
+   row now wraps and hands the readout a full row on a phone rather than
+   ellipsising the size and percent out of a live region mid-render. */
 #repl-status {
   flex: 1;
-  min-width: 0;
+  min-width: 20ch;
   font-size: var(--fs-chrome);
   line-height: 1.4;
   white-space: nowrap;

@@ -201,10 +201,10 @@ test('every title starts with the brand, and the page name matches the wordmark'
   // repl", so the page name has to sit in the FIRST segment.
   assert.equal(titleOf(repl), 'povrayer repl · a POV-Ray command line');
   assert.equal(titleOf(turbo), 'povrayer turbo', 'turbo pins a stable title; the gag is #fileName');
-  // index.html still reads "povrayer, POV-Ray in the browser": the comma is the
-  // last holdout of the old pattern, pinned by a hardcoded BASE_TITLE in
-  // test/browser/ui/output-mobile.mjs. Changing both is a one-line pair.
-  assert.match(titleOf(index), /^povrayer[,·] POV-Ray in the browser$/);
+  // Exact, not a [,·] alternation: all three surfaces now use the middot, so the
+  // comma form has no remaining holdout to tolerate. test/browser/ui/output-mobile.mjs
+  // hardcodes this same string as BASE_TITLE and moved with it.
+  assert.equal(titleOf(index), 'povrayer · POV-Ray in the browser');
 });
 
 test('every surface carries a description and a social card', () => {

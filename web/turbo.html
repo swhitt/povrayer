@@ -695,6 +695,25 @@
         .grp {
           gap: 6px;
         }
+        /* The pin STAYS sticky (the CTA must never be what scrolled off), but it
+           has to be narrow enough that the nav rests clear of it: a sticky group
+           overlays whatever scrolls underneath, so anything it covers becomes a
+           visible, untappable control. Measured before this rule, at the resting
+           scroll position: 320px gave editor -> #raytrace and repl -> #toggle,
+           390px gave both -> #raytrace.
+           #toggle is the thing to drop, because on a phone it is redundant: the
+           fixed 52px #codeBtn FAB below drives the SAME single editor-visibility
+           state (one setEditorVisible owner), so the bar does not need a second
+           control for it. That leaves the pin holding just the handoff. */
+        .grp.pin #toggle {
+          display: none;
+        }
+        /* And keep the nav short enough to rest CLEAR of that group: the two
+           external links are the least useful on a phone and both remain one tap
+           away from the editor, which does have a footer. */
+        nav.grp a[href^='https'] {
+          display: none;
+        }
         .brand {
           font-size: 13px;
           margin-right: 2px;
@@ -782,6 +801,18 @@
         .fps,
         #glslBtn {
           display: none !important;
+        }
+      }
+
+      /* Narrow phones. At 320px even the trimmed bar above still leaves the second
+         nav link under the pinned handoff group (measured: repl -> #raytrace), and
+         the wordmark is the cheapest thing to trade for it: purely decorative,
+         already `pointer-events: none` so orbit drag passes through it, and the
+         page <title> plus the PWA icon carry the identity anyway. 400px is the
+         cutoff because 480px and up fit the nav, the brand and the pin together. */
+      @media (max-width: 400px) {
+        .brand {
+          display: none;
         }
       }
     </style>
@@ -7700,6 +7731,12 @@ blob {
           mode: usesClock ? 'animate' : 'still',
           frames: '24',
           fps: '12',
+          // Stamp where this scene came from. The editor reads it to label the
+          // handoff "from turbo" instead of inheriting whatever example the
+          // RECIPIENT last had selected, which is what used to hand them an armed
+          // Reset pointed at a different scene. web/permalink.js drops an origin
+          // it does not recognize, so an older editor just sees a shared scene.
+          origin: 'turbo',
         };
       }
 
