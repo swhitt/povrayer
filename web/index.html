@@ -66,6 +66,24 @@
       is the first visit, the service worker is installing and the page will reload itself; if it
       doesn't, refresh manually.
     </div>
+    <!-- First-run guidance. The empty-state copy inside #output-plate cannot do
+         this job alone: the plate hint is hidden the moment an image lands, and
+         the on-load auto-draft lands one about 1.6s after a cold load, so the
+         only instruction a newcomer ever got was erased by the app working
+         correctly, before it could be read. This strip lives OUTSIDE the plate,
+         stays until the visitor dismisses it, and the dismissal is remembered
+         (`onboarded` in the saved blob), so it asks once and never again.
+         Deliberately not a modal: no backdrop, no focus trap, no accent, dim
+         chrome voice, and it sits above <main> rather than inside it (main is
+         the two-column pane grid). -->
+    <div id="onboard" hidden>
+      <p>
+        New here? Type POV-Ray scene text on the left and the preview re-renders as you pause.
+        <kbd>Ctrl/Cmd</kbd> <kbd>Enter</kbd> renders at full quality, Gallery has ready-made scenes,
+        and <kbd>?</kbd> lists every shortcut.
+      </p>
+      <button id="onboard-dismiss" type="button" title="Hide this for good">got it</button>
+    </div>
     <main>
       <section id="editor-pane" aria-label="scene editor">
         <div id="example-field">
@@ -130,10 +148,16 @@
                 <option value="fast">fast</option>
                 <option value="heavy">heavy</option>
               </select>
+              <!-- Bucket values come from licenseBucket() in example-filters.js;
+                   the labels must stay true of every license in the bucket (see
+                   the map's comment). No 'permissive' option: no shipped example
+                   is MIT/Apache/BSD yet, so it would only ever say "no examples
+                   match". -->
               <select id="example-license" aria-label="filter by license">
                 <option value="all">any license</option>
                 <option value="cc0">cc0</option>
-                <option value="share-alike">share-alike</option>
+                <option value="cc-by">cc-by</option>
+                <option value="cc-by-sa">cc-by-sa</option>
                 <option value="gpl">gpl</option>
               </select>
             </div>
@@ -514,27 +538,41 @@
         </details>
       </section>
     </main>
-    <!-- Keyboard-shortcuts overlay: toggled by ? (outside text fields) or the
+    <!-- Shortcuts + gestures overlay: toggled by ? (outside text fields) or the
          footer hint; Esc or ? closes. ui.js owns the focus handoff (panel on
          open, opener back on close). tabindex="-1" makes the panel itself
-         focusable so opening lands focus inside the dialog. -->
-    <div id="shortcuts" role="dialog" aria-label="keyboard shortcuts" tabindex="-1" hidden>
-      <h2>keyboard shortcuts</h2>
+         focusable so opening lands focus inside the dialog.
+         This panel is the app's ONLY discovery surface, so it documents the
+         non-keyboard affordances too (the plate's zoom cycle, the pane divider,
+         drag-and-drop import, the slider-range comment). Every one of them is
+         shipped and none announces itself anywhere else in the interface, so an
+         omission here is a feature nobody can find. -->
+    <div id="shortcuts" role="dialog" aria-label="shortcuts and gestures" tabindex="-1" hidden>
+      <h2>keyboard</h2>
       <dl class="shortcuts-list">
         <dt><kbd>Ctrl/Cmd</kbd> <kbd>Enter</kbd></dt>
         <dd>render</dd>
         <dt><kbd>Shift</kbd> <kbd>Ctrl/Cmd</kbd> <kbd>Enter</kbd></dt>
         <dd>final-quality render (q9, antialias 0.05)</dd>
+        <!-- Wording, not hand-waving: Escape genuinely does not touch a live
+             preview (see the document keydown handler in ui.js for why it must
+             not), so it says which render it cancels and names the control that
+             stops the other one. -->
         <dt><kbd>Esc</kbd></dt>
-        <dd>cancel a running render</dd>
+        <dd>
+          close the gallery, this overlay or the find bar, else cancel a render you started (a live
+          preview keeps going; Stop pauses that)
+        </dd>
         <dt><kbd>Tab</kbd> / <kbd>Shift</kbd> <kbd>Tab</kbd></dt>
         <dd>indent / outdent in the editor</dd>
         <dt><kbd>Esc</kbd> then <kbd>Tab</kbd></dt>
         <dd>move focus out of the editor</dd>
         <dt><kbd>Ctrl</kbd> <kbd>Space</kbd></dt>
         <dd>completions</dd>
+        <dt><kbd>←</kbd>/<kbd>→</kbd>, <kbd>Home</kbd></dt>
+        <dd>on the pane divider (Tab to it): resize the panes 2% per press, or reset to 50/50</dd>
         <dt><kbd>Alt</kbd> drag</dt>
-        <dd>scrub a number in the editor</dd>
+        <dd>scrub any number in the editor (it rewrites the scene text in place)</dd>
         <dt><kbd>Alt</kbd> <kbd>↑</kbd>/<kbd>↓</kbd></dt>
         <dd>step the number under the caret, else move lines</dd>
         <dt><kbd>Alt</kbd> <kbd>Shift</kbd> <kbd>↑</kbd>/<kbd>↓</kbd></dt>
@@ -555,6 +593,20 @@
         <dd>peek at the previous render (press-and-hold the image works too)</dd>
         <dt><kbd>?</kbd></dt>
         <dd>this overlay</dd>
+      </dl>
+      <h3>pointer, drops &amp; scene text</h3>
+      <dl class="shortcuts-list">
+        <dt>click the render</dt>
+        <dd>cycle the zoom: fit, 1:1, 4× (drag to pan while zoomed in)</dd>
+        <dt>drag the pane divider</dt>
+        <dd>resize the editor against the output; double-click resets to 50/50</dd>
+        <dt>drop a file on the editor</dt>
+        <dd>
+          an image is staged with an <code>image_map</code> declare, a <code>.inc</code> is staged
+          and <code>#include</code>d, a <code>.pov</code> replaces the scene
+        </dd>
+        <dt><code>// 0..90</code> after a <code>#declare</code></dt>
+        <dd>sets that scene param's slider range; <code>// 0..90..5</code> sets the step too</dd>
       </dl>
     </div>
     <div
@@ -597,10 +649,12 @@
           <option value="fast">fast</option>
           <option value="heavy">heavy</option>
         </select>
+        <!-- Same buckets as the compact picker's #example-license. -->
         <select id="gallery-license" aria-label="gallery license filter">
           <option value="all">any license</option>
           <option value="cc0">cc0</option>
-          <option value="share-alike">share-alike</option>
+          <option value="cc-by">cc-by</option>
+          <option value="cc-by-sa">cc-by-sa</option>
           <option value="gpl">gpl</option>
         </select>
         <button id="gallery-clear" type="button" hidden>Clear</button>

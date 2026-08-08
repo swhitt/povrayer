@@ -67,7 +67,17 @@ export async function runPlaybackDrafts(ctx) {
     'a full saved blob should restore every control'
   );
 
-  // Partial / wrong-typed fields each fall back to their default.
+  // That blob predates the `onboarded` field (as every returning visitor's does),
+  // so the first-run strip is still owed: it asks once, then never again.
+  assert.equal(
+    await page.evaluate(() => document.getElementById('onboard').hidden),
+    false,
+    'a saved blob with no onboarded flag should still show the first-run strip'
+  );
+
+  // Partial / wrong-typed fields each fall back to their default. `onboarded` is
+  // in here for the same reason: only a literal `true` suppresses the strip, so a
+  // hand-edited or truthy-but-wrong value must not silently hide the guidance.
   await seedReload(
     JSON.stringify({
       source: 123,
@@ -77,6 +87,7 @@ export async function runPlaybackDrafts(ctx) {
       antialias: 'weird',
       threads: 5,
       example: 'no-such-example',
+      onboarded: 'yes',
     })
   );
   assert.deepEqual(
@@ -85,9 +96,18 @@ export async function runPlaybackDrafts(ctx) {
       width: document.getElementById('width').value,
       quality: document.getElementById('quality').value,
       antialias: document.getElementById('antialias').value,
+      onboard: document.getElementById('onboard').hidden,
     })),
-    { example: 'csg-die', width: '512', quality: '9', antialias: '0.1' },
+    { example: 'csg-die', width: '512', quality: '9', antialias: '0.1', onboard: false },
     'invalid saved fields should fall back to defaults'
+  );
+
+  // A dismissal survives the reload: this is the whole point of persisting it.
+  await seedReload(JSON.stringify({ onboarded: true }));
+  assert.equal(
+    await page.evaluate(() => document.getElementById('onboard').hidden),
+    true,
+    'a remembered dismissal must keep the strip hidden across loads'
   );
 
   // Non-object JSON: readSavedState returns null via the typeof guard.

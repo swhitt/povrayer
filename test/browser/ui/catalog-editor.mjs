@@ -139,12 +139,19 @@ export async function runCatalogEditor(ctx) {
   const expectedExampleNames = (filters) =>
     page.evaluate(async (f) => {
       const { groupByCategory } = await import('/examples.js');
+      // An independent restatement of licenseBucket() for the licenses EXAMPLES
+      // actually ships (CC0 / GPL / CC-BY-SA / CC-BY), so this oracle would
+      // disagree with the app if the mapping regressed instead of importing the
+      // same bug. The bucket labels are user-visible: cc-by and cc-by-sa are
+      // separate because CC-BY carries no share-alike obligation.
       const bucket = (ex) =>
         ex.license === 'CC0-1.0'
           ? 'cc0'
           : ex.license === 'GPL-3.0-or-later'
             ? 'gpl'
-            : 'share-alike';
+            : ex.license.startsWith('CC-BY-SA-')
+              ? 'cc-by-sa'
+              : 'cc-by';
       return groupByCategory().flatMap((g) =>
         g.items
           .filter((ex) => {
@@ -358,8 +365,12 @@ export async function runCatalogEditor(ctx) {
     'combined still + difficulty + render-cost filters intersect cleanly'
   );
   await assertFilteredExamples(
-    { type: 'all', difficulty: 'all', tier: 'all', license: 'share-alike' },
-    'the license filter surfaces adapted share-alike examples'
+    { type: 'all', difficulty: 'all', tier: 'all', license: 'cc-by' },
+    'the license filter surfaces attribution-only (CC-BY) examples'
+  );
+  await assertFilteredExamples(
+    { type: 'all', difficulty: 'all', tier: 'all', license: 'cc-by-sa' },
+    'the license filter surfaces share-alike (CC-BY-SA) examples, separately from CC-BY'
   );
   await assertFilteredExamples(
     { type: 'all', difficulty: 'all', tier: 'all', license: 'gpl' },

@@ -477,6 +477,34 @@ export async function runOutputMobile(ctx) {
       'the mobile context must report a coarse pointer (the iOS rules key on it)'
     );
 
+    // First-run guidance on a phone: the seeded blob has no `onboarded` flag, so
+    // the strip is up, and it is the one piece of chrome added ABOVE the panes.
+    // Its sentence wraps to several lines at 390px, so check it (and its dismiss
+    // control) actually fit on screen instead of pushing the editor off the fold.
+    // Everything below this point measures phone layout with the strip present,
+    // which is the state a first-time phone visitor is in.
+    const strip = await mpage.evaluate(() => {
+      const el = document.getElementById('onboard');
+      const r = el.getBoundingClientRect();
+      const btn = document.getElementById('onboard-dismiss').getBoundingClientRect();
+      return {
+        hidden: el.hidden,
+        bottom: r.bottom,
+        btnBottom: btn.bottom,
+        btnHeight: btn.height,
+        innerH: window.innerHeight,
+      };
+    });
+    assert.equal(strip.hidden, false, 'the phone must get the first-run guidance too');
+    assert.ok(
+      strip.bottom < strip.innerH / 3,
+      `the strip must stay a thin band, not a screenful (bottom ${strip.bottom} of ${strip.innerH})`
+    );
+    assert.ok(
+      strip.btnBottom <= strip.innerH && strip.btnHeight >= 28,
+      `the dismiss control must be on screen at a full control height (${JSON.stringify(strip)})`
+    );
+
     // iOS focus-zoom floor: the editor and the two layers locked to it (the line
     // numbers + the syntax overlay) must all be >= 16px AND identical, or iOS
     // zooms the page on focus and the colored overlay drifts off the caret.

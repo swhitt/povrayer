@@ -11,10 +11,6 @@ const DRAFT_DEBOUNCE_FACTOR = 0.75;
 // scene produces; only the truly pathological ones trip it.
 const SLOW_DRAFT_PAUSE_MS = 20000;
 
-function clamp(n, lo, hi) {
-  return Math.min(hi, Math.max(lo, n));
-}
-
 /**
  * @typedef {object} LiveDraftHooks
  * @property {() => boolean} enabled
@@ -49,8 +45,12 @@ export function createLiveDraftController(hooks) {
   let pendingFull = false;
   let autoPaused = false;
 
+  // The next debounce is a fraction of the LAST draft's cost, held inside the
+  // min/max window: a scene that takes a second to preview waits longer between
+  // keystrokes than a sphere does.
   function debounceMs() {
-    return clamp(lastDraftMs * DRAFT_DEBOUNCE_FACTOR, DRAFT_DEBOUNCE_MIN_MS, DRAFT_DEBOUNCE_MAX_MS);
+    const scaled = lastDraftMs * DRAFT_DEBOUNCE_FACTOR;
+    return Math.min(DRAFT_DEBOUNCE_MAX_MS, Math.max(DRAFT_DEBOUNCE_MIN_MS, scaled));
   }
 
   function clearTimer() {

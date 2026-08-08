@@ -223,6 +223,31 @@ footer {
   color: #ffd8d3;
 }
 
+/* First-run guidance strip (UI page), between the header and the panes. Reads as
+   a second bar of chrome, not an alert: --panel ground, the header's own hairline
+   continued, dim body copy, no accent. The dismiss button keeps the standard
+   control chrome so it is obviously the way out, and never shrinks below its
+   label when the sentence wraps on a phone. */
+#onboard {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  color: var(--dim);
+  font-size: var(--fs-out);
+}
+
+#onboard p {
+  margin: 0;
+}
+
+#onboard button {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
 /* ---- form controls ---- */
 
 button,
@@ -2730,14 +2755,30 @@ kbd {
   padding: 16px;
 }
 
-/* Quiet section head, same uppercase-dim treatment as the category heads. */
-#shortcuts h2 {
+/* Quiet section heads, same uppercase-dim treatment as the category heads. The
+   h3 opens the second group (pointer/drop/scene-text affordances), so it needs
+   the top margin the h2 doesn't. */
+#shortcuts h2,
+#shortcuts h3 {
   margin: 0 0 12px;
   font-size: var(--fs-body);
   font-weight: 400;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--dim);
+}
+
+#shortcuts h3 {
+  margin-top: 20px;
+}
+
+/* Scene-text literals in the second group (`// 0..90`, image_map, .pov). The
+   page is monospace already, so these only need the syntax palette's comment
+   grey to read as source rather than prose. nowrap so a literal never breaks
+   across lines (`// 0..90..5` reads as two tokens the moment it does). */
+#shortcuts code {
+  color: var(--syn-comment);
+  white-space: nowrap;
 }
 
 .shortcuts-list {

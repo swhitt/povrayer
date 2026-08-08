@@ -26,10 +26,6 @@ import {
  * @property {HTMLSelectElement} exportFormat
  */
 
-function clamp(n, lo, hi) {
-  return Math.min(hi, Math.max(lo, n));
-}
-
 /**
  * Page-agnostic playback over the bitmaps render-client hands back: a canvas,
  * scrubber, play/pause, loop, fps, and WebM/PNG/GIF/APNG export. It owns the
@@ -139,7 +135,9 @@ export function createPlayer(elements) {
   function seek(i) {
     if (!bitmaps.length) return;
     pause();
-    draw(clamp(i, 0, bitmaps.length - 1));
+    // Bounded, not trusted: the index arrives either as the scrubber's value (a
+    // DOM string this parses) or from a caller of the returned API.
+    draw(Math.min(bitmaps.length - 1, Math.max(0, i)));
   }
 
   function setFps(n) {

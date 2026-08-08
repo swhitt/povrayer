@@ -23,6 +23,26 @@ export async function runStartupRender(ctx) {
     { timeout: 30_000 }
   );
 
+  // ---- first-run guidance ---------------------------------------------------
+  // This page is the suite's only genuinely COLD load (no saved blob yet), so it
+  // is the only place the first-run strip can be tested at all. It is the single
+  // piece of instruction a newcomer gets: before it existed, the plate's
+  // empty-state sentence was, and the on-load auto-draft hid the plate ~1.6s
+  // after load, so the guidance was erased by the app working correctly. The
+  // survives-the-first-draft half of that is asserted after the draft lands.
+  const onboardState = () =>
+    page.evaluate(() => ({
+      hidden: document.getElementById('onboard').hidden,
+      text: document.getElementById('onboard').querySelector('p')?.textContent?.trim() ?? '',
+    }));
+  const first = await onboardState();
+  assert.equal(first.hidden, false, 'a cold load must show the first-run guidance strip');
+  assert.match(
+    first.text,
+    /Ctrl\/Cmd.+Enter.+renders/s,
+    `the strip must say how to render, got: ${first.text}`
+  );
+
   // Idle-state contract: Cancel is hidden until a render is in flight, and
   // the status line is a live region.
   assert.equal(
@@ -62,6 +82,39 @@ export async function runStartupRender(ctx) {
     await page.evaluate(() => document.getElementById('download-btn').hidden),
     true,
     'the on-load image should be a live draft (no download), not a full render'
+  );
+
+  // The regression this strip exists for: the first draft has now landed, so the
+  // plate's own hint IS hidden (showImage hides it and nothing brings it back),
+  // and the guidance must still be on screen.
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      plateHint: document.querySelector('#output-plate .hint').hidden,
+      strip: document.getElementById('onboard').hidden,
+    })),
+    { plateHint: true, strip: false },
+    'the first draft hides the plate hint; the guidance strip must survive it'
+  );
+
+  // Dismissal is explicit and remembered: the strip goes away and the saved blob
+  // records it (the reload half is asserted in the playback/drafts suite, which
+  // owns the seeded-blob reloads).
+  await page.click('#onboard-dismiss');
+  await page.waitForFunction(
+    () => {
+      try {
+        return JSON.parse(localStorage.getItem('povrayer.ui.v1') || '{}').onboarded === true;
+      } catch {
+        return false;
+      }
+    },
+    null,
+    { timeout: 5_000 }
+  );
+  assert.equal(
+    (await onboardState()).hidden,
+    true,
+    'dismissing the strip must hide it for the rest of the session'
   );
 
   // Happy path: small fast render, wait for the decoded blob image.

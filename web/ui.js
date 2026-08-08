@@ -62,6 +62,10 @@ ensureCrossOriginIsolation({ warningEl: isoWarning });
 // concrete element it is in index.html (verified against the markup) so checkJs
 // can flag a `.value` on a div or a `.disabled` on a span. The ids all exist at
 // module-eval time, so the cast (which also drops the `| null`) is safe here.
+const onboard = /** @type {HTMLElement} */ (document.getElementById('onboard'));
+const onboardDismiss = /** @type {HTMLButtonElement} */ (
+  document.getElementById('onboard-dismiss')
+);
 const exampleField = document.getElementById('example-field');
 const exampleTrigger = document.getElementById('example-trigger');
 const exampleTriggerText = document.getElementById('example-trigger-text');
@@ -193,6 +197,10 @@ let hasStillImage = false;
 // Live-draft auto-render: ON by default, persisted. Drafts fire only in still
 // mode; the full machinery lives in the "live draft" section near the bottom.
 let liveDraft = true;
+// True once the visitor has dismissed the first-run guidance strip. Persisted, so
+// the strip is asked once per browser and never again; the machinery lives in the
+// "first-run guidance" section below.
+let onboarded = false;
 // Two-column editor/output split, as the editor pane's fr count against the
 // output pane's 1fr (so 1 = 50/50, 1.5 ≈ 60/40); null = the CSS default 50/50.
 // Persisted like advancedOpen/liveDraft; the splitter machinery lives in the
@@ -515,6 +523,7 @@ function saveState() {
         provenance: sceneState.provenance,
         mode,
         liveDraft,
+        onboarded,
         advancedOpen: advanced.open,
         split: splitFr,
       })
@@ -657,6 +666,9 @@ window.addEventListener('pagehide', () => {
   if (saved) {
     applyControls(saved, coerceSaved);
     if (typeof saved.liveDraft === 'boolean') liveDraft = saved.liveDraft;
+    // Only `true` counts, so a blob written before this field existed (or a
+    // hand-edited one) shows the strip rather than silently suppressing it.
+    if (saved.onboarded === true) onboarded = true;
     if (typeof saved.advancedOpen === 'boolean') advanced.open = saved.advancedOpen;
     if (saved.mode === 'still' || saved.mode === 'animate') mode = saved.mode;
     // The fr count is re-clamped to the drag's own bounds (a hand-edited blob
@@ -3525,6 +3537,22 @@ stopBtn.addEventListener('click', () => {
   }
 });
 
+// ---- first-run guidance ----
+// The strip above <main> (see index.html for why it can't live in the plate).
+// Shown until dismissed, then never again on this browser. Nothing else on the
+// page reads `onboarded`, so this is the whole feature: reflect it, and persist
+// the dismissal through the same debounced save every other preference uses (the
+// pagehide flush covers a tab closed inside the debounce window).
+function applyOnboarding() {
+  onboard.hidden = onboarded;
+}
+onboardDismiss.addEventListener('click', () => {
+  onboarded = true;
+  applyOnboarding();
+  scheduleSave();
+});
+applyOnboarding();
+
 // ---- keyboard-shortcuts overlay ----
 // A plain dialog panel listing every binding, toggled by ? (when focus isn't in
 // a typing surface) or the footer hint; Esc or ? closes. No backdrop/trap: the
@@ -3602,6 +3630,17 @@ document.addEventListener('keydown', (e) => {
     // Escape closes the topmost open surface, and only aborts a render when
     // there is nothing left to close. Every closing arm preventDefaults so the
     // key never also reaches a browser default.
+    //
+    // It deliberately does NOT stop a live draft, even though a draft is also
+    // "a render in flight". Stopping one has to disable auto-preview (see the
+    // Stop button: the draft's own finally would otherwise reschedule it
+    // immediately), and that is a PERSISTED preference. Escape is the editor's
+    // documented focus escape hatch (Esc then Tab, per #editor-tabhelp) and it
+    // dismisses the completion popup, so it gets pressed constantly while
+    // typing, which is exactly when drafts are in flight: wiring it here would
+    // silently turn the live preview off during ordinary keyboard editing. The
+    // shortcuts overlay says which render Escape cancels, and names Stop as the
+    // control for the other one.
     if (!galleryPanel.hidden) {
       e.preventDefault();
       closeGallery();
