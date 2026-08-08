@@ -16,7 +16,7 @@
 // drifts, so assert the copies still agree.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 
@@ -27,9 +27,26 @@ const turbo = readFileSync(resolve(root, 'web/turbo.html'), 'utf8');
 // Set from JS at runtime rather than declared in the stylesheet, so a static
 // scan cannot see their definition. Each must stay genuinely JS-driven.
 const RUNTIME_SET = new Map([
-  ['--pct', 'web/render-feedback.js + web/repl.js set it on the progress bar'],
-  ['--split', 'web/ui.js sets it on <main> for the draggable split'],
+  ['--pct', 'web/render-feedback + web/repl set it on the progress bar'],
+  ['--split', 'web/ui sets it on <main> for the draggable split'],
 ]);
+
+/**
+ * Read a web module by base name, whichever language it is currently written in.
+ * Extension-agnostic on purpose: web/ is mid-migration to TypeScript, and a
+ * hardcoded `.js` here would silently stop reading a module the day it is
+ * renamed, which is exactly how the allowlist above becomes a hiding place for
+ * dead tokens again.
+ *
+ * @param {string} base repo-relative path with no extension, e.g. 'web/ui'
+ */
+function readModule(base) {
+  for (const ext of ['.ts', '.js']) {
+    const path = resolve(root, base + ext);
+    if (existsSync(path)) return readFileSync(path, 'utf8');
+  }
+  throw new Error(`${base} has neither a .ts nor a .js`);
+}
 
 /** @param {string} text */
 function referencedVars(text) {
@@ -54,11 +71,9 @@ test('every custom property styles.css references is defined or set from JS', ()
 
 test('the runtime-set custom properties really are set from JS', () => {
   // Otherwise this allowlist becomes a place for dead tokens to hide.
-  const js = ['web/render-feedback.js', 'web/repl.js', 'web/ui.js']
-    .map((p) => readFileSync(resolve(root, p), 'utf8'))
-    .join('\n');
+  const code = ['web/render-feedback', 'web/repl', 'web/ui'].map(readModule).join('\n');
   for (const [name, why] of RUNTIME_SET) {
-    assert.ok(js.includes(`'${name}'`), `${name} is allowlisted (${why}) but no JS names it`);
+    assert.ok(code.includes(`'${name}'`), `${name} is allowlisted (${why}) but no module names it`);
   }
 });
 

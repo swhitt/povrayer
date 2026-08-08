@@ -8,7 +8,7 @@ import {
   exampleSearchText,
   licenseBucket,
   matchesExampleFilters,
-} from '../../web/example-filters.js';
+} from '../../_build/web/example-filters.js';
 import { EXAMPLES } from '../../web/examples.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');

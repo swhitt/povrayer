@@ -34,10 +34,10 @@ const CRC_TABLE = (() => {
 
 /**
  * Standard PNG CRC32 over a byte range.
- * @param {Uint8Array} bytes the buffer to checksum (type+data, concatenated)
- * @returns {number} the unsigned 32-bit CRC
+ * @param bytes the buffer to checksum (type+data, concatenated)
+ * @returns the unsigned 32-bit CRC
  */
-function crc32(bytes) {
+function crc32(bytes: Uint8Array): number {
   let c = 0xffffffff;
   for (let i = 0; i < bytes.length; i++) {
     c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
@@ -45,21 +45,21 @@ function crc32(bytes) {
   return (c ^ 0xffffffff) >>> 0;
 }
 
-/**
- * One parsed PNG chunk: its 4-char type and a view of its data payload.
- * @typedef {{ type: string, data: Uint8Array }} Chunk
- */
+/** One parsed PNG chunk: its 4-char type and a view of its data payload. */
+interface Chunk {
+  type: string;
+  data: Uint8Array;
+}
 
 /**
  * Split a complete PNG file into its chunks (signature already validated by the
  * caller). Stops at the end of the buffer; a truncated trailing chunk is left
  * out rather than throwing, since callers only consume the chunks they need.
- * @param {Uint8Array} png a complete PNG file
- * @returns {Chunk[]} chunks in file order
+ * @param png a complete PNG file
+ * @returns chunks in file order
  */
-function parseChunks(png) {
-  /** @type {Chunk[]} */
-  const chunks = [];
+function parseChunks(png: Uint8Array): Chunk[] {
+  const chunks: Chunk[] = [];
   let pos = 8; // skip the 8-byte signature
   while (pos + 8 <= png.length) {
     const length = readUint32(png, pos);
@@ -75,11 +75,11 @@ function parseChunks(png) {
 
 /**
  * Read a big-endian unsigned 32-bit integer.
- * @param {Uint8Array} bytes source buffer
- * @param {number} offset byte offset of the first (most significant) byte
- * @returns {number} the value as an unsigned integer
+ * @param bytes source buffer
+ * @param offset byte offset of the first (most significant) byte
+ * @returns the value as an unsigned integer
  */
-function readUint32(bytes, offset) {
+function readUint32(bytes: Uint8Array, offset: number): number {
   return (
     (bytes[offset] * 0x1000000 +
       (bytes[offset + 1] << 16) +
@@ -91,10 +91,10 @@ function readUint32(bytes, offset) {
 
 /**
  * Test whether a buffer begins with the 8-byte PNG signature.
- * @param {Uint8Array} png candidate buffer
- * @returns {boolean} true when the first 8 bytes are the PNG magic
+ * @param png candidate buffer
+ * @returns true when the first 8 bytes are the PNG magic
  */
-function hasPngSignature(png) {
+function hasPngSignature(png: Uint8Array): boolean {
   if (png.length < 8) return false;
   for (let i = 0; i < 8; i++) {
     if (png[i] !== PNG_SIGNATURE[i]) return false;
@@ -104,11 +104,11 @@ function hasPngSignature(png) {
 
 /**
  * Serialize one PNG chunk: length(4 BE) | type(4 ASCII) | data | crc(4 BE).
- * @param {string} type the 4-character chunk type
- * @param {Uint8Array} data the chunk payload (may be empty)
- * @returns {Uint8Array} the framed chunk with a correct trailing CRC
+ * @param type the 4-character chunk type
+ * @param data the chunk payload (may be empty)
+ * @returns the framed chunk with a correct trailing CRC
  */
-function makeChunk(type, data) {
+function makeChunk(type: string, data: Uint8Array): Uint8Array {
   const out = new Uint8Array(12 + data.length);
   writeUint32(out, 0, data.length);
   out[4] = type.charCodeAt(0);
@@ -124,12 +124,11 @@ function makeChunk(type, data) {
 
 /**
  * Write a big-endian unsigned 32-bit integer in place.
- * @param {Uint8Array} bytes destination buffer
- * @param {number} offset byte offset to write the first (most significant) byte
- * @param {number} value the value to encode (truncated to 32 bits)
- * @returns {void}
+ * @param bytes destination buffer
+ * @param offset byte offset to write the first (most significant) byte
+ * @param value the value to encode (truncated to 32 bits)
  */
-function writeUint32(bytes, offset, value) {
+function writeUint32(bytes: Uint8Array, offset: number, value: number): void {
   bytes[offset] = (value >>> 24) & 0xff;
   bytes[offset + 1] = (value >>> 16) & 0xff;
   bytes[offset + 2] = (value >>> 8) & 0xff;
@@ -138,12 +137,11 @@ function writeUint32(bytes, offset, value) {
 
 /**
  * Write a big-endian unsigned 16-bit integer in place.
- * @param {Uint8Array} bytes destination buffer
- * @param {number} offset byte offset to write the high byte
- * @param {number} value the value to encode (truncated to 16 bits)
- * @returns {void}
+ * @param bytes destination buffer
+ * @param offset byte offset to write the high byte
+ * @param value the value to encode (truncated to 16 bits)
  */
-function writeUint16(bytes, offset, value) {
+function writeUint16(bytes: Uint8Array, offset: number, value: number): void {
   bytes[offset] = (value >>> 8) & 0xff;
   bytes[offset + 1] = value & 0xff;
 }
@@ -152,10 +150,10 @@ function writeUint16(bytes, offset, value) {
  * Concatenate the payloads of every IDAT chunk in a frame into one buffer. A
  * PNG may split its compressed stream across several IDAT chunks; the animated
  * output carries each frame's pixels as a single contiguous block.
- * @param {Chunk[]} chunks the frame's parsed chunks
- * @returns {Uint8Array} the joined IDAT bytes
+ * @param chunks the frame's parsed chunks
+ * @returns the joined IDAT bytes
  */
-function joinIdat(chunks) {
+function joinIdat(chunks: readonly Chunk[]): Uint8Array {
   let total = 0;
   for (const c of chunks) {
     if (c.type === 'IDAT') total += c.data.length;
@@ -173,14 +171,20 @@ function joinIdat(chunks) {
 
 /**
  * Build a 26-byte fcTL (frame control) payload.
- * @param {number} seq the shared sequence number for this chunk
- * @param {number} width frame width in pixels (from frame 0's IHDR)
- * @param {number} height frame height in pixels (from frame 0's IHDR)
- * @param {number} delayNum delay numerator, clamped to 16 bits
- * @param {number} delayDen delay denominator, clamped to 16 bits
- * @returns {Uint8Array} the fcTL data block
+ * @param seq the shared sequence number for this chunk
+ * @param width frame width in pixels (from frame 0's IHDR)
+ * @param height frame height in pixels (from frame 0's IHDR)
+ * @param delayNum delay numerator, clamped to 16 bits
+ * @param delayDen delay denominator, clamped to 16 bits
+ * @returns the fcTL data block
  */
-function fcTLData(seq, width, height, delayNum, delayDen) {
+function fcTLData(
+  seq: number,
+  width: number,
+  height: number,
+  delayNum: number,
+  delayDen: number
+): Uint8Array {
   const data = new Uint8Array(26);
   writeUint32(data, 0, seq);
   writeUint32(data, 4, width);
@@ -195,16 +199,26 @@ function fcTLData(seq, width, height, delayNum, delayDen) {
 }
 
 /**
+ * delayNum/delayDen express the per-frame delay as a fraction of a second
+ * (default den 1000 = milliseconds); numPlays 0 = loop forever.
+ */
+export interface ApngOptions {
+  delayNum: number;
+  delayDen?: number;
+  numPlays?: number;
+}
+
+/**
  * Encode an array of complete PNG files into a single animated PNG (APNG),
  * reusing each frame's already-compressed IDAT bytes (lossless, alpha-safe).
- * @param {Uint8Array[]} frames each a complete PNG file; all must share
- *   dimensions, bit depth, and color type (frame 0's IHDR is copied verbatim)
- * @param {{ delayNum: number, delayDen?: number, numPlays?: number }} opts
- *   delayNum/delayDen express the per-frame delay as a fraction of a second
- *   (default den 1000 = milliseconds); numPlays 0 = loop forever
- * @returns {Uint8Array<ArrayBuffer>} a valid APNG
+ * @param frames each a complete PNG file; all must share dimensions, bit depth,
+ *   and color type (frame 0's IHDR is copied verbatim)
+ * @returns a valid APNG
  */
-export function encodeApng(frames, opts) {
+export function encodeApng(
+  frames: readonly Uint8Array[],
+  opts: ApngOptions
+): Uint8Array<ArrayBuffer> {
   if (frames.length === 0) {
     throw new Error('encodeApng: frames must not be empty');
   }
@@ -233,8 +247,7 @@ export function encodeApng(frames, opts) {
   const delayDen = (opts.delayDen ?? 1000) & 0xffff;
   const numPlays = opts.numPlays ?? 0;
 
-  /** @type {Uint8Array[]} */
-  const out = [PNG_SIGNATURE, makeChunk('IHDR', ihdr.data)];
+  const out: Uint8Array[] = [PNG_SIGNATURE, makeChunk('IHDR', ihdr.data)];
 
   // acTL: animation control. num_frames, then num_plays (0 = loop forever).
   const acTL = new Uint8Array(8);

@@ -9,10 +9,10 @@
  * link), so they stash instead and let the existing restore offer undo it.
  * Whitespace-only text and a no-op replacement are not worth an offer.
  *
- * @param {string} current the text about to be displaced
- * @param {string} incoming the text replacing it
+ * @param current the text about to be displaced
+ * @param incoming the text replacing it
  */
-export function displacesWork(current, incoming) {
+export function displacesWork(current: string, incoming: string): boolean {
   return current.trim() !== '' && current !== incoming;
 }
 
@@ -27,21 +27,22 @@ export function displacesWork(current, incoming) {
  *   'turbo'     handed off by the turbo GPU preview's Ray-trace button
  *   'repl'      handed off by the REPL's :editor command
  *   'custom'    arrived with no upstream identity at all (a dropped .pov)
- *
- * @typedef {'example' | 'permalink' | 'gist' | 'turbo' | 'repl' | 'custom'} Provenance
  */
+export type Provenance = 'example' | 'permalink' | 'gist' | 'turbo' | 'repl' | 'custom';
 
 // What to call a foreign scene in the UI. 'gist' is absent because its label
-// carries the id (see originLabel).
-const FOREIGN_LABELS = {
+// carries the id (see originLabel), and 'example' because a catalog scene is
+// named after its record instead. Keyed on exactly the remaining Provenance
+// members, so adding one is a compile error here rather than an `undefined`
+// silently reaching the chip.
+const FOREIGN_LABELS: Record<Exclude<Provenance, 'example' | 'gist'>, string> = {
   permalink: 'shared scene',
   turbo: 'from turbo',
   repl: 'from the REPL',
   custom: 'custom scene',
 };
 
-/** @type {Provenance[]} */
-const FOREIGN_PROVENANCES = ['permalink', 'gist', 'turbo', 'repl', 'custom'];
+const FOREIGN_PROVENANCES: readonly Provenance[] = ['permalink', 'gist', 'turbo', 'repl', 'custom'];
 
 /**
  * The foreign provenance a persisted blob or a decoded link names, or null when
@@ -49,25 +50,39 @@ const FOREIGN_PROVENANCES = ['permalink', 'gist', 'turbo', 'repl', 'custom'];
  * Persisted state is visitor-editable and a link can be minted by a newer
  * producer, so an unrecognized tag has to degrade rather than be trusted.
  *
- * @param {unknown} value
- * @returns {Provenance | null}
  */
-export function foreignProvenance(value) {
+export function foreignProvenance(value: unknown): Provenance | null {
   return FOREIGN_PROVENANCES.find((p) => p === value) ?? null;
+}
+
+/** What the editor already had loaded when the model was created. */
+export interface SceneStateInit {
+  selectedExample: string;
+  loadedSource?: string;
+}
+
+/**
+ * The one-deep undo record. It captures IDENTITY alongside the text, which is
+ * the whole point: a restored scene that came from an example must not keep
+ * claiming it came from the link that displaced it.
+ */
+interface Stash {
+  source: string;
+  provenance: Provenance;
+  originDetail: string;
+  exampleName: string;
+  exampleSource: string;
 }
 
 /**
  * Own the editor's source provenance without duplicating the textarea value.
  * Callers pass the current source into queries, keeping the DOM as the single
  * source of truth while this model tracks loaded, stashed, and gist baselines.
- *
- * @param {{ selectedExample: string, loadedSource?: string }} initial
  */
-export function createSceneState({ selectedExample, loadedSource = '' }) {
+export function createSceneState({ selectedExample, loadedSource = '' }: SceneStateInit) {
   let exampleName = selectedExample;
   let exampleSource = loadedSource;
-  /** @type {Provenance} */
-  let provenance = 'example';
+  let provenance: Provenance = 'example';
   // Extra identity the label needs, currently only the gist id. Kept apart from
   // the gist PIN below because the pin dies on the first edit while the scene
   // still came from that gist (a label reading `gist null` was the alternative).
@@ -75,14 +90,11 @@ export function createSceneState({ selectedExample, loadedSource = '' }) {
   // One-deep undo for a wholesale replacement. It rewinds identity as well as
   // text: a restored scene that came from an example must not keep claiming it
   // came from the link that displaced it.
-  /** @type {{ source: string, provenance: Provenance, originDetail: string, exampleName: string, exampleSource: string }} */
-  let stashed = { source: '', provenance, originDetail, exampleName, exampleSource };
-  /** @type {string | null} */
-  let gistId = null;
-  /** @type {string | null} */
-  let gistSource = null;
+  let stashed: Stash = { source: '', provenance, originDetail, exampleName, exampleSource };
+  let gistId: string | null = null;
+  let gistSource: string | null = null;
 
-  function loadExample(name, source) {
+  function loadExample(name: string, source: string) {
     exampleName = name;
     exampleSource = source;
     provenance = 'example';
@@ -97,22 +109,20 @@ export function createSceneState({ selectedExample, loadedSource = '' }) {
    * example name standing is exactly how a handed-off scene got labeled with
    * whatever the recipient last picked and then armed Reset to destroy it.
    *
-   * @param {string} source
-   * @param {Provenance} origin
-   * @param {string} [detail] the gist id, which the 'gist' label carries
+   * @param detail the gist id, which the 'gist' label carries
    */
-  function adoptSource(source, origin, detail = '') {
+  function adoptSource(source: string, origin: Provenance, detail = '') {
     exampleName = '';
     exampleSource = source;
     provenance = origin;
     originDetail = detail;
   }
 
-  function isDirty(source) {
+  function isDirty(source: string) {
     return source !== exampleSource;
   }
 
-  function canReset(source) {
+  function canReset(source: string) {
     // Reset means "back to the loaded example", which is what the control says
     // it does, so it stays disabled for a foreign scene: one click must never be
     // able to replace a handed-off scene (whose only copy can be this editor)
@@ -127,9 +137,8 @@ export function createSceneState({ selectedExample, loadedSource = '' }) {
   /**
    * What the UI should CALL this scene: null for a catalog example (the caller
    * has the record's title for that), else where the scene came from.
-   * @returns {string | null}
    */
-  function originLabel() {
+  function originLabel(): string | null {
     if (provenance === 'example') return null;
     if (provenance === 'gist') return `gist ${originDetail}`;
     return FOREIGN_LABELS[provenance];
@@ -139,23 +148,29 @@ export function createSceneState({ selectedExample, loadedSource = '' }) {
    * The dirty-chip text. 'current' means "matches the catalog example", so a
    * foreign scene cannot use it: it has no catalog entry to be current against,
    * only the state it arrived in.
-   * @param {string} source
    */
-  function dirtyLabel(source) {
+  function dirtyLabel(source: string) {
     if (isDirty(source)) return 'modified';
     return provenance === 'example' ? 'current' : 'as received';
   }
 
-  function sceneName(source) {
+  function sceneName(source: string) {
     if (isDirty(source)) return 'edited scene';
     return originLabel() ?? exampleName;
   }
 
-  function isPristineExample(source, getExampleSource) {
+  // `getExampleSource` is examples.js's getExample, which returns undefined for a
+  // name it does not ship. The comparison below handles that on its own (undefined
+  // never equals a loaded source), so the miss is modelled rather than asserted
+  // away at the call site.
+  function isPristineExample(
+    source: string,
+    getExampleSource: (name: string) => string | undefined
+  ) {
     return source === exampleSource && getExampleSource(exampleName) === exampleSource;
   }
 
-  function stash(source) {
+  function stash(source: string) {
     stashed = { source, provenance, originDetail, exampleName, exampleSource };
   }
 
@@ -164,7 +179,7 @@ export function createSceneState({ selectedExample, loadedSource = '' }) {
     return stashed.source;
   }
 
-  function pinGist(id, source) {
+  function pinGist(id: string, source: string) {
     gistId = id;
     gistSource = source;
   }
@@ -172,7 +187,7 @@ export function createSceneState({ selectedExample, loadedSource = '' }) {
   // Reading a pin after the source diverges invalidates it. The caller uses
   // this from both address synchronization and Copy Link, so stale gist URLs
   // cannot survive an edit.
-  function pinnedGistId(source) {
+  function pinnedGistId(source: string) {
     if (!gistId) return null;
     if (source === gistSource) return gistId;
     gistId = null;

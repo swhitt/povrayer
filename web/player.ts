@@ -7,33 +7,31 @@ import {
   recordCanvasWebm,
 } from './anim-export.js';
 
-/**
- * @typedef {object} AnimationResult
- * @property {ImageBitmap[]} bitmaps
- * @property {string[]} blobUrls
- * @property {Uint8Array[]} [frames]
- */
+/** The playable assets one animation render hands back. */
+export interface AnimationResult {
+  bitmaps: ImageBitmap[];
+  blobUrls: string[];
+  frames?: Uint8Array[];
+}
 
-/**
- * @typedef {object} PlayerElements
- * @property {HTMLCanvasElement} canvas
- * @property {HTMLElement} controls
- * @property {HTMLButtonElement} playButton
- * @property {HTMLInputElement} scrubber
- * @property {HTMLElement} frameReadout
- * @property {HTMLButtonElement} loopButton
- * @property {HTMLButtonElement} exportButton
- * @property {HTMLSelectElement} exportFormat
- */
+/** The page's player chrome, injected so this module queries no DOM of its own. */
+export interface PlayerElements {
+  canvas: HTMLCanvasElement;
+  controls: HTMLElement;
+  playButton: HTMLButtonElement;
+  scrubber: HTMLInputElement;
+  frameReadout: HTMLElement;
+  loopButton: HTMLButtonElement;
+  exportButton: HTMLButtonElement;
+  exportFormat: HTMLSelectElement;
+}
 
 /**
  * Page-agnostic playback over the bitmaps render-client hands back: a canvas,
  * scrubber, play/pause, loop, fps, and WebM/PNG/GIF/APNG export. It owns the
  * playback assets and frees them (revoke blobUrls, close bitmaps) on load().
- *
- * @param {PlayerElements} elements
  */
-export function createPlayer(elements) {
+export function createPlayer(elements: PlayerElements) {
   const {
     canvas: playerCanvas,
     controls: playerControls,
@@ -44,22 +42,26 @@ export function createPlayer(elements) {
     exportButton: exportBtn,
     exportFormat,
   } = elements;
-  const ctx = playerCanvas.getContext('2d');
-  if (!ctx) throw new Error('2D canvas context unavailable');
+  const context = playerCanvas.getContext('2d');
+  if (!context) throw new Error('2D canvas context unavailable');
+  // Re-bound into a separate const so the non-null result survives into `draw`
+  // and `frameRgba`. Those are hoisted function DECLARATIONS, and TypeScript
+  // drops a narrowing of a mutable-looking outer binding at a function boundary,
+  // so the guard above would not reach them. A second runtime guard inside draw()
+  // would be a branch no input can take (and one the 100% gate would then owe a
+  // test for), which is exactly what this avoids.
+  const ctx = context;
 
-  /** @type {ImageBitmap[]} */
-  let bitmaps = [];
-  let urls = [];
+  let bitmaps: ImageBitmap[] = [];
+  let urls: string[] = [];
   // A detached canvas reused to read RGBA back out of the bitmaps for the GIF
   // encoder (the visible playerCanvas stays untouched mid-playback).
-  /** @type {HTMLCanvasElement | null} */
-  let exportCanvas = null;
+  let exportCanvas: HTMLCanvasElement | null = null;
   let idx = 0;
   let fps = 12;
   let loop = true;
   let playing = false;
-  /** @type {number | null} */
-  let rafHandle = null;
+  let rafHandle: number | null = null;
   let lastAdvance = 0;
 
   // One merged readout ("7 / 24 · 12 fps"): frame position and playback rate
@@ -69,7 +71,7 @@ export function createPlayer(elements) {
     frameReadout.textContent = `${bitmaps.length ? idx + 1 : 0} / ${bitmaps.length} · ${fps} fps`;
   }
 
-  function draw(i) {
+  function draw(i: number) {
     idx = i;
     ctx.drawImage(bitmaps[i], 0, 0);
     scrubber.value = String(i);
@@ -93,7 +95,7 @@ export function createPlayer(elements) {
     setPlayLabel();
   }
 
-  function tick(now) {
+  function tick(now: number) {
     if (!playing) return;
     const interval = 1000 / fps;
     if (now - lastAdvance >= interval) {
@@ -132,7 +134,7 @@ export function createPlayer(elements) {
     else play();
   }
 
-  function seek(i) {
+  function seek(i: number) {
     if (!bitmaps.length) return;
     pause();
     // Bounded, not trusted: the index arrives either as the scrubber's value (a
@@ -140,17 +142,17 @@ export function createPlayer(elements) {
     draw(Math.min(bitmaps.length - 1, Math.max(0, i)));
   }
 
-  function setFps(n) {
+  function setFps(n: number) {
     fps = n;
     updateReadout();
   }
 
-  function setLoop(on) {
+  function setLoop(on: boolean) {
     loop = on;
     loopBtn.setAttribute('aria-pressed', String(on));
   }
 
-  function releaseAssets(oldUrls, oldBitmaps) {
+  function releaseAssets(oldUrls: readonly string[], oldBitmaps: readonly ImageBitmap[]) {
     for (const u of oldUrls) URL.revokeObjectURL(u);
     for (const b of oldBitmaps) b.close();
   }
@@ -182,8 +184,7 @@ export function createPlayer(elements) {
     updateReadout();
   }
 
-  /** @param {AnimationResult} result @param {number} playbackFps */
-  function load(result, playbackFps) {
+  function load(result: AnimationResult, playbackFps: number) {
     destroy();
     if (!result.bitmaps.length || result.bitmaps.length !== result.blobUrls.length) {
       releaseAssets(result.blobUrls, result.bitmaps);
@@ -219,8 +220,7 @@ export function createPlayer(elements) {
 
   // Wrap encoder output bytes in a Blob and trigger a download, revoking the URL
   // after a grace window (the click navigates synchronously; the timeout frees it).
-  /** @param {Uint8Array<ArrayBuffer>} bytes @param {string} mime @param {string} name */
-  function saveBytes(bytes, mime, name) {
+  function saveBytes(bytes: Uint8Array<ArrayBuffer>, mime: string, name: string) {
     const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
     triggerDownload(url, name);
     setTimeout(() => URL.revokeObjectURL(url), 10000);
@@ -229,8 +229,7 @@ export function createPlayer(elements) {
   // Read every frame's RGBA back out of the bitmaps via a detached canvas, for
   // the GIF encoder. Each getImageData call allocates a fresh buffer, so the
   // per-frame Uint8Array views never alias each other.
-  /** @returns {{ data: Uint8Array }[]} */
-  function frameRgba() {
+  function frameRgba(): { data: Uint8Array }[] {
     const w = bitmaps[0].width;
     const h = bitmaps[0].height;
     if (!exportCanvas) exportCanvas = document.createElement('canvas');
@@ -248,7 +247,7 @@ export function createPlayer(elements) {
 
   // Step through every frame once, holding each for one fps interval, so the
   // captureStream recorder sees real canvas updates over wall-clock time.
-  function playOnce() {
+  function playOnce(): Promise<void> {
     return new Promise((resolve) => {
       let i = 0;
       const step = () => {
@@ -271,8 +270,7 @@ export function createPlayer(elements) {
   // WebM via MediaRecorder over the player canvas: the one lossy/codec path (GIF +
   // APNG are deterministic client-side encodes). recordCanvasWebm runs playOnce in
   // real time so the recorder captures every frame, so it takes ~clip-length.
-  /** @param {string} mime */
-  async function exportWebm(mime) {
+  async function exportWebm(mime: string) {
     const url = await recordCanvasWebm(playerCanvas, fps, mime, playOnce);
     triggerDownload(url, 'animation.webm');
     setTimeout(() => URL.revokeObjectURL(url), 10000);
@@ -315,8 +313,9 @@ export function createPlayer(elements) {
   // synchronous (no relabel needed); WebM with no codec degrades to PNG frames.
   // The heavy paths (webm/gif/apng) share one re-entrancy guard + 'exporting…'
   // relabel so a second click can't start a second encode over the same frames.
-  /** @param {string} format gif | apng | webm | png */
-  async function exportAs(format) {
+  // `string`, not a union of the four names: the value arrives straight off the
+  // page's <select>, so pinning it here would only move a cast to the caller.
+  async function exportAs(format: string) {
     if (!bitmaps.length || exporting) return;
     const webmMime = format === 'webm' ? pickWebmMime() : null;
     if (format === 'png' || (format === 'webm' && !webmMime)) {

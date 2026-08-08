@@ -4,6 +4,18 @@
 import { ORB_CORE, ORB_BUSY_CORE, orbDataUri } from './orb.js';
 
 /**
+ * What a page has to hand over to adopt the tab feedback: a favicon <link> plus
+ * read-only access to the status element's state/text. `getState` returns
+ * `undefined` for an element with no data-state yet, and `getText` `null` for an
+ * empty one, which is exactly what the DOM returns; both are handled.
+ */
+export interface TabStateDeps {
+  faviconLink: HTMLLinkElement;
+  getState: () => string | undefined;
+  getText: () => string | null;
+}
+
+/**
  * Browser-tab feedback: the favicon tint and the document title.
  *
  * Both surfaces use it, and only this part: web/ui.js through
@@ -12,15 +24,10 @@ import { ORB_CORE, ORB_BUSY_CORE, orbDataUri } from './orb.js';
  * weight there). Hence module scope with no reference to the render-feedback
  * closure, reading the status element only through the two accessors: a page
  * needs a favicon <link> and a state/text pair to adopt it, nothing else.
- *
- * @param {{
- *   faviconLink: HTMLLinkElement,
- *   getState: () => string | undefined,
- *   getText: () => string | null,
- * }} deps
- * @returns {{ apply: () => void }}
  */
-export function createTabState({ faviconLink, getState, getText }) {
+export function createTabState({ faviconLink, getState, getText }: TabStateDeps): {
+  apply: () => void;
+} {
   const ORB_READY = orbDataUri(ORB_CORE);
   const ORB_BUSY = orbDataUri(ORB_BUSY_CORE);
   const baseTitle = document.title;
@@ -48,24 +55,20 @@ export function createTabState({ faviconLink, getState, getText }) {
   return { apply };
 }
 
-/**
- * @typedef {Object} RenderFeedbackElements
- * @property {HTMLElement} status
- * @property {HTMLElement} statusSpinner
- * @property {HTMLElement} stopBtn
- * @property {HTMLElement} progressBar
- * @property {HTMLElement} log
- * @property {HTMLElement} logDetails
- * @property {HTMLElement} logLabel
- * @property {HTMLElement} logCount
- * @property {HTMLLinkElement} faviconLink
- * @property {() => boolean} isDrafting
- */
+export interface RenderFeedbackElements {
+  status: HTMLElement;
+  statusSpinner: HTMLElement;
+  stopBtn: HTMLElement;
+  progressBar: HTMLElement;
+  log: HTMLElement;
+  logDetails: HTMLElement;
+  logLabel: HTMLElement;
+  logCount: HTMLElement;
+  faviconLink: HTMLLinkElement;
+  isDrafting: () => boolean;
+}
 
-/**
- * @param {RenderFeedbackElements} elements
- */
-export function createRenderFeedback(elements) {
+export function createRenderFeedback(elements: RenderFeedbackElements) {
   const {
     status,
     statusSpinner,
@@ -81,15 +84,16 @@ export function createRenderFeedback(elements) {
 
   // Busy-phase text updates are throttled to one per second (live-region
   // hygiene); terminal states flush immediately and cancel any pending update.
-  let statusTimer = null;
+  // `undefined` rather than `null` for "nothing pending": that is what
+  // clearTimeout()/setTimeout() already speak, so clearing needs no guard branch.
+  let statusTimer: ReturnType<typeof setTimeout> | undefined;
   let statusLastAt = 0;
-  let statusPending = null;
+  let statusPending: string | null = null;
 
-  /** @param {string} text @param {string} state */
-  function setStatus(text, state) {
+  function setStatus(text: string, state: string) {
     if (statusTimer) {
       clearTimeout(statusTimer);
-      statusTimer = null;
+      statusTimer = undefined;
     }
     statusPending = null;
     status.textContent = text;
@@ -99,8 +103,7 @@ export function createRenderFeedback(elements) {
     tab.apply();
   }
 
-  /** @param {string} text */
-  function setBusyStatus(text) {
+  function setBusyStatus(text: string) {
     status.dataset.state = 'busy';
     syncSpinner();
     const now = performance.now();
@@ -113,7 +116,7 @@ export function createRenderFeedback(elements) {
     if (!statusTimer) {
       statusTimer = setTimeout(
         () => {
-          statusTimer = null;
+          statusTimer = undefined;
           if (statusPending !== null) {
             status.textContent = statusPending;
             statusPending = null;
@@ -153,11 +156,8 @@ export function createRenderFeedback(elements) {
     progressBar.hidden = false;
   }
 
-  /**
-   * @param {number} p
-   * @returns {number} the last confirmed determinate percent, or -1
-   */
-  function progressPercent(p) {
+  /** @returns the last confirmed determinate percent, or -1 */
+  function progressPercent(p: number): number {
     if (!progressPrimed) {
       progressPrimed = true;
       return progressPct;
@@ -170,8 +170,7 @@ export function createRenderFeedback(elements) {
     return progressPct;
   }
 
-  /** @param {number} pct */
-  function progressDeterminate(pct) {
+  function progressDeterminate(pct: number) {
     progressBar.classList.remove('indeterminate');
     progressBar.classList.add('determinate');
     progressBar.style.setProperty('--pct', String(pct));
@@ -194,14 +193,12 @@ export function createRenderFeedback(elements) {
     return log.scrollTop + log.clientHeight >= log.scrollHeight - 8;
   }
 
-  /** @param {boolean} wasPinned */
-  function refreshLogScroll(wasPinned) {
+  function refreshLogScroll(wasPinned: boolean) {
     if (wasPinned) log.scrollTop = log.scrollHeight;
     if (logDetails.hidden) logDetails.hidden = false;
   }
 
-  /** @param {string} text */
-  function appendLogLine(text) {
+  function appendLogLine(text: string) {
     const pinned = logPinned();
     if (logHasProgressLine) {
       logCommittedNode.appendData(logProgressNode.data + '\n');
@@ -212,8 +209,7 @@ export function createRenderFeedback(elements) {
     refreshLogScroll(pinned);
   }
 
-  /** @param {string} text */
-  function setProgressLine(text) {
+  function setProgressLine(text: string) {
     const pinned = logPinned();
     logProgressNode.data = text;
     logHasProgressLine = true;
@@ -244,8 +240,7 @@ export function createRenderFeedback(elements) {
     return text ? text.replace(/\n+$/, '').split('\n').length : 0;
   }
 
-  /** @param {string} label */
-  function setLogSummary(label) {
+  function setLogSummary(label: string) {
     logLabel.textContent = label;
     const n = logLineCount();
     logCount.textContent = n ? `(${n} lines)` : '';

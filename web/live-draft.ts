@@ -12,35 +12,64 @@ const DRAFT_DEBOUNCE_FACTOR = 0.75;
 const SLOW_DRAFT_PAUSE_MS = 20000;
 
 /**
- * @typedef {object} LiveDraftHooks
- * @property {() => boolean} enabled
- * @property {() => string} readSource
- * @property {(source: string) => boolean} sourceReady
- * @property {() => boolean} explicitInFlight
- * @property {() => boolean} renderBusy
- * @property {() => object} draftOptions
- * @property {(source: string, options: object, signal: AbortSignal) => Promise<{ elapsedMs: number, blobUrl?: string }>} renderDraft
- * @property {(source: string, options: object) => void} onStart
- * @property {(source: string, result: { elapsedMs: number, blobUrl?: string }, options: object) => void} onSuccess
- * @property {(source: string, err: unknown) => void} onError
- * @property {() => void} onSettled
- * @property {() => void} startFullRender
- * @property {(elapsedMs: number) => void} onAutoPause
+ * What a completed draft reports back. `elapsedMs` drives the next debounce, and
+ * `blobUrl` is the image the page swaps in. Both required: the only producer is
+ * render-client's renderScene, whose result always carries a blob URL, and the
+ * optional spelling this replaces meant the page had to re-check a value that is
+ * the entire point of a successful draft.
  */
+export interface DraftResult {
+  elapsedMs: number;
+  blobUrl: string;
+}
+
+/**
+ * `Options` is a type PARAMETER, not a fixed shape, because this scheduler never
+ * reads a field of it: whatever draftOptions() produces is handed straight to
+ * renderDraft and back to onStart/onSuccess untouched. Making that a parameter
+ * says exactly that, and it still ties the four hooks to ONE shape, so the page
+ * cannot produce options of one kind and print dimensions off another. (The
+ * JSDoc it replaces said `object`, which is how "preview ready 320×240" could
+ * have been printed off any object at all.) web/render-orchestrator.ts pins the
+ * concrete shape, since that is where the options are built.
+ */
+export interface LiveDraftHooks<Options> {
+  enabled: () => boolean;
+  readSource: () => string;
+  sourceReady: (source: string) => boolean;
+  explicitInFlight: () => boolean;
+  renderBusy: () => boolean;
+  draftOptions: () => Options;
+  renderDraft: (source: string, options: Options, signal: AbortSignal) => Promise<DraftResult>;
+  onStart: (source: string, options: Options) => void;
+  onSuccess: (source: string, result: DraftResult, options: Options) => void;
+  onError: (source: string, err: unknown) => void;
+  onSettled: () => void;
+  startFullRender: () => void;
+  onAutoPause: (elapsedMs: number) => void;
+}
+
+/** The scheduler's internal state, as the browser suite's probe reads it. */
+export interface LiveDraftProbe {
+  pending: boolean;
+  inFlight: boolean;
+  source: string;
+  autoPaused: boolean;
+}
 
 /**
  * Owns live-draft scheduling and the explicit-render handoff. The page supplies
  * rendering/presentation hooks; this module owns timers, AbortControllers,
  * coalescing, superseding, the "full render waits for draft abort" latch, and
  * the slow-draft auto-pause.
- *
- * @param {LiveDraftHooks} hooks
  */
-export function createLiveDraftController(hooks) {
-  let timer = null;
-  let ctl = null;
+export function createLiveDraftController<Options>(hooks: LiveDraftHooks<Options>) {
+  // `undefined` rather than `null` for "no timer pending": that is the spelling
+  // clearTimeout()/setTimeout() already use, so clearing needs no guard branch.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let ctl: AbortController | null = null;
   let draftingSource = '';
-  let lastAttemptedSource = null;
+  let lastAttemptedSource: string | null = null;
   let lastDraftMs = 0;
   let pendingFull = false;
   let autoPaused = false;
@@ -55,7 +84,7 @@ export function createLiveDraftController(hooks) {
 
   function clearTimer() {
     clearTimeout(timer);
-    timer = null;
+    timer = undefined;
   }
 
   function schedule() {
@@ -71,7 +100,7 @@ export function createLiveDraftController(hooks) {
   }
 
   function fire() {
-    timer = null;
+    timer = undefined;
     const source = hooks.readSource();
     if (autoPaused || !hooks.enabled()) return;
     if (source === lastAttemptedSource) return;
@@ -86,7 +115,7 @@ export function createLiveDraftController(hooks) {
     return run(source);
   }
 
-  async function run(source) {
+  async function run(source: string) {
     ctl = new AbortController();
     const active = ctl;
     draftingSource = source;
@@ -131,7 +160,7 @@ export function createLiveDraftController(hooks) {
     if (ctl) ctl.abort();
   }
 
-  function markAttempted(source) {
+  function markAttempted(source: string) {
     lastAttemptedSource = source;
   }
 
@@ -147,9 +176,9 @@ export function createLiveDraftController(hooks) {
     return ctl !== null;
   }
 
-  function probe() {
+  function probe(): LiveDraftProbe {
     return {
-      pending: timer !== null,
+      pending: timer !== undefined,
       inFlight: ctl !== null,
       source: draftingSource,
       autoPaused,

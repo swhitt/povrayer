@@ -22,7 +22,7 @@ const VERSION_RE = /version(?!\w)/y;
 /** Opening bracket -> the closer we expect for it. Angle brackets are absent on
  * purpose: `<` and `>` are both vector delimiters AND comparison operators, so
  * balancing them would false-reject perfectly valid scenes. */
-const CLOSERS = { '{': '}', '(': ')', '[': ']' };
+const CLOSERS: Readonly<Record<string, string | undefined>> = { '{': '}', '(': ')', '[': ']' };
 
 const STATE_CODE = 0;
 const STATE_LINE = 1; // inside a // line comment, runs to end of line
@@ -30,17 +30,26 @@ const STATE_BLOCK = 2; // inside a /* */ block comment (POV-Ray block comments n
 const STATE_STRING = 3; // inside a "..." string
 
 /**
- * @param {string} source POV-Ray SDL buffer.
- * @returns {{ ready: boolean, reason: string|null }}
- *   ready:true  => reason:null (looks complete enough to attempt a render).
- *   ready:false => reason is a stable machine code, one of:
- *     'empty' | 'no-version' | 'unterminated-comment' | 'unterminated-string' |
- *     'unbalanced'.
+ * Why a buffer is not worth rendering yet. A stable machine code, not copy:
+ * web/render-orchestrator.ts switches on these to decide whether the live-draft
+ * preview may still run, and ui.ts maps them to user-facing text.
  */
-export function validateScene(source) {
+export type NotReadyReason =
+  'empty' | 'no-version' | 'unterminated-comment' | 'unterminated-string' | 'unbalanced';
+
+/**
+ * A discriminated union rather than `{ ready: boolean, reason: string | null }`:
+ * the two fields were never independent, and pairing them makes `reason`
+ * non-null exactly where a caller has already established it is there.
+ */
+export type SceneValidation =
+  { ready: true; reason: null } | { ready: false; reason: NotReadyReason };
+
+/** @param source POV-Ray SDL buffer. */
+export function validateScene(source: string): SceneValidation {
   let state = STATE_CODE;
   let depth = 0; // block-comment nesting depth (POV-Ray 3.8 comments nest)
-  const stack = []; // expected closers for the open {}, (), [] seen so far
+  const stack: string[] = []; // expected closers for the open {}, (), [] seen so far
   let sawContent = false; // any non-whitespace, non-comment code (or a string)
   let sawVersion = false; // a `#version` directive seen in code state
   let mismatch = false; // a wrong closer or an extra close was seen
@@ -74,11 +83,14 @@ export function validateScene(source) {
       // Any other non-whitespace character is real code content.
       if (!/\s/.test(ch)) sawContent = true;
 
+      // Looked up once, into a local, so the `push` below sees the narrowed
+      // `string` rather than the map's honest `string | undefined`.
+      const closer = CLOSERS[ch];
       if (ch === '#') {
         VERSION_RE.lastIndex = i + 1;
         if (VERSION_RE.test(source)) sawVersion = true;
-      } else if (CLOSERS[ch]) {
-        stack.push(CLOSERS[ch]);
+      } else if (closer) {
+        stack.push(closer);
       } else if (ch === '}' || ch === ')' || ch === ']') {
         if (stack.length === 0 || stack[stack.length - 1] !== ch) {
           mismatch = true; // a wrong closer or a stray extra close

@@ -2,10 +2,14 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-// render-client.js normally imports the generated flat-deploy ./index.js, which
-// does not exist in the repository tree. Load the real source through a data URL
-// with that one import redirected to a tiny mock so its pure runtime policies can
-// be tested without a wasm build or a filesystem shim.
+// render-client normally imports the generated flat-deploy ./index.js, which
+// does not exist in the repository tree. Load the COMPILED module through a data
+// URL with that one import redirected to a tiny mock so its pure runtime policies
+// can be tested without a wasm build or a filesystem shim.
+//
+// _build/web, not web/: the source is TypeScript now, and Node cannot execute
+// that (nor can a data: URL declare itself as TS). tools/build-web.mjs keeps the
+// artifact current, and the pre-hooks on every `test:*` script run it first.
 const wrapperMock = [
   'export async function render() { throw new Error("unused render mock"); }',
   'export async function renderAnimation() { throw new Error("unused animation mock"); }',
@@ -14,9 +18,17 @@ const wrapperMock = [
 ].join('\n');
 const mockUrl = `data:text/javascript;base64,${Buffer.from(wrapperMock).toString('base64')}`;
 const clientSource = readFileSync(
-  new URL('../../web/render-client.js', import.meta.url),
+  new URL('../../_build/web/render-client.js', import.meta.url),
   'utf8'
-).replace("from './index.js'", `from '${mockUrl}'`);
+)
+  .replace("from './index.js'", `from '${mockUrl}'`)
+  // Drop the compiled artifact's inline source map. It is meaningless here (its
+  // `sources` are relative to _build/web, which a data: URL cannot resolve), and
+  // keeping it breaks the coverage run outright: Node records the map against the
+  // data: URL in its source-map cache, and c8's report step calls fileURLToPath on
+  // every cache key, which throws ERR_INVALID_URL_SCHEME on anything but file:.
+  // This module's own coverage comes from the browser suites either way.
+  .replace(/\n\/\/# sourceMappingURL=.*$/, '');
 const client = await import(
   `data:text/javascript;base64,${Buffer.from(clientSource).toString('base64')}#runtime-policy`
 );

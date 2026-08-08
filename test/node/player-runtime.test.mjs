@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createPlayer } from '../../web/player.js';
+import { createPlayer } from '../../_build/web/player.js';
 
 function stubElement() {
   const attrs = new Map();

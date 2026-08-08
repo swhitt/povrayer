@@ -12,7 +12,7 @@ import {
   safeName,
   uniqueName,
   assetSnippet,
-} from '../../web/assets.js';
+} from '../../_build/web/assets.js';
 
 test('classifyAsset routes by extension', () => {
   assert.equal(classifyAsset('logo.png'), 'image');

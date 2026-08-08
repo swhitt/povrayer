@@ -1,7 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createSceneState, displacesWork, foreignProvenance } from '../../web/scene-state.js';
+import {
+  createSceneState,
+  displacesWork,
+  foreignProvenance,
+} from '../../_build/web/scene-state.js';
 
 test('displacesWork only offers a restore when real text is actually being lost', () => {
   // The deep-link paths (#hash, ?gist=, ?example=) stash on this verdict, so

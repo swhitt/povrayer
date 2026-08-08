@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { missingImageReferences, referencedAssetFiles } from '../../web/asset-drop.js';
+import { missingImageReferences, referencedAssetFiles } from '../../_build/web/asset-drop.js';
 
 const bytes = (...values) => new Uint8Array(values);
 /** @param {Array<[string, string | Uint8Array]>} entries */

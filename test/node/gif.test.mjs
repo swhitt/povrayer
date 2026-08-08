@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { encodeGif } from '../../web/gif.js';
+import { encodeGif } from '../../_build/web/gif.js';
 
 const GIF89A = [0x47, 0x49, 0x46, 0x38, 0x39, 0x61];
 

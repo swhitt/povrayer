@@ -7,10 +7,66 @@
 // served/assembled site, never from web/ on disk.
 
 import { render, renderAnimation as wrapperRenderAnimation, PovrayError, warmup } from './index.js';
+import type { RenderOptions, AnimationOptions } from './index.js';
+// Type-only, so tsc emits no import for it and this module keeps its "the only
+// thing I pull in is the wrapper" property. RenderStats is declared next to the
+// formatter that consumes it (web/stats.ts) so the producer and the consumer
+// cannot drift into two copies of the same shape.
+import type { RenderStats } from './stats.js';
 
 export { PovrayError };
 
 let busy = false;
+
+/**
+ * The normalized events a page consumes instead of raw wrapper output lines.
+ * See emitEvents for how one wrapper line becomes these.
+ */
+export type RenderEvent =
+  { kind: 'progress'; percent: number; text: string } | { kind: 'line'; text: string };
+
+/** renderAnimation adds a frame channel on top of the still-render events. */
+export type AnimationEvent = RenderEvent | { kind: 'frame'; index: number; total: number };
+
+/** Everything the wrapper takes, plus this layer's two additions. */
+export interface RenderSceneOptions extends RenderOptions {
+  /** Receives the normalized progress/line events described at emitEvents. */
+  onEvent?: (event: RenderEvent) => void;
+  /**
+   * Keep the raw PNG bytes on the result. Defaults true for direct callers; app
+   * surfaces set it false when they only need the blob URL.
+   */
+  keepBytes?: boolean;
+}
+
+export interface RenderSceneResult {
+  bytes?: Uint8Array<ArrayBuffer>;
+  blobUrl: string;
+  elapsedMs: number;
+  /** The raw, UNFILTERED output text (the config-noise filter is events-only). */
+  log: string;
+}
+
+/** Everything the wrapper's animation entry takes, plus this layer's additions. */
+export interface RenderAnimationOptions extends AnimationOptions {
+  /** The same events as renderScene, plus one 'frame' per completed frame. */
+  onEvent?: (event: AnimationEvent) => void;
+  /**
+   * Keep the raw per-frame PNG bytes on the result. Defaults true for direct
+   * callers; app surfaces set it false because blobUrls/bitmaps are enough for
+   * playback and export.
+   */
+  keepFrames?: boolean;
+}
+
+export interface RenderAnimationResult {
+  /** The raw PNG bytes, one per frame, when keepFrames is on. */
+  frames?: Uint8Array<ArrayBuffer>[];
+  blobUrls: string[];
+  bitmaps: ImageBitmap[];
+  elapsedMs: number;
+  log: string;
+}
 
 // Animation peak memory is substantially larger than the final PNG payload:
 // while playback assets are prepared the page can hold the encoded PNG, a Blob,
@@ -22,7 +78,11 @@ const ANIMATION_BYTES_PER_PIXEL = 8;
 const BITMAP_DECODE_CONCURRENCY = 2;
 
 /** Estimated peak bytes while animation PNGs become playback assets. */
-export function estimateAnimationMemoryBytes(width, height, frames) {
+export function estimateAnimationMemoryBytes(
+  width: number,
+  height: number,
+  frames: number
+): number {
   return Math.ceil(Number(width) * Number(height) * Number(frames) * ANIMATION_BYTES_PER_PIXEL);
 }
 
@@ -30,14 +90,14 @@ export function estimateAnimationMemoryBytes(width, height, frames) {
  * Decode frame Blobs with a small fixed worker pool. A failure waits for the
  * already-started decodes, closes every successful bitmap, then rejects; no
  * partially-owned GPU resources escape to the caller.
- *
- * @param {Blob[]} blobs
- * @returns {Promise<ImageBitmap[]>}
  */
-export async function decodeAnimationBitmaps(blobs) {
-  /** @type {ImageBitmap[]} */
-  const decoded = new Array(blobs.length);
-  const errors = [];
+export async function decodeAnimationBitmaps(blobs: readonly Blob[]): Promise<ImageBitmap[]> {
+  // Holes until every worker has filled its slots, and a failed decode leaves
+  // one behind permanently, which is exactly why the cleanup pass below
+  // optional-chains .close(). The type says so rather than pretending the array
+  // is dense from the first line.
+  const decoded: (ImageBitmap | undefined)[] = new Array(blobs.length);
+  const errors: unknown[] = [];
   let next = 0;
   const workers = Array.from(
     { length: Math.min(BITMAP_DECODE_CONCURRENCY, blobs.length) },
@@ -58,11 +118,13 @@ export async function decodeAnimationBitmaps(blobs) {
     for (const bitmap of decoded) bitmap?.close();
     throw errors[0];
   }
-  return decoded;
+  // Past the error check every slot is filled: the only way a slot stays empty
+  // is a decode that threw, and that pushed onto `errors`.
+  return decoded as ImageBitmap[];
 }
 
 /** True while a render is in flight. */
-export function isBusy() {
+export function isBusy(): boolean {
   return busy;
 }
 
@@ -73,7 +135,7 @@ export function isBusy() {
 // code cache) for the wasm every instantiation re-fetches. Fire-and-forget: it
 // can never start a render, and failures stay silent here because the first
 // real render reports them properly.
-export function prewarm() {
+export function prewarm(): void {
   /* c8 ignore next -- rejecting needs a transient glue-module import failure that can't be provoked deterministically */
   warmup().catch(() => {});
   /* c8 ignore next -- rejecting needs a wasm fetch/MIME failure the test server can't produce */
@@ -109,9 +171,9 @@ const CONFIG_NOISE = /^povray: cannot open (the (system|user) configuration|an I
  * the LAST matching segment: segment percents are not monotonic (render
  * threads interleave), so consumers that drive a bar clamp on their side.
  */
-function emitEvents(line, onEvent) {
+function emitEvents(line: string, onEvent: (event: RenderEvent) => void): void {
   const segments = line.split('\r');
-  let progress = null;
+  let progress: RenderEvent | null = null;
   for (const segment of segments) {
     const m = PROGRESS_SEGMENT.exec(segment);
     if (m) {
@@ -131,23 +193,22 @@ function emitEvents(line, onEvent) {
  * Wraps render(). Throws synchronously if a render is already in flight
  * (callers gate on isBusy(), this is the backstop).
  *
- * opts: { width, height, quality, antialias, threads, files, args, keepBytes,
- * onProgress, onEvent, signal }. Everything except onEvent passes straight
- * through to the wrapper. onProgress keeps the old contract (every raw
- * output line); onEvent receives the normalized progress/line events
- * described at emitEvents. keepBytes defaults true for direct callers; app
- * surfaces set it false when they only need the blob URL.
+ * Everything except onEvent/keepBytes passes straight through to the wrapper.
+ * onProgress keeps the old contract (every raw output line); onEvent receives
+ * the normalized progress/line events described at emitEvents.
  *
- * Resolves { bytes?: Uint8Array, blobUrl: string, elapsedMs: number, log }.
- * `log` is the raw, unfiltered output text: the config-noise filter only
- * applies to events, and the REPL's `:log full` needs the real thing. The
- * caller owns blobUrl and must revoke it when replacing the image.
+ * `log` on the result is the raw, unfiltered output text: the config-noise
+ * filter only applies to events, and the REPL's `:log full` needs the real
+ * thing. The caller owns blobUrl and must revoke it when replacing the image.
  */
-export async function renderScene(source, opts = {}) {
+export async function renderScene(
+  source: string,
+  opts: RenderSceneOptions = {}
+): Promise<RenderSceneResult> {
   if (busy) throw new Error('render already in progress');
   busy = true;
   const { onEvent, onProgress, keepBytes = true, ...rest } = opts;
-  const rawLines = [];
+  const rawLines: string[] = [];
   try {
     const start = performance.now();
     const bytes = await render(source, {
@@ -177,24 +238,26 @@ export async function renderScene(source, opts = {}) {
  * (still and animated renders never overlap), and stays DOM-free: it produces
  * playback assets but mounts nothing.
  *
- * opts: { width, height, quality, antialias, threads, files, args, signal, keepFrames,
- * frames, initialClock, finalClock, onProgress, onEvent, onFrame }. The render
- * options pass straight through to the wrapper. onProgress keeps the raw-line
- * contract; onEvent receives the same normalized progress/line events as
- * renderScene PLUS a frame channel: { kind: 'frame', index, total } fired once
- * per completed frame. onFrame(index, total) is forwarded too. Per-frame
+ * The render options pass straight through to the wrapper. onProgress keeps the
+ * raw-line contract; onEvent receives the same normalized progress/line events
+ * as renderScene PLUS a frame channel: { kind: 'frame', index, total } fired
+ * once per completed frame. onFrame(index, total) is forwarded too. Per-frame
  * percent resets each frame, so a consumer driving an overall bar computes
- * overall = (completedFrames + framePercent / 100) / total. keepFrames defaults
- * true for direct callers; app surfaces set it false because blobUrls/bitmaps
- * are enough for playback and export.
+ * overall = (completedFrames + framePercent / 100) / total.
  *
- * Resolves { frames?: Uint8Array[], blobUrls: string[], bitmaps: ImageBitmap[],
- * elapsedMs, log }. `frames` is the raw PNG bytes; `blobUrls`/`bitmaps` are
+ * `frames` on the result is the raw PNG bytes; `blobUrls`/`bitmaps` are
  * ready-to-play assets, one per frame, in frame order. `log` is the raw,
  * unfiltered output. THE CALLER OWNS the playback assets: revoke every blobUrl
  * (URL.revokeObjectURL) and close every bitmap (ImageBitmap.close) when done.
+ *
+ * `opts` is REQUIRED (renderScene's is not) because the frame count has no
+ * sensible default: the memory estimate below is computed from it, so an omitted
+ * options object used to sail past the budget check on a NaN comparison.
  */
-export async function renderAnimation(source, opts = {}) {
+export async function renderAnimation(
+  source: string,
+  opts: RenderAnimationOptions
+): Promise<RenderAnimationResult> {
   if (busy) throw new Error('render already in progress');
   const {
     onEvent,
@@ -208,8 +271,8 @@ export async function renderAnimation(source, opts = {}) {
   } = opts;
 
   // Match the wrapper's defaults without changing the options forwarded to it.
-  const width = /** @type {{ width?: number }} */ (opts).width ?? 800;
-  const height = /** @type {{ height?: number }} */ (opts).height ?? 600;
+  const width = opts.width ?? 800;
+  const height = opts.height ?? 600;
   const estimatedBytes = estimateAnimationMemoryBytes(width, height, frames);
   if (estimatedBytes > ANIMATION_MEMORY_BUDGET_BYTES) {
     const need = Math.ceil(estimatedBytes / (1024 * 1024));
@@ -220,7 +283,7 @@ export async function renderAnimation(source, opts = {}) {
   }
 
   busy = true;
-  const rawLines = [];
+  const rawLines: string[] = [];
   try {
     const start = performance.now();
     let pngs = await wrapperRenderAnimation(source, {
@@ -242,7 +305,7 @@ export async function renderAnimation(source, opts = {}) {
     const blobs = pngs.map((bytes) => new Blob([bytes], { type: 'image/png' }));
     const frameBytes = keepFrames ? pngs : undefined;
     if (!keepFrames) pngs = [];
-    const blobUrls = [];
+    const blobUrls: string[] = [];
     try {
       for (const blob of blobs) blobUrls.push(URL.createObjectURL(blob));
       const bitmaps = await decodeAnimationBitmaps(blobs);
@@ -263,7 +326,7 @@ export async function renderAnimation(source, opts = {}) {
 }
 
 /** True for an abort rejection (DOMException named 'AbortError'). */
-export function isAbortError(err) {
+export function isAbortError(err: unknown): boolean {
   return err instanceof DOMException && err.name === 'AbortError';
 }
 
@@ -277,14 +340,12 @@ export function isAbortError(err) {
  * thread count. Missing values come back undefined; `warnings` is always a
  * count (the "Warning Stream to console" banner has no colon and can never
  * inflate it).
- *
- * Returns { traceSeconds, parseSeconds, rays, threads, warnings }.
  */
-export function parseStats(log) {
+export function parseStats(log: string): RenderStats {
   const trace = /Trace Time:[^(]*\(([\d.]+) seconds\)/.exec(log);
   const parse = /Parse Time:[^(]*\(([\d.]+) seconds\)/.exec(log);
   const rays = /^Rays:\s+(\d+)/m.exec(log);
-  let threads;
+  let threads: number | undefined;
   for (const m of log.matchAll(/using (\d+) thread\(s\)/g)) threads = Number(m[1]);
   const warnings = (log.match(/Warning:/g) ?? []).length;
   return {
@@ -320,7 +381,10 @@ const FILE_LINE = /File '[^']*' line (\d+):\s*(.*)/;
  * its entry offsets in here to map assembled-scene lines back to entry
  * coordinates, producing heads like `line 8 (entry 3, line 2) · ...`.
  */
-export function errorHeadline(log, mapLine = (n) => `line ${n}`) {
+export function errorHeadline(
+  log: string,
+  mapLine: (line: number) => string = (n) => `line ${n}`
+): string | null {
   const lines = log.split('\n');
   const i = lines.findIndex((l) => ERROR_LINE.test(l));
   if (i < 0) return null;
@@ -348,10 +412,12 @@ export function errorHeadline(log, mapLine = (n) => `line ${n}`) {
  *
  * opts.mapLine is forwarded to errorHeadline (the REPL's entry-offset hook).
  *
- * @param {*} err The thrown value (PovrayError, AbortError, or anything else).
- * @param {{ mapLine?: (line: number) => string }} [opts]
+ * @param err The thrown value (PovrayError, AbortError, or anything else).
  */
-export function formatError(err, { mapLine } = {}) {
+export function formatError(
+  err: unknown,
+  { mapLine }: { mapLine?: (line: number) => string } = {}
+): string {
   if (err instanceof PovrayError) {
     const lines = err.log.split('\n');
     const i = lines.findIndex((l) => ERROR_LINE.test(l));
@@ -370,5 +436,10 @@ export function formatError(err, { mapLine } = {}) {
     return text.replaceAll("'/work/scene.pov'", 'scene').trimEnd();
   }
   if (isAbortError(err)) return 'render cancelled';
-  return String(err.message ?? err);
+  // The tail case is deliberately "anything at all": a thrown non-Error still has
+  // to produce a line for the error box. The cast is what lets `.message` be read
+  // off an `unknown` while leaving the existing `??` to handle its absence; no
+  // `?.` is added, because that would be a second branch the gate would owe a
+  // test for, and a thrown null would have blown up here before too.
+  return String((err as { message?: unknown }).message ?? err);
 }

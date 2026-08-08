@@ -21,7 +21,13 @@ function clampInt(v: string | null, lo: number, hi: number): number | null {
 // mirror settings.ts's CONTROL_FIELDS plus `mode`; each is optional because an
 // absent (or rejected) param must leave the control alone, which is why the
 // parser omits keys rather than writing null or ''.
-export interface RenderParams {
+//
+// A type ALIAS, not an interface, on purpose: ui.ts feeds this straight into its
+// applyControls(), which takes an open `{ [key: string]: string | undefined }`
+// keyed by control field. TypeScript infers an implicit index signature for an
+// object type alias but never for an interface, so the alias is what lets the
+// whole params object be handed over without a cast at the call site.
+export type RenderParams = {
   width?: string;
   height?: string;
   quality?: string;
@@ -32,7 +38,7 @@ export interface RenderParams {
   frames?: string;
   fps?: string;
   flags?: string;
-}
+};
 
 /** @param search a `location.search` string (the leading `?` is optional) */
 export function parseRenderParams(search: string): RenderParams {

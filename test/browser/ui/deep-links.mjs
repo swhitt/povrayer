@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { encodeState } from '../../../web/permalink.js';
+import { encodeState } from '../../../_build/web/permalink.js';
 
 export async function runDeepLinks(ctx) {
   const { page, server, selAdvanced, editorValue } = ctx;

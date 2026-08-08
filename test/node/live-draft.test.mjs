@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createLiveDraftController } from '../../web/live-draft.js';
+import { createLiveDraftController } from '../../_build/web/live-draft.js';
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 

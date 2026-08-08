@@ -11,15 +11,14 @@ const WEBM_MIMES = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/web
 
 // The best supported WebM mime, or null when MediaRecorder has no WebM codec
 // (some Safari). A null result is the signal to fall back to per-frame PNGs.
-export function pickWebmMime() {
+export function pickWebmMime(): string | null {
   return WEBM_MIMES.find((m) => window.MediaRecorder?.isTypeSupported?.(m)) ?? null;
 }
 
 // Download a URL as `name` via a synthetic anchor click. The anchor is attached to
 // the document before the click (some browsers ignore a click on a detached node)
 // and removed immediately after.
-/** @param {string} href @param {string} name */
-export function triggerDownload(href, name) {
+export function triggerDownload(href: string, name: string): void {
   const a = document.createElement('a');
   a.href = href;
   a.download = name;
@@ -30,8 +29,7 @@ export function triggerDownload(href, name) {
 
 // Download each frame blob URL as frame001.png, frame002.png, ... Used for the
 // editor's explicit "png" export and as the WebM-less fallback in both players.
-/** @param {string[]} urls */
-export function downloadPngFrames(urls) {
+export function downloadPngFrames(urls: readonly string[]): void {
   urls.forEach((url, i) => triggerDownload(url, `frame${String(i + 1).padStart(3, '0')}.png`));
 }
 
@@ -39,18 +37,16 @@ export function downloadPngFrames(urls) {
 // run `playFrames` (which must draw each frame in real time so the recorder
 // captures them), then stop and wrap the chunks. The caller owns frame timing, the
 // mime (from pickWebmMime), the download, and revoking the returned URL.
-/**
- * @param {HTMLCanvasElement} canvas
- * @param {number} fps
- * @param {string} mime
- * @param {() => Promise<void>} playFrames
- * @returns {Promise<string>} an object URL for the recorded WebM
- */
-export async function recordCanvasWebm(canvas, fps, mime, playFrames) {
+/** @returns an object URL for the recorded WebM */
+export async function recordCanvasWebm(
+  canvas: HTMLCanvasElement,
+  fps: number,
+  mime: string,
+  playFrames: () => Promise<void>
+): Promise<string> {
   const stream = canvas.captureStream(fps);
   const recorder = new MediaRecorder(stream, { mimeType: mime });
-  /** @type {Blob[]} */
-  const chunks = [];
+  const chunks: Blob[] = [];
   recorder.ondataavailable = (e) => chunks.push(e.data);
   const stopped = new Promise((resolve) => {
     recorder.onstop = resolve;

@@ -1,23 +1,41 @@
 import { createLiveDraftController } from './live-draft.js';
+import type { DraftResult } from './live-draft.js';
+import type { NotReadyReason } from './sdl-validate.js';
 
 export const DRAFT_MAX_QUALITY = 5;
 export const DRAFT_MAX_THREADS = 4;
 
 /**
+ * The cheap render settings one draft runs with: the concrete shape behind
+ * live-draft's `Options` parameter, pinned here because this is where they are
+ * built. `antialias` is always false and the size is capped, which is the whole
+ * point of a draft.
+ */
+export interface DraftOptions {
+  width: number;
+  height: number;
+  quality: number;
+  threads: number;
+  antialias: boolean;
+  files?: Record<string, string | Uint8Array>;
+}
+
+/** The full-render controls plus the draft caps, as read off the page. */
+export interface DraftInput {
+  width: number;
+  height: number;
+  quality?: number;
+  threads?: number;
+  maxEdge: number;
+  hardwareConcurrency: number;
+  files?: Record<string, string | Uint8Array>;
+}
+
+/**
  * Build the deliberately cheap options used by live preview without mutating
  * the full-render controls.
- *
- * @param {{
- *   width: number,
- *   height: number,
- *   quality?: number,
- *   threads?: number,
- *   maxEdge: number,
- *   hardwareConcurrency: number,
- *   files?: Record<string, string | Uint8Array>
- * }} input
  */
-export function buildDraftOptions(input) {
+export function buildDraftOptions(input: DraftInput): DraftOptions {
   const scale = Math.min(1, input.maxEdge / Math.max(input.width, input.height));
   return {
     width: Math.max(8, Math.round(input.width * scale)),
@@ -34,25 +52,40 @@ export function buildDraftOptions(input) {
  * onStart and onSuccess hooks used to call the identical helper, so "preview
  * ready" was printed the instant a draft STARTED: measured 1,650ms of "preview
  * ready" sitting next to a running spinner with the PREVIOUS scene in the plate.
- * @param {number} width
- * @param {number} height
  */
-export function previewingStatus(width, height) {
+export function previewingStatus(width: number, height: number): string {
   return `previewing… ${width}×${height}`;
 }
 
-/**
- * @param {number} width
- * @param {number} height
- */
-export function previewReadyStatus(width, height) {
+export function previewReadyStatus(width: number, height: number): string {
   return `preview ready · ${width}×${height}`;
 }
 
 /**
- * @typedef {{ ready: true, reason: null, status: null }
- *   | { ready: false, reason: string, status: string }} PreviewGate
+ * Whether the auto-preview may run, and the parked-status line when it may not.
+ * A union rather than three loose fields: `reason` and `status` are present
+ * exactly when `ready` is false, which is what lets onPreviewParked take the
+ * whole gate object without re-checking either.
  */
+export type PreviewGate = { ready: true; reason: null; status: null } | PreviewParked;
+
+/** The parked half of a PreviewGate, which is all the page's hook needs. */
+export interface PreviewParked {
+  ready: false;
+  reason: NotReadyReason;
+  status: string;
+}
+
+/**
+ * Stated as a type predicate rather than testing `!gate.ready` at the call site,
+ * because this module is checked at BOTH tiers and they disagree about that test.
+ * tsconfig.checkjs.json runs without strictNullChecks, and in that mode
+ * TypeScript will not narrow a union discriminated by a BOOLEAN literal (the
+ * `true`/`false` types widen), so `!gate.ready` leaves the whole union in hand.
+ * Asserting it once here is what keeps the union, which is worth having: it is why
+ * `reason` and `status` are non-null for the page's hook without a re-check.
+ */
+const isParked = (gate: PreviewGate): gate is PreviewParked => !gate.ready;
 
 /**
  * Preview-path policy for a validateScene() reason: may the auto-preview run,
@@ -69,10 +102,9 @@ export function previewReadyStatus(width, height) {
  * disagree about what is renderable, which is what left version-less scenes
  * sitting in silence.
  *
- * @param {string | null} reason a validateScene() reason (null when ready)
- * @returns {PreviewGate}
+ * @param reason a validateScene() reason (null when ready)
  */
-export function previewGate(reason) {
+export function previewGate(reason: NotReadyReason | null): PreviewGate {
   switch (reason) {
     // Wording is deliberately uniform: what stopped, then the mid-edit thing to
     // finish. The dim 'draft' status state carries the "this is preview chatter,
@@ -90,45 +122,52 @@ export function previewGate(reason) {
   }
 }
 
-/**
- * @param {number} elapsedMs
- * @param {{ width: number, height: number }} options
- * @param {number | null} [frameCount]
- */
-export function renderDoneStatus(elapsedMs, options, frameCount = null) {
+export function renderDoneStatus(
+  elapsedMs: number,
+  options: { width: number; height: number },
+  frameCount: number | null = null
+): string {
   const base = `done in ${(elapsedMs / 1000).toFixed(2)}s · ${options.width}×${options.height}`;
   return frameCount === null ? base : `${base} · ${frameCount} frames`;
 }
 
+/** Which mode the page is in, which decides whether drafting applies at all. */
+export type RenderMode = 'still' | 'animate';
+
 /**
- * @typedef {object} RenderOrchestratorHooks
- * @property {() => 'still' | 'animate'} mode
- * @property {() => boolean} liveEnabled
- * @property {() => boolean} isolated
- * @property {() => string} readSource
- * @property {(source: string) => boolean} canAutoDraft
- * @property {(source: string) => { ready: boolean, reason: string | null }} validateSource
- * @property {(parked: { reason: string, status: string }) => void} onPreviewParked
- * @property {() => boolean} explicitInFlight
- * @property {() => boolean} renderBusy
- * @property {() => object} draftOptions
- * @property {(source: string, options: object, signal: AbortSignal) => Promise<{ elapsedMs: number, blobUrl?: string }>} renderDraft
- * @property {(source: string, options: object) => void} onStart
- * @property {(source: string, result: { elapsedMs: number, blobUrl?: string }, options: object) => void} onSuccess
- * @property {(source: string, err: unknown) => void} onError
- * @property {() => void} onSettled
- * @property {() => void} startFullRender
- * @property {(elapsedMs: number) => void} onAutoPause
+ * Where requestExplicitRender() says the click should go. 'still' and 'animate'
+ * are the two real render paths; the other three are dead ends the caller has to
+ * handle (a draft is being torn down first, something is already running, or the
+ * page is not cross-origin isolated yet).
  */
+export type ExplicitRoute = RenderMode | 'deferred' | 'busy' | 'unisolated';
+
+export interface RenderOrchestratorHooks<Options> {
+  mode: () => RenderMode;
+  liveEnabled: () => boolean;
+  isolated: () => boolean;
+  readSource: () => string;
+  canAutoDraft: (source: string) => boolean;
+  validateSource: (source: string) => { ready: boolean; reason: NotReadyReason | null };
+  onPreviewParked: (parked: PreviewParked) => void;
+  explicitInFlight: () => boolean;
+  renderBusy: () => boolean;
+  draftOptions: () => Options;
+  renderDraft: (source: string, options: Options, signal: AbortSignal) => Promise<DraftResult>;
+  onStart: (source: string, options: Options) => void;
+  onSuccess: (source: string, result: DraftResult, options: Options) => void;
+  onError: (source: string, err: unknown) => void;
+  onSettled: () => void;
+  startFullRender: () => void;
+  onAutoPause: (elapsedMs: number) => void;
+}
 
 /**
  * Compose the low-level live-draft scheduler with page-level policy: whether a
  * source may auto-preview and where an explicit render should route. DOM work
  * stays in injected presentation hooks.
- *
- * @param {RenderOrchestratorHooks} hooks
  */
-export function createRenderOrchestrator(hooks) {
+export function createRenderOrchestrator<Options>(hooks: RenderOrchestratorHooks<Options>) {
   const draft = createLiveDraftController({
     enabled: () => hooks.mode() === 'still' && hooks.liveEnabled() && hooks.isolated(),
     readSource: hooks.readSource,
@@ -138,8 +177,11 @@ export function createRenderOrchestrator(hooks) {
     sourceReady: (source) => {
       if (!hooks.canAutoDraft(source)) return false;
       const gate = previewGate(hooks.validateSource(source).reason);
-      if (!gate.ready) hooks.onPreviewParked(gate);
-      return gate.ready;
+      if (isParked(gate)) {
+        hooks.onPreviewParked(gate);
+        return false;
+      }
+      return true;
     },
     explicitInFlight: hooks.explicitInFlight,
     renderBusy: hooks.renderBusy,
@@ -153,7 +195,7 @@ export function createRenderOrchestrator(hooks) {
     onAutoPause: hooks.onAutoPause,
   });
 
-  function schedule({ sourceChanged = false } = {}) {
+  function schedule({ sourceChanged = false }: { sourceChanged?: boolean } = {}) {
     if (!hooks.canAutoDraft(hooks.readSource())) {
       draft.cancel();
       return false;
@@ -163,7 +205,7 @@ export function createRenderOrchestrator(hooks) {
     return true;
   }
 
-  function requestExplicitRender() {
+  function requestExplicitRender(): ExplicitRoute {
     if (draft.requestFullRender()) return 'deferred';
     if (hooks.explicitInFlight() || hooks.renderBusy()) return 'busy';
     if (!hooks.isolated()) return 'unisolated';

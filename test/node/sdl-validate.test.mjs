@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { validateScene } from '../../web/sdl-validate.js';
+import { validateScene } from '../../_build/web/sdl-validate.js';
 import { EXAMPLES } from '../../web/examples.js';
 
 test('every example scene is ready (the gate is not over-eager)', () => {

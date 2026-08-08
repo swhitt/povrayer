@@ -11,41 +11,70 @@
   // is no conditional, so no branch for the gate to miss. `strictNullChecks`
   // catches it on one line.
   //
-  // So this config runs FULL strict over the subset of modules that are already
-  // strict-clean, and CI enforces it. New code in these files has to stay strict,
-  // and files graduate in one at a time by moving a line into this include.
+  // So this config runs FULL strict over web/'s TypeScript, and CI enforces it.
+  // Every module written in TypeScript is listed here (test/node/coverage-config.test.mjs
+  // asserts exactly that, in both directions), which is what makes "rename to .ts"
+  // mean "opt into strict" rather than "quietly turn 254 @param into any".
   //
-  // Graduating a file means fixing its whole import closure, not just the file:
-  // adding complete.js also buys highlight.js, and render-orchestrator.js also
-  // buys live-draft.js. Check with `npx tsc -p tsconfig.strict.json --listFiles`.
+  // Graduating a file still means fixing its whole import closure, not just the
+  // file: render-orchestrator.ts also buys live-draft.ts. Check with
+  // `npx tsc -p tsconfig.strict.json --listFiles`.
   "extends": "./tsconfig.checkjs.json",
 
   "compilerOptions": {
-    "strict": true
+    "strict": true,
+
+    // TypeScript only. The JavaScript that is still in web/ stays in the program
+    // (the .ts modules import it, and its JSDoc types are still read for
+    // inference), it just does not have ITS OWN errors reported here.
+    //
+    // Not a shrug: it is forced, and the forcing is worth writing down. Four
+    // modules -- highlight.js, context.js, complete.js, glsl-highlight.js -- are
+    // inlined VERBATIM into web/turbo.html by tools/gen-turbo.mjs, and
+    // test/node/turbo-lang.test.mjs pins that generated file byte-for-byte. So
+    // they cannot take a single character of annotation (not even a JSDoc
+    // comment) without regenerating turbo.html, which must keep working from
+    // file:// with no server. Any module that imports them (web/ui.js and
+    // web/repl.js do) would drag them into a strict tier that checked .js, so
+    // that tier could never admit those two at all.
+    //
+    // The .js side is not unchecked: tsconfig.checkjs.json covers every one of
+    // those modules at default checkJs strictness, which is where JavaScript in
+    // this repo has always been held. The split is now clean and mechanical:
+    // .ts is checked here at full strict, .js is checked there.
+    "checkJs": false
   },
 
-  // Alphabetical. Every entry is also enrolled in tools/coverage/paths.mjs
-  // FIRST_PARTY, asserted by test/node/coverage-config.test.mjs so this list
-  // cannot drift away from the coverage manifest.
-  //
-  // Mixed .ts and .js on purpose. A module renamed to .ts is real TypeScript with
-  // real annotations and lands here; the three .js holdouts below are strict-clean
-  // but blocked on a RUNTIME edge, not a type one: web/player.js imports all three
-  // and test/node/player-runtime.test.mjs loads player.js straight out of web/, so
-  // compiling them into _build/web (which is the only way Node 20 can load a .ts
-  // module, see tools/build-web.mjs) would leave player.js importing ./gif.js from
-  // a directory that no longer has it. They convert together with player.js.
+  // Alphabetical, and every entry is a .ts module. Each is also enrolled in
+  // tools/coverage/paths.mjs FIRST_PARTY, asserted by
+  // test/node/coverage-config.test.mjs so this list cannot drift away from the
+  // coverage manifest, and a .js path here would be a silent no-op under
+  // checkJs:false, so that is asserted against too.
   "include": [
-    "web/anim-export.js",
-    "web/apng.js",
+    "web/anim-export.ts",
+    "web/apng.ts",
+    "web/asset-drop.ts",
+    "web/assets.ts",
     "web/coi.ts",
+    "web/dom.ts",
+    "web/example-filters.ts",
     "web/flags.ts",
-    "web/gif.js",
+    "web/gallery.ts",
+    "web/gif.ts",
     "web/history.ts",
+    "web/live-draft.ts",
     "web/orb.ts",
+    "web/permalink.ts",
+    "web/player.ts",
+    "web/render-client.ts",
+    "web/render-feedback.ts",
+    "web/render-orchestrator.ts",
     "web/repl-scene.ts",
+    "web/scene-state.ts",
     "web/sdl-strip.ts",
+    "web/sdl-validate.ts",
     "web/settings.ts",
+    "web/sliders.ts",
     "web/stats.ts",
     "web/url-params.ts"
   ]

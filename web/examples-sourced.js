@@ -1,5 +1,6 @@
 // Sourced POV-Ray SDL scene adaptations kept separate from the in-house examples.
 // Imported by examples.js so the public EXAMPLES order and API stay unchanged.
+/** @param {string} path repo-relative path under distribution/scenes/ */
 const officialSceneUrl = (path) =>
   `https://github.com/POV-Ray/povray/blob/master/distribution/scenes/${path}`;
 

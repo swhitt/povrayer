@@ -8,7 +8,7 @@ import {
   previewReadyStatus,
   previewingStatus,
   renderDoneStatus,
-} from '../../web/render-orchestrator.js';
+} from '../../_build/web/render-orchestrator.js';
 
 test('draft options cap size, quality, and default threads', () => {
   assert.deepEqual(
@@ -97,7 +97,7 @@ function harness(overrides = {}) {
   let explicit = false;
   let busy = false;
   let auto = true;
-  /** @type {{ ready: boolean, reason: string | null }} */
+  /** @type {{ ready: boolean, reason: import('../../_build/web/sdl-validate.js').NotReadyReason | null }} */
   let validation = { ready: true, reason: null };
   const events = [];
   const controller = createRenderOrchestrator({

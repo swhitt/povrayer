@@ -2,7 +2,7 @@
 // URL-hash-safe payload. JSON -> UTF-8 -> gzip -> base64url (and back). Pure,
 // DOM-free, and node-unit-testable: CompressionStream/DecompressionStream,
 // Response, Blob, atob/btoa, TextEncoder/TextDecoder are all built-ins on the
-// supported runtimes. ui.js imports the two public functions; the helpers stay
+// supported runtimes. ui.ts imports the two public functions; the helpers stay
 // private so the surface is just encode/decode.
 
 /**
@@ -12,50 +12,61 @@
  * text, not the sender's example selection). All control fields are the raw
  * input *strings* (same as localStorage), so hydration writes them straight
  * back into the inputs.
- * @typedef {Object} PermalinkState
- * @property {string} source
- * @property {string} width
- * @property {string} height
- * @property {string} quality
- * @property {string} antialias
- * @property {string} threads
- * @property {string} [flags] raw POV-Ray flags; optional so links predating the field still decode
- * @property {string} [draft] live-draft preview edge; optional so links predating the field still decode
- * @property {'turbo' | 'repl'} [origin] which handoff minted the link, when it
- *   wasn't the editor's own Copy Link. The reader needs it because a foreign
- *   scene has to be LABELED as one: the editor used to name every hydrated link
- *   after whatever example the recipient last selected. Optional, so an ordinary
- *   shared link (and every link predating the field) still decodes.
- * @property {'still' | 'animate'} mode
- * @property {string} frames
- * @property {string} fps
+ *
+ * A type ALIAS rather than an interface for the same reason as url-params'
+ * RenderParams: web/ui.ts hydrates it through applyControls(), whose source is an
+ * open `{ [key: string]: string | undefined }`, and TypeScript infers an implicit
+ * index signature for an object type alias but never for an interface.
  */
-
-// The handoff producers allowed to stamp `origin`: web/turbo.html's Ray-trace
-// button and the REPL's `:editor`. Copy Link inside the editor leaves it off,
-// and the reader treats a missing origin as a plain shared scene.
-const ORIGINS = ['turbo', 'repl'];
-
-/** @param {unknown} value */
-function isOrigin(value) {
-  return ORIGINS.includes(/** @type {string} */ (value));
-}
+export type PermalinkState = {
+  source: string;
+  width: string;
+  height: string;
+  quality: string;
+  antialias: string;
+  threads: string;
+  /** raw POV-Ray flags; optional so links predating the field still decode */
+  flags?: string;
+  /** live-draft preview edge; optional so links predating the field still decode */
+  draft?: string;
+  /**
+   * Which handoff minted the link, when it wasn't the editor's own Copy Link. The
+   * reader needs it because a foreign scene has to be LABELED as one: the editor
+   * used to name every hydrated link after whatever example the recipient last
+   * selected. Optional, so an ordinary shared link (and every link predating the
+   * field) still decodes.
+   */
+  origin?: PermalinkOrigin;
+  mode: 'still' | 'animate';
+  frames: string;
+  fps: string;
+};
 
 /**
- * @param {Uint8Array} bytes
- * @returns {string} base64url (no '=' padding, '+'->'-', '/'->'_')
+ * The handoff producers allowed to stamp `origin`: web/turbo.html's Ray-trace
+ * button and the REPL's `:editor`. Copy Link inside the editor leaves it off,
+ * and the reader treats a missing origin as a plain shared scene.
  */
-function bytesToBase64url(bytes) {
+export type PermalinkOrigin = 'turbo' | 'repl';
+
+// Spelled out as a literal tuple so the runtime list and PermalinkOrigin cannot
+// drift: isOrigin() is what decides whether a decoded tag survives, and a value
+// missing here would be silently dropped from an otherwise valid link.
+const ORIGINS: readonly PermalinkOrigin[] = ['turbo', 'repl'];
+
+function isOrigin(value: unknown): value is PermalinkOrigin {
+  return ORIGINS.includes(value as PermalinkOrigin);
+}
+
+/** @returns base64url (no '=' padding, '+'->'-', '/'->'_') */
+function bytesToBase64url(bytes: Uint8Array): string {
   let bin = '';
   for (const b of bytes) bin += String.fromCharCode(b);
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-/**
- * @param {string} s
- * @returns {Uint8Array<ArrayBuffer>} the decoded bytes
- */
-function base64urlToBytes(s) {
+/** @returns the decoded bytes */
+function base64urlToBytes(s: string): Uint8Array<ArrayBuffer> {
   // Restore the standard alphabet; atob tolerates missing '=' padding but
   // throws on out-of-alphabet chars, so the caller's try/catch turns garbage
   // into a null decode (the tolerance contract).
@@ -73,12 +84,12 @@ function base64urlToBytes(s) {
  * `Uint8Array` because this page runs cross-origin-isolated: with
  * SharedArrayBuffer in scope, a bare `Uint8Array` widens to `ArrayBufferLike`,
  * which the stream writer (BufferSource) won't accept.
- * @param {Uint8Array<ArrayBuffer>} bytes
- * @param {'CompressionStream' | 'DecompressionStream'} which
- * @param {'gzip'} format
- * @returns {Promise<Uint8Array<ArrayBuffer>>}
  */
-async function pipe(bytes, which, format) {
+async function pipe(
+  bytes: Uint8Array<ArrayBuffer>,
+  which: 'CompressionStream' | 'DecompressionStream',
+  format: 'gzip'
+): Promise<Uint8Array<ArrayBuffer>> {
   const Ctor = which === 'CompressionStream' ? CompressionStream : DecompressionStream;
   const stream = new Ctor(format);
   const writer = stream.writable.getWriter();
@@ -99,13 +110,11 @@ async function pipe(bytes, which, format) {
  * Shape guard so a structurally-valid-but-wrong payload decodes to null (never
  * a half-applied state). The flat `&&` chain short-circuits; branch coverage
  * needs each operand seen true and false across the suite, not one test each.
- * @param {unknown} o
- * @returns {o is PermalinkState}
  */
-function isPermalinkState(o) {
+function isPermalinkState(o: unknown): o is PermalinkState {
   if (!o || typeof o !== 'object') return false;
-  const s = /** @type {Record<string, unknown>} */ (o);
-  const str = (k) => typeof s[k] === 'string';
+  const s = o as Record<string, unknown>;
+  const str = (k: string) => typeof s[k] === 'string';
   return (
     str('source') &&
     str('width') &&
@@ -122,10 +131,8 @@ function isPermalinkState(o) {
 /**
  * Compress a state object to a URL-hash-safe base64url payload. Async because
  * the gzip stream is async; never throws for a well-formed state object.
- * @param {PermalinkState} state
- * @returns {Promise<string>}
  */
-export async function encodeState(state) {
+export async function encodeState(state: PermalinkState): Promise<string> {
   const json = JSON.stringify(state);
   const gz = await pipe(new TextEncoder().encode(json), 'CompressionStream', 'gzip');
   return bytesToBase64url(gz);
@@ -134,10 +141,8 @@ export async function encodeState(state) {
 /**
  * Inverse of encodeState. Tolerant: returns null for any malformed input (bad
  * base64, non-gzip bytes, invalid JSON, wrong shape) instead of throwing.
- * @param {string} payload
- * @returns {Promise<PermalinkState | null>}
  */
-export async function decodeState(payload) {
+export async function decodeState(payload: string): Promise<PermalinkState | null> {
   try {
     const bytes = base64urlToBytes(payload);
     const raw = await pipe(bytes, 'DecompressionStream', 'gzip'); // throws on non-gzip

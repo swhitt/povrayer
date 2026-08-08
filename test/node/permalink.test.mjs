@@ -6,9 +6,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { encodeState, decodeState } from '../../web/permalink.js';
+import { encodeState, decodeState } from '../../_build/web/permalink.js';
 
-/** @returns {import('../../web/permalink.js').PermalinkState} */
+/** @returns {import('../../_build/web/permalink.js').PermalinkState} */
 const fullState = () => ({
   // Newlines + non-ASCII exercise the UTF-8 encode/decode path.
   source: '#version 3.8;\n// cafe ☕\nbox{}',

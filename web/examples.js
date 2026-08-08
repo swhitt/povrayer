@@ -91,6 +91,44 @@ export const FEATURED_EXAMPLE_NAMES = [
 ];
 const FEATURED_EXAMPLE_SET = new Set(FEATURED_EXAMPLE_NAMES);
 
+/**
+ * One scene record as AUTHORED, here and in examples-sourced.js. `difficulty`
+ * and `renderTier` are deliberately absent: they are merged in by name from
+ * EXAMPLE_META below, so an authored record never carries them.
+ * @typedef {object} ExampleScene
+ * @property {string} name
+ * @property {string} title
+ * @property {string} category one CATEGORIES key
+ * @property {string[]} tags filter fuel, never rendered per-row
+ * @property {string} description
+ * @property {string} author
+ * @property {string} sourceUrl
+ * @property {string} license SPDX id
+ * @property {boolean} animated
+ * @property {number | null} frames
+ * @property {number | null} fps
+ * @property {string} source POV-Ray SDL
+ */
+
+/**
+ * A scene record as every consumer sees it: the authored fields plus the
+ * skill/cost buckets merged in from EXAMPLE_META and the two derived fields.
+ * This is the shape web/gallery.ts, web/ui.ts and web/repl.ts read.
+ * @typedef {ExampleScene & {
+ *   difficulty: string,
+ *   renderTier: string,
+ *   featured: boolean,
+ *   thumbnail: string,
+ * }} Example
+ */
+
+/**
+ * Keyed by example name. Annotated rather than inferred so `EXAMPLE_META[name]`
+ * is a lookup and not an error, and so addExampleMetadata's spread is KNOWN to
+ * supply difficulty/renderTier (which is what makes Example's versions of those
+ * two fields non-optional).
+ * @type {Record<string, { difficulty: string, renderTier: string }>}
+ */
 const EXAMPLE_META = {
   'csg-die': { difficulty: 'intro', renderTier: 'fast' },
   'sunset-sea': { difficulty: 'intro', renderTier: 'fast' },
@@ -190,6 +228,10 @@ const EXAMPLE_META = {
   'sourced-abyss-field': { difficulty: 'advanced', renderTier: 'fast' },
 };
 
+/**
+ * @param {ExampleScene} ex
+ * @returns {Example}
+ */
 const addExampleMetadata = (ex) => ({
   ...ex,
   ...EXAMPLE_META[ex.name],
@@ -197,6 +239,7 @@ const addExampleMetadata = (ex) => ({
   thumbnail: `example-thumbnails/${ex.name}.png`,
 });
 
+/** @type {ExampleScene[]} */
 const CORE_EXAMPLES = [
   {
     name: 'csg-die',
@@ -2422,15 +2465,23 @@ cylinder { < PitchB, 0, -0.3>, < PitchB, 0, 2.8>, 0.40 texture { AxleTex } }
 ];
 
 export const EXAMPLES = CORE_EXAMPLES.map(addExampleMetadata);
-export const FEATURED_EXAMPLES = FEATURED_EXAMPLE_NAMES.map((name) => getExampleRecord(name));
 
-// FROZEN contract: both ui.js and repl.js depend on this exact signature.
+// Asserted, not guarded: every FEATURED_EXAMPLE_NAMES entry names a record that
+// ships (test/node/examples.test.mjs pins that), so the lookup cannot miss and
+// the alternative would be a filter that quietly shrinks the curated dropdown.
+export const FEATURED_EXAMPLES = /** @type {Example[]} */ (
+  FEATURED_EXAMPLE_NAMES.map((name) => getExampleRecord(name))
+);
+
+// FROZEN contract: both ui.ts and repl.ts depend on this exact signature.
+/** @param {string} name */
 export function getExample(name) {
   return EXAMPLES.find((e) => e.name === name)?.source;
 }
 
 // Full record for the browser example-picker + the clock autoset; undefined if
 // the name is unknown (the `find` miss feeds the optional chain in callers).
+/** @param {string} name */
 export function getExampleRecord(name) {
   return EXAMPLES.find((e) => e.name === name);
 }

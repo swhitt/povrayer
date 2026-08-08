@@ -75,9 +75,10 @@ function readTsconfigInclude(name) {
 
 const tsIncluded = new Set(readTsconfigInclude('tsconfig.checkjs.json'));
 
-// tsconfig.strict.json is the FULL-strict tier: a hand-maintained subset of the
-// modules above that graduate one at a time. It is a fourth hand-maintained copy
-// of a first-party file list, so it gets the same drift guard as the others.
+// tsconfig.strict.json is the FULL-strict tier: every web module written in
+// TypeScript, and nothing else (it sets checkJs:false, so a .js path listed there
+// would be a silent no-op). It is a fourth hand-maintained copy of a first-party
+// file list, so it gets the same drift guard as the others.
 const strictIncluded = readTsconfigInclude('tsconfig.strict.json');
 const strictSet = new Set(strictIncluded);
 
@@ -118,6 +119,12 @@ test('every first-party web module is type-checked (in tsconfig.checkjs include)
 // excuse for them to sit at the relaxed checkJs tier: they go straight to full
 // strict, and this is what makes "rename to .ts" mean "opt into strict" rather
 // than "quietly turn 254 @param into any".
+//
+// The converse is asserted too, and it matters more than it looks: the strict tier
+// sets checkJs:false (see the rationale in tsconfig.strict.json), so a .js path
+// listed there is checked by NOTHING beyond the loose tier while reading as if it
+// had graduated. Naming a module in both places has to be an error, not a
+// no-op that quietly means less than it says.
 test('every web module is either TypeScript at full strict or JavaScript under checkJs', () => {
   for (const m of [...webModules, ...COVERAGE_EXEMPT.keys()]) {
     if (m.endsWith('.ts')) {
@@ -127,8 +134,12 @@ test('every web module is either TypeScript at full strict or JavaScript under c
       );
     } else {
       assert.ok(
-        !strictSet.has(m) || tsIncluded.has(m),
+        tsIncluded.has(m),
         `${m} is JavaScript and must be enrolled in tsconfig.checkjs.json include`
+      );
+      assert.ok(
+        !strictSet.has(m),
+        `${m} is JavaScript but listed in tsconfig.strict.json, where checkJs:false makes it a no-op; drop the line or convert the module`
       );
     }
   }
@@ -185,6 +196,10 @@ test('every coverage exemption is a real file, argued, and still statically chec
 test('the strict tier is a real, sorted subset of the type-checked first-party set', () => {
   assert.ok(strictIncluded.length >= 10, 'sanity: the strict tier should be non-trivial');
   for (const m of strictIncluded) {
+    assert.ok(
+      m.endsWith('.ts'),
+      `${m} is in tsconfig.strict.json, which is TypeScript-only (checkJs is off there)`
+    );
     assert.ok(
       tsIncluded.has(m),
       `${m} is in tsconfig.strict.json but not in tsconfig.checkjs.json include`

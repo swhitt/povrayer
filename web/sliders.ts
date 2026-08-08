@@ -28,13 +28,8 @@ const RANGE_RE =
 
 const NUMBER_RE = new RegExp(NUMBER, 'g');
 
-/**
- * Decimal places implied by a step (so 0.01 -> 2, 1 -> 0), capped at 6.
- *
- * @param {number} step
- * @returns {number}
- */
-function decimalsFor(step) {
+/** Decimal places implied by a step (so 0.01 -> 2, 1 -> 0), capped at 6. */
+function decimalsFor(step: number): number {
   return Math.min(6, Math.max(0, -Math.floor(Math.log10(step))));
 }
 
@@ -42,10 +37,9 @@ function decimalsFor(step) {
  * A "nice" step (a power of ten giving ~100-1000 increments) for a span, with a
  * small fallback for a degenerate (zero/inverted) span.
  *
- * @param {number} span  max - min
- * @returns {number}
+ * @param span max - min
  */
-function niceStep(span) {
+function niceStep(span: number): number {
   if (!(span > 0)) return 0.01;
   return Math.pow(10, Math.floor(Math.log10(span)) - 2);
 }
@@ -53,11 +47,8 @@ function niceStep(span) {
 /**
  * A default slider range for a bare value (no annotation): zero to twice the
  * value (flipped for negatives), or 0..1 for exactly zero.
- *
- * @param {number} value
- * @returns {{ min: number, max: number, step: number }}
  */
-function heuristicRange(value) {
+function heuristicRange(value: number): SliderRange {
   if (value === 0) return { min: 0, max: 1, step: 0.01 };
   const min = Math.min(0, 2 * value);
   const max = Math.max(0, 2 * value);
@@ -68,11 +59,9 @@ function heuristicRange(value) {
  * The range for a declared number: an explicit `min..max[..step]` annotation
  * from the trailing comment if present, else the heuristic.
  *
- * @param {string} comment  the trailing `//` comment text (without the slashes)
- * @param {number} value
- * @returns {{ min: number, max: number, step: number }}
+ * @param comment the trailing `//` comment text (without the slashes)
  */
-function rangeFor(comment, value) {
+function rangeFor(comment: string, value: number): SliderRange {
   const m = RANGE_RE.exec(comment);
   if (!m) return heuristicRange(value);
   const min = Number(m[1]);
@@ -81,16 +70,23 @@ function rangeFor(comment, value) {
   return { min, max, step };
 }
 
-/**
- * @typedef {object} DeclaredNumber
- * @property {string} name   the declared identifier
- * @property {number} value  its current numeric value
- * @property {number} start  start offset of the literal in the text
- * @property {number} end    end offset of the literal in the text
- * @property {number} min
- * @property {number} max
- * @property {number} step
- */
+/** The slider bounds derived for one literal. */
+export interface SliderRange {
+  min: number;
+  max: number;
+  step: number;
+}
+
+export interface DeclaredNumber extends SliderRange {
+  /** the declared identifier */
+  name: string;
+  /** its current numeric value */
+  value: number;
+  /** start offset of the literal in the text */
+  start: number;
+  /** end offset of the literal in the text */
+  end: number;
+}
 
 /**
  * Find every top-level `#declare NAME = <number>` and return a slider model for
@@ -100,13 +96,9 @@ function rangeFor(comment, value) {
  * comments are NOT tracked, so a `#declare` buried inside a block comment would
  * still produce a slider (rare). A trailing CRLF carriage return is stripped
  * before matching, but counted in the offset so the literal spans stay anchored.
- *
- * @param {string} text
- * @returns {DeclaredNumber[]}
  */
-export function parseDeclaredNumbers(text) {
-  /** @type {DeclaredNumber[]} */
-  const out = [];
+export function parseDeclaredNumbers(text: string): DeclaredNumber[] {
+  const out: DeclaredNumber[] = [];
   let offset = 0;
   for (const raw of text.split('\n')) {
     const lineStart = offset;
@@ -117,7 +109,11 @@ export function parseDeclaredNumbers(text) {
     const comment = slashes >= 0 ? line.slice(slashes + 2) : '';
     const m = DECLARE_RE.exec(code);
     if (!m) continue;
-    const [numStart, numEnd] = m.indices[2];
+    // DECLARE_RE carries the `d` flag, so a match always has `indices`, and its
+    // group 2 is not optional, so that span is always populated. Both are
+    // asserted rather than guarded: a fallback would be a branch no input can
+    // reach, and the 100% gate would then owe it a test.
+    const [numStart, numEnd] = (m.indices as RegExpIndicesArray)[2] as [number, number];
     const value = Number(m[2]);
     out.push({
       name: m[1],
@@ -130,6 +126,14 @@ export function parseDeclaredNumbers(text) {
   return out;
 }
 
+/** One numeric literal located in the source, as scrub hit-testing sees it. */
+export interface NumberToken {
+  start: number;
+  end: number;
+  text: string;
+  value: number;
+}
+
 /** A character that, before a `-`, makes it a subtraction operator not a sign. */
 const VALUE_CHAR = /[\w)\].>]/;
 
@@ -140,17 +144,21 @@ const VALUE_CHAR = /[\w)\].>]/;
  * subtraction operator, as in `a-1.5`) is excluded from the token so scrubbing
  * across zero can't fuse `a` and the number; and a match starting right after a
  * `.` (the `.90` inside a `// 0..90` range annotation) is skipped.
- *
- * @param {string} text
- * @param {number} offset
- * @returns {{ start: number, end: number, text: string, value: number } | null}
  */
-export function numberTokenAt(text, offset) {
+export function numberTokenAt(text: string, offset: number): NumberToken | null {
   NUMBER_RE.lastIndex = 0;
   for (let m = NUMBER_RE.exec(text); m; m = NUMBER_RE.exec(text)) {
     let start = m.index;
     let str = m[0];
-    if (str[0] === '-' && VALUE_CHAR.test(text[start - 1] || '')) {
+    // The character before the match, or '' at the buffer start. Sliced rather
+    // than `text[start - 1] || ''`: that form leaned on an out-of-range index
+    // coercing to undefined and then to a falsy value, which reads as a typo and
+    // is a real trap (VALUE_CHAR.test(undefined) tests the STRING "undefined" and
+    // matches, so dropping the fallback would silently treat a leading '-' at
+    // offset 0 as subtraction). slice() says "the character before, if there is
+    // one" outright, and costs one less branch.
+    const before = text.slice(Math.max(0, start - 1), start);
+    if (str[0] === '-' && VALUE_CHAR.test(before)) {
       start += 1; // the '-' is subtraction; the number starts after it
       str = str.slice(1);
     }
@@ -167,22 +175,15 @@ export function numberTokenAt(text, offset) {
 /**
  * A magnitude-aware step for scrubbing a bare literal (no declared range):
  * reuses the heuristic so a small value scrubs finely and a large one coarsely.
- *
- * @param {number} value
- * @returns {number}
  */
-export function scrubStep(value) {
+export function scrubStep(value: number): number {
   return heuristicRange(value).step;
 }
 
 /**
  * Format a value for writing back into the source, with the decimal precision
  * implied by `step` (so a step of 0.01 keeps two decimals, 1 keeps none).
- *
- * @param {number} value
- * @param {number} step
- * @returns {string}
  */
-export function formatScrubbed(value, step) {
+export function formatScrubbed(value: number, step: number): string {
   return value.toFixed(decimalsFor(step));
 }

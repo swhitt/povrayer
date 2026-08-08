@@ -3,30 +3,45 @@ import { exampleSearchText, matchesExampleFilters } from './example-filters.js';
 export const GALLERY_BATCH_SIZE = 24;
 const SCROLL_THRESHOLD = 320;
 
-/** @typedef {typeof import('./examples.js').EXAMPLES[number]} GalleryExample */
-
 /**
- * @typedef {object} GalleryOptions
- * @property {HTMLElement} panel
- * @property {HTMLButtonElement} trigger
- * @property {HTMLButtonElement} closeButton
- * @property {HTMLInputElement} search
- * @property {HTMLSelectElement} type
- * @property {HTMLSelectElement} difficulty
- * @property {HTMLSelectElement} tier
- * @property {HTMLSelectElement} license
- * @property {HTMLButtonElement} clearButton
- * @property {HTMLElement} grid
- * @property {HTMLElement} empty
- * @property {GalleryExample[]} examples
- * @property {Array<{key: string, label: string}>} categories
- * @property {Array<{key: string, label: string}>} difficulties
- * @property {Array<{key: string, label: string}>} tiers
- * @property {(name: string) => void} onSelect
+ * One catalog record, as the gallery reads it. Taken from web/examples.js's own
+ * Example typedef rather than restated, so a field that changes shape there is a
+ * compile error here instead of an `undefined` in a card.
  */
+export type GalleryExample = import('./examples.js').Example;
 
-/** @param {GalleryOptions} options */
-export function createGallery(options) {
+/** A CATEGORIES / DIFFICULTIES / RENDER_TIERS entry: the key and its UI label. */
+export interface KeyedLabel {
+  key: string;
+  label: string;
+}
+
+export interface GalleryOptions {
+  panel: HTMLElement;
+  trigger: HTMLButtonElement;
+  closeButton: HTMLButtonElement;
+  search: HTMLInputElement;
+  type: HTMLSelectElement;
+  difficulty: HTMLSelectElement;
+  tier: HTMLSelectElement;
+  license: HTMLSelectElement;
+  clearButton: HTMLButtonElement;
+  grid: HTMLElement;
+  empty: HTMLElement;
+  examples: readonly GalleryExample[];
+  categories: readonly KeyedLabel[];
+  difficulties: readonly KeyedLabel[];
+  tiers: readonly KeyedLabel[];
+  onSelect: (name: string) => void;
+}
+
+/** One record paired with the lowercased text the search box matches against. */
+interface SearchableEntry {
+  example: GalleryExample;
+  haystack: string;
+}
+
+export function createGallery(options: GalleryOptions) {
   const {
     panel,
     trigger,
@@ -46,7 +61,13 @@ export function createGallery(options) {
     onSelect,
   } = options;
 
-  const labelByKey = (items, key) => items.find((item) => item.key === key).label;
+  // Asserted, not guarded: every record's category/difficulty/renderTier is one
+  // of the keys in the matching list (test/node/examples.test.mjs pins that), so
+  // the lookup cannot miss. A `?? ''` here would be an unreachable branch the
+  // 100% gate would then owe a test for, and it would print a blank chip if it
+  // ever did run, which is worse than failing loudly.
+  const labelByKey = (items: readonly KeyedLabel[], key: string) =>
+    (items.find((item) => item.key === key) as KeyedLabel).label;
   const searchable = examples.map((example) => ({
     example,
     haystack: exampleSearchText(example, {
@@ -56,10 +77,8 @@ export function createGallery(options) {
     }),
   }));
 
-  /** @type {Array<{example: GalleryExample, haystack: string}>} */
-  let matches = [];
-  /** @type {HTMLElement[]} */
-  let cards = [];
+  let matches: SearchableEntry[] = [];
+  let cards: HTMLElement[] = [];
   let rendered = 0;
   let built = false;
   let selectedName = '';
@@ -79,7 +98,7 @@ export function createGallery(options) {
     );
   }
 
-  function matchesFilters(example) {
+  function matchesFilters(example: GalleryExample) {
     return matchesExampleFilters(example, {
       type: type.value,
       difficulty: difficulty.value,
@@ -88,7 +107,7 @@ export function createGallery(options) {
     });
   }
 
-  function markLoaded(card, loaded) {
+  function markLoaded(card: HTMLElement, loaded: boolean) {
     if (loaded) {
       card.dataset.loaded = 'true';
       card.setAttribute('aria-current', 'true');
@@ -98,7 +117,7 @@ export function createGallery(options) {
     }
   }
 
-  function createCard(entry, position) {
+  function createCard(entry: SearchableEntry, position: number) {
     const { example } = entry;
     const card = document.createElement('button');
     card.type = 'button';
@@ -160,7 +179,9 @@ export function createGallery(options) {
     );
     const selectedIndex = matches.findIndex(({ example }) => example.name === selectedName);
     if (selectedIndex > 0) {
-      const [selected] = matches.splice(selectedIndex, 1);
+      // splice(i, 1) at a found index always yields exactly one entry, so the
+      // destructured element is asserted rather than checked.
+      const [selected] = matches.splice(selectedIndex, 1) as [SearchableEntry];
       matches.unshift(selected);
     }
     empty.hidden = matches.length !== 0;
@@ -186,7 +207,7 @@ export function createGallery(options) {
    * naming a gallery-only scene has to hand off here WITH the query rather than
    * report that a scene the app ships does not exist.
    *
-   * @param {string} [query] replaces the gallery's own filters when non-empty
+   * @param query replaces the gallery's own filters when non-empty
    */
   function open(query = '') {
     if (query === '') {
@@ -205,7 +226,7 @@ export function createGallery(options) {
     trigger.focus();
   }
 
-  function setSelected(name) {
+  function setSelected(name: string) {
     selectedName = name;
     for (const card of cards) markLoaded(card, card.dataset.name === name);
   }
@@ -230,10 +251,13 @@ export function createGallery(options) {
     if (remaining <= SCROLL_THRESHOLD) appendBatch();
   });
   grid.addEventListener('click', (event) => {
-    const target = /** @type {Element} */ (event.target);
-    const card = /** @type {HTMLElement | null} */ (target.closest('.gallery-card'));
+    // A click inside the grid always originates on an element; the spec's wider
+    // EventTarget is for the synthetic cases that never reach a DOM listener.
+    const target = event.target as Element;
+    const card = target.closest<HTMLElement>('.gallery-card');
     if (!card) return;
-    onSelect(card.dataset.name);
+    // Every card is built by createCard, which always sets data-name.
+    onSelect(card.dataset.name as string);
     close();
   });
 

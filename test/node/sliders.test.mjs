@@ -9,7 +9,7 @@ import {
   numberTokenAt,
   scrubStep,
   formatScrubbed,
-} from '../../web/sliders.js';
+} from '../../_build/web/sliders.js';
 
 test('parseDeclaredNumbers finds a top-level declare and its literal span', () => {
   const text = '#declare Angle = 30;\nsphere { 0, 1 }';

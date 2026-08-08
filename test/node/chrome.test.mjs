@@ -12,7 +12,7 @@
 // `<link rel="icon">` hrefs (parsed before any script runs), the .orb wordmark
 // background in web/styles.css, the same wordmark in turbo.html (which cannot
 // import ESM, see tools/gen-turbo.mjs), and the render-time favicon swap in
-// web/render-feedback.js. Only the last one can import web/orb.ts, so the other
+// web/render-feedback.ts. Only the last one can import web/orb.ts, so the other
 // four are copies and this test is what keeps them honest.
 //
 // It exists because they HAD drifted. index.html carried r='.75' and repl.html
@@ -39,7 +39,7 @@ const index = read('web/index.html');
 const repl = read('web/repl.html');
 const css = read('web/styles.css');
 const turbo = read('web/turbo.html');
-const feedback = read('web/render-feedback.js');
+const feedback = read('web/render-feedback.ts');
 
 const READY = orbDataUri(ORB_CORE);
 
@@ -200,7 +200,7 @@ test('every title starts with the brand, and the page name matches the wordmark'
     assert.match(titleOf(text), /^povrayer\b/, `${file}: the title must lead with the brand`);
   }
   // "povrayer REPL" fought this page's own lowercase wordmark. The middot is the
-  // separator web/render-feedback.js splits on to build "rendering… · povrayer
+  // separator web/render-feedback.ts splits on to build "rendering… · povrayer
   // repl", so the page name has to sit in the FIRST segment.
   assert.equal(titleOf(repl), 'povrayer repl · a POV-Ray command line');
   assert.equal(titleOf(turbo), 'povrayer turbo', 'turbo pins a stable title; the gag is #fileName');
@@ -239,7 +239,7 @@ test('theme-color matches the background each surface actually paints', () => {
   assert.match(turbo, /background: #06070d;/, "turbo's theme-color must match what it paints");
 });
 
-test('render-feedback.js derives its favicons from web/orb.ts', () => {
+test('render-feedback.ts derives its favicons from web/orb.ts', () => {
   // The one copy that does not have to be a copy: it imports the module, so it
   // must not restate the URI or the hexes.
   assert.match(feedback, /import \{[^}]*orbDataUri[^}]*\} from '\.\/orb\.js'/);

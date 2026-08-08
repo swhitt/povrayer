@@ -8,7 +8,7 @@ import {
   startBrowserCoverage,
   saveBrowserCoverage,
 } from '../../tools/coverage/browser-collect.mjs';
-import { decodeState } from '../../web/permalink.js';
+import { decodeState } from '../../_build/web/permalink.js';
 
 /**
  * @typedef {Window & typeof globalThis & {
