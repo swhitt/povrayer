@@ -302,19 +302,34 @@ style. Browser globals apply under `web/`, Node globals everywhere else; the
 wrapper's TypeScript is type-checked by `tsc`, not linted.
 
 ```sh
-npm run lint          # eslint .
-npm run format:check  # prettier --check .
-npm run format        # prettier --write .
-npm run typecheck     # tsc --noEmit on wrapper/tsconfig.json
+npm run lint             # eslint .
+npm run format:check     # prettier --check .
+npm run format           # prettier --write .
+npm run typecheck        # tsc --noEmit on wrapper/tsconfig.json
+npm run typecheck:js     # tsc --noEmit on tsconfig.checkjs.json (web/ + tools/ via JSDoc)
+npm run typecheck:strict # tsc --noEmit on tsconfig.strict.json (full strict, graduated modules)
 ```
+
+The browser code is plain JS type-checked through JSDoc, deliberately: `web/`
+ships unbundled with no build step, so the files the browser loads are the files
+in the repo. `tsconfig.checkjs.json` runs default `checkJs` strictness over all
+of it (see the rationale in that file), and `tsconfig.strict.json` runs _full_
+strict over the subset of modules that are already clean under it. Modules
+graduate into the strict list one at a time; graduating one means fixing its
+whole import closure, not just the file.
 
 ### Coverage
 
-One merged report spans both runtimes. Node code (the wrapper `dist/index.js`,
-`src/cli.mjs`, `test/browser/serve.mjs`, `web/examples.js`) is measured with
-c8; the browser modules (`web/render-client.js`, `web/ui.js`, `web/repl.js`,
-`web/examples.js`) are measured with Playwright V8 coverage during the browser
-suites and converted to istanbul. The two are merged into `coverage/`.
+One merged report spans both runtimes, covering 36 first-party files: Node code
+(the wrapper `dist/index.js`, `src/cli.mjs`, `test/browser/serve.mjs`, and the
+`web/` modules the Node tests import) is measured with c8, and 26 browser modules
+are measured with Playwright V8 coverage during the browser suites and converted
+to istanbul. The two are merged into `coverage/`.
+
+`tools/coverage/paths.mjs` is the single source of truth for that file set, so
+read it rather than trusting a list here. `test/node/coverage-config.test.mjs`
+force-enrolls every new `web/*.js` into it plus `.c8rc.json` and
+`tsconfig.checkjs.json`, so a module cannot be added and silently skip the gate.
 
 ```sh
 npm run coverage        # run the whole suite, write coverage/ (final json, lcov, html)
@@ -332,6 +347,15 @@ Committed in `.githooks/`, wired via `core.hooksPath`:
   DOM-free `test:unit` suite.
 - **pre-push:** the same fast static checks. CI owns the full render/browser suite
   and merged coverage gate so local pushes stay quick.
+
+## Docs
+
+- [`docs/turbo.md`](docs/turbo.md) is the reference for Turbo: what the SDL-to-GLSL
+  compiler supports, where it deliberately diverges from the real tracer, and the
+  presets.
+- [`docs/examples.md`](docs/examples.md) is the generated catalog of the bundled
+  scenes (`npm run gen:examples` rebuilds it from `web/examples.js`).
+- [`docs/task-list.md`](docs/task-list.md) is the live backlog.
 
 ## License
 

@@ -269,8 +269,12 @@ reshaping the whole project.
 ## Architecture and maintainability
 
 - [ ] Fix the god objects.
-  - No specific priority. The obvious current targets are `web/ui.js` and
-    `test/browser/ui.test.mjs`.
+  - Now just `web/ui.js` (~3.4k lines, ~167 functions). `test/browser/ui.test.mjs`
+    is done: it is an 84-line delegator over six drivers in `test/browser/ui/`.
+  - `web/turbo.html` is the bigger outlier by volume (~6.9k lines of inline script)
+    and is the only first-party code outside checkJs, eslint, and the coverage
+    gate. Splitting it is a separate problem from ui.js, since it cannot import
+    ESM modules (the `file://` constraint documented in `tools/gen-turbo.mjs`).
   - Split only along stable seams: gallery/catalog UI, live preview/render
     orchestration, editor/source state, sharing/permalinks, and focused browser
     test drivers.
@@ -283,21 +287,31 @@ reshaping the whole project.
   - Acceptance: gallery behavior is still covered by browser tests and the main
     UI module no longer owns gallery rendering internals.
 
-- [ ] Extract live preview/render orchestration.
+- [x] Extract live preview/render orchestration.
   - Separate source-change decisions, draft policy, cancellation, and status text
     from button/event wiring.
   - Acceptance: draft policy can be tested without launching the full UI.
+  - Done as `web/render-orchestrator.js` (routing verdicts + status text) and
+    `web/live-draft.js` (draft policy), both covered by Node tests.
 
-- [ ] Extract editor/source state.
+- [ ] Extract editor/source state. (Three of four concepts done, see below.)
   - Separate "loaded example", "current source", "dirty from loaded source", and
     "dirty from last render" into a small state model.
   - Acceptance: permalink, render, and dirty-state tests use the same model.
+  - `web/scene-state.js` covers three of the four: loaded example, dirty from
+    loaded source, plus the stash and gist baselines. "Current source" stays in
+    the textarea on purpose (the DOM is the single source of truth; callers pass
+    it in). "Dirty from last render" is still unmodelled, which is the same gap
+    as "Distinguish modified-from-example from edited-since-render" above.
 
-- [ ] Split browser tests by feature area.
+- [x] Split browser tests by feature area.
   - Break `test/browser/ui.test.mjs` into focused drivers/specs once feature
     seams exist.
   - Acceptance: coverage stays at 100% without one giant test file carrying the
     whole app.
+  - Done: `ui.test.mjs` is an 84-line delegator over `test/browser/ui/`
+    (harness, startup-render, catalog-editor, playback-drafts, deep-links,
+    editor-tools, output-mobile).
 
 - [ ] Keep any refactor behavior-preserving and test-first.
   - The coverage gate is useful but expensive; avoid churn that requires

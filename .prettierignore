@@ -9,6 +9,10 @@ coverage/
 # Dependencies and scratch
 node_modules/
 .playwright-cli/
+# Agent worktrees: full checkouts of this repo nested inside it, so every ignore
+# rule below would otherwise need a second, path-prefixed copy to match. Only the
+# transient worktrees are skipped, not tracked .claude/ project config.
+.claude/worktrees/
 # Lockfiles (npm owns their formatting)
 package-lock.json
 wrapper/package-lock.json

@@ -1,7 +1,9 @@
 #!/bin/sh
 # Fast pre-commit gate: format, lint, wrapper types, and the fast unit subset.
 # POSIX sh, fail on the first problem with a clear message. The heavy stuff
-# (full render suite + 100% coverage) runs in pre-push, not here.
+# (full render suite + 100% coverage) runs in CI, not here and not in pre-push
+# either: see the note at the top of pre-push, which is deliberately just the
+# static checks so pushing stays a couple of seconds.
 set -e
 
 say() { printf '\npre-commit: %s\n' "$1"; }
