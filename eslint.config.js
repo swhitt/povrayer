@@ -45,6 +45,16 @@ export default [
     languageOptions: { globals: globals.browser },
   },
 
+  // povrayer turbo's app code is the one web/ file that is NOT a module:
+  // tools/gen-turbo.mjs inlines it into turbo.html's plain <script>, and turbo
+  // must open from file://, where module loading is blocked. So an `import` or
+  // `export` here would be a SyntaxError on the shipped page. sourceType 'script'
+  // is what makes eslint say so now instead of leaving it to the browser.
+  {
+    files: ['web/turbo-app.js'],
+    languageOptions: { sourceType: 'script' },
+  },
+
   // Node runtime: CLI, tooling, the static server, and node:test suites.
   {
     files: ['src/**/*.mjs', 'tools/**/*.mjs', 'test/**/*.mjs', '*.js', '*.mjs'],

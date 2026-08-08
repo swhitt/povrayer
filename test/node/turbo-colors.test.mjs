@@ -21,23 +21,29 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const turbo = readFileSync(join(root, 'web', 'turbo.html'), 'utf8');
+const app = readFileSync(join(root, 'web', 'turbo-app.js'), 'utf8');
 const manifest = JSON.parse(readFileSync(join(root, 'web', 'includes-manifest.json'), 'utf8'));
 
 /**
- * The COLORS_INC object literal, parsed out of turbo's inline script. turbo is a
- * single self-contained file with no build step and no ESM (see
- * tools/gen-turbo.mjs), so there is nothing to import: the literal is read as
- * text and evaluated as JSON-ish source.
+ * The COLORS_INC object literal, parsed out of turbo's app source. turbo ships as
+ * a classic script inlined into one self-contained HTML file (see
+ * tools/gen-turbo.mjs), so there is nothing to import: the literal is read as text
+ * and evaluated as JSON-ish source. Reading web/turbo-app.js rather than the
+ * generated web/turbo.html keeps this test on the file a human edits;
+ * test/node/turbo-lang.test.mjs is what proves the two agree.
+ *
+ * The declaration's own indentation is captured and reused to find the closing
+ * brace, so wrapping or re-nesting the surrounding code cannot silently turn this
+ * guard into a no-op.
  * @returns {Record<string, number[]>}
  */
 function turboColors() {
-  const start = turbo.indexOf('const COLORS_INC = {');
-  assert.notEqual(start, -1, 'turbo.html must still declare COLORS_INC');
-  const open = turbo.indexOf('{', start);
-  const close = turbo.indexOf('\n      };', open);
+  const decl = /^([ \t]*)const COLORS_INC = \{$/m.exec(app);
+  assert.ok(decl, 'web/turbo-app.js must still declare COLORS_INC');
+  const open = decl.index + decl[0].length;
+  const close = app.indexOf(`\n${decl[1]}};`, open);
   assert.notEqual(close, -1, 'COLORS_INC must still close at its own indent level');
-  const body = turbo.slice(open + 1, close);
+  const body = app.slice(open, close);
   /** @type {Record<string, number[]>} */
   const out = {};
   for (const line of body.split('\n')) {

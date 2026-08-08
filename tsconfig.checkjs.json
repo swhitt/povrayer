@@ -87,6 +87,12 @@
     "web/examples-sourced.js",
     "web/example-filters.js",
     "web/turbo-sw.js",
+
+    // turbo's application code. It is a classic script (one IIFE, no import/export)
+    // because tools/gen-turbo.mjs inlines it into turbo.html, which has to run from
+    // file://. Checking it here is the point of that extraction: this file spent its
+    // whole life inside a <script> tag where no static analysis could reach it.
+    "web/turbo-app.js",
     "src/cli.mjs",
     "test/**/*.mjs",
     "tools/**/*.mjs"

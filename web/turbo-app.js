@@ -1,0 +1,5720 @@
+// povrayer turbo's application script: the hand-written half of web/turbo.html.
+//
+// WHY this lives in its own file even though turbo ships as ONE page:
+// tools/gen-turbo.mjs inlines it VERBATIM between the gen:app markers in
+// turbo.html, so the page stays a single self-contained file that opens from
+// file:// with no server and no build step (that is turbo's whole design). Having
+// a real .js source is what lets eslint, prettier, and tsc --checkJs see this
+// code at all; while it lived inside a <script> tag none of them did, and that is
+// where every serious turbo bug hid.
+//
+// It is a CLASSIC script, not an ESM module: no import, no export. file:// blocks
+// module loading, and the inlined copy has to run in a plain <script>. The shared
+// editor language tooling therefore arrives as the window.POVLang / window.GLSLLang
+// globals that the gen:lang block above it defines, and the page's test hooks are
+// the explicit `hooks.__*` assignments (see the `hooks` alias below).
+//
+// Coverage: deliberately NOT in the 100% gate (see the exemption in
+// .c8rc.json + test/node/coverage-config.test.mjs). It is exercised end to end by
+// test/browser/turbo.test.mjs instead.
+//
+// Everything lives inside one IIFE so the ~5.5k lines of scene compiler leak
+// nothing onto window except those test hooks.
+(function () {
+  'use strict';
+  // ============================================================================
+  // povrayer turbo: a real-time GPU twin for POV-Ray SDL.
+  // Parse SDL in JS -> compile scene STRUCTURE to GLSL once -> stream all
+  // numeric parameters through an RGBA32F texture every frame. Editing a number or
+  // scrubbing `clock` never recompiles the shader; only structural edits do.
+  // One button hands the same source to povrayer.com (real POV-Ray 3.8, WASM).
+  // ============================================================================
+
+  // The headless hooks (__buildScene, __povgl, __probe, __fps, ...) are expandos
+  // on window: test/browser/turbo.test.mjs and the gallery compatibility sweep
+  // drive the page through them, and it mirrors this shape in its own TurboWindow
+  // typedef. Routing every read/write through one deliberately loose alias keeps
+  // the admission in a single place instead of a cast per call site.
+  /** @type {Record<string, any>} */
+  const hooks = /** @type {any} */ (window);
+
+  // ---------------------------------------------------------------------------
+  // tiny affine-matrix kit. A transform is 12 numbers, row-major 3x4:
+  // [r00 r01 r02 tx, r10 r11 r12 ty, r20 r21 r22 tz], p' = R*p + t.
+  // POV is left-handed (+z into the screen); we keep POV's coordinates raw and
+  // derive the camera basis with POV's own cross-product order, so nothing is
+  // ever mirrored or z-flipped.
+  // ---------------------------------------------------------------------------
+  const M_ID = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0];
+  function mMul(a, b) {
+    // apply b first, then a
+    const o = new Array(12);
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 3; c++)
+        o[r * 4 + c] = a[r * 4] * b[c] + a[r * 4 + 1] * b[4 + c] + a[r * 4 + 2] * b[8 + c];
+      o[r * 4 + 3] = a[r * 4] * b[3] + a[r * 4 + 1] * b[7] + a[r * 4 + 2] * b[11] + a[r * 4 + 3];
+    }
+    return o;
+  }
+  function mTranslate(v) {
+    return [1, 0, 0, v[0], 0, 1, 0, v[1], 0, 0, 1, v[2]];
+  }
+  function mScale(v) {
+    return [v[0], 0, 0, 0, 0, v[1], 0, 0, 0, 0, v[2], 0];
+  }
+  // POV rotate <a,b,c>: degrees, about x then y then z, left-hand rule. In
+  // column-vector form on POV's own coordinates these are the standard matrices.
+  function mRotX(d) {
+    const r = (d * Math.PI) / 180,
+      c = Math.cos(r),
+      s = Math.sin(r);
+    return [1, 0, 0, 0, 0, c, -s, 0, 0, s, c, 0];
+  }
+  function mRotY(d) {
+    const r = (d * Math.PI) / 180,
+      c = Math.cos(r),
+      s = Math.sin(r);
+    return [c, 0, s, 0, 0, 1, 0, 0, -s, 0, c, 0];
+  }
+  function mRotZ(d) {
+    const r = (d * Math.PI) / 180,
+      c = Math.cos(r),
+      s = Math.sin(r);
+    return [c, -s, 0, 0, s, c, 0, 0, 0, 0, 1, 0];
+  }
+  function mRotate(v) {
+    return mMul(mRotZ(v[2]), mMul(mRotY(v[1]), mRotX(v[0])));
+  }
+  function mInvert(m) {
+    const a = m[0],
+      b = m[1],
+      c = m[2],
+      d = m[4],
+      e = m[5],
+      f = m[6],
+      g = m[8],
+      h = m[9],
+      i = m[10];
+    const A = e * i - f * h,
+      B = c * h - b * i,
+      C = b * f - c * e;
+    const det = a * A + d * B + g * C;
+    const s = Math.abs(det) < 1e-20 ? 0 : 1 / det;
+    const R = [
+      A * s,
+      B * s,
+      C * s,
+      (f * g - d * i) * s,
+      (a * i - c * g) * s,
+      (c * d - a * f) * s,
+      (d * h - e * g) * s,
+      (b * g - a * h) * s,
+      (a * e - b * d) * s,
+    ];
+    const tx = m[3],
+      ty = m[7],
+      tz = m[11];
+    return [
+      R[0],
+      R[1],
+      R[2],
+      -(R[0] * tx + R[1] * ty + R[2] * tz),
+      R[3],
+      R[4],
+      R[5],
+      -(R[3] * tx + R[4] * ty + R[5] * tz),
+      R[6],
+      R[7],
+      R[8],
+      -(R[6] * tx + R[7] * ty + R[8] * tz),
+    ];
+  }
+  // conservative world-distance correction for a transformed SDF: with inverse
+  // matrix Mi, d_world >= d_local / (operator norm of Mi). Row lengths bound it.
+  function mDistFix(mi) {
+    const L = (r) => Math.hypot(mi[r * 4], mi[r * 4 + 1], mi[r * 4 + 2]);
+    return 1 / Math.max(L(0), L(1), L(2), 1e-9);
+  }
+  // rotation that takes +y onto unit vector v (for cylinders/cones between points)
+  function mYTo(v) {
+    const [x, y, z] = v;
+    if (y > 0.999999) return M_ID.slice();
+    if (y < -0.999999) return [1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0];
+    const ax = z,
+      az = -x; // axis = cross(y, v)
+    const al = Math.hypot(ax, az),
+      c = y,
+      s = al;
+    const ux = ax / al,
+      uz = az / al,
+      t = 1 - c;
+    return [
+      c + ux * ux * t,
+      -uz * s,
+      ux * uz * t,
+      0,
+      uz * s,
+      c,
+      -ux * s,
+      0,
+      ux * uz * t,
+      ux * s,
+      c + uz * uz * t,
+      0,
+    ];
+  }
+
+  // ---------------------------------------------------------------------------
+  // gzip <-> base64url codec. Used for turbo's own compact share links.
+  // The real povrayer handoff loads the sibling permalink.js below, with this
+  // codec as the local fallback so a file:// copy of turbo stays portable.
+  // ---------------------------------------------------------------------------
+  async function gzPipe(bytes, Ctor) {
+    const st = new Ctor('gzip');
+    const w = st.writable.getWriter();
+    const written = (async () => {
+      await w.write(bytes);
+      await w.close();
+    })().catch(() => {});
+    const buf = await new Response(st.readable).arrayBuffer();
+    await written;
+    return new Uint8Array(buf);
+  }
+  async function packB64(obj) {
+    const gz = await gzPipe(new TextEncoder().encode(JSON.stringify(obj)), CompressionStream);
+    let bin = '';
+    for (const b of gz) bin += String.fromCharCode(b);
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  async function unpackB64(s) {
+    try {
+      const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const raw = await gzPipe(bytes, DecompressionStream);
+      return JSON.parse(new TextDecoder().decode(raw));
+    } catch {
+      return null;
+    }
+  }
+  let povrayerCodec = null;
+  async function loadPovrayerCodec() {
+    if (povrayerCodec) return povrayerCodec;
+    // turbo ships beside the real editor in web/, so permalink.js is a sibling
+    // both when served and in _site. A file:// copy can't import it; the
+    // packB64 fallback keeps share/handoff working there.
+    try {
+      const mod = await import('./permalink.js');
+      if (typeof mod.encodeState === 'function') {
+        povrayerCodec = mod;
+        return mod;
+      }
+    } catch {
+      /* opened as a file:// with no sibling module: use turbo's own codec */
+    }
+    povrayerCodec = { encodeState: packB64 };
+    return povrayerCodec;
+  }
+
+  // ---------------------------------------------------------------------------
+  // colors.inc. Typing a 30-year-old incantation should work, and it has to
+  // give the SAME color the pinned wasm gives: an unknown name falls back to
+  // gray and lands in the "N things only the real tracer can do" chip, so a
+  // gap here is turbo lying about a color BOTH renderers have. The values are
+  // the #declare lines from the include tree dist/povray.wasm embeds, and
+  // test/node/turbo-colors.test.mjs cross-checks this key set against
+  // web/includes-manifest.json so it can't drift again.
+  // ---------------------------------------------------------------------------
+  const COLORS_INC = {
+    Red: [1, 0, 0],
+    Green: [0, 1, 0],
+    Blue: [0, 0, 1],
+    Yellow: [1, 1, 0],
+    Cyan: [0, 1, 1],
+    Magenta: [1, 0, 1],
+    White: [1, 1, 1],
+    Black: [0, 0, 0],
+    Clear: [1, 1, 1, 0, 1],
+    Gray05: [0.05, 0.05, 0.05],
+    Gray10: [0.1, 0.1, 0.1],
+    Gray15: [0.15, 0.15, 0.15],
+    Gray20: [0.2, 0.2, 0.2],
+    Gray25: [0.25, 0.25, 0.25],
+    Gray30: [0.3, 0.3, 0.3],
+    Gray35: [0.35, 0.35, 0.35],
+    Gray40: [0.4, 0.4, 0.4],
+    Gray45: [0.45, 0.45, 0.45],
+    Gray50: [0.5, 0.5, 0.5],
+    Gray55: [0.55, 0.55, 0.55],
+    Gray60: [0.6, 0.6, 0.6],
+    Gray65: [0.65, 0.65, 0.65],
+    Gray70: [0.7, 0.7, 0.7],
+    Gray75: [0.75, 0.75, 0.75],
+    Gray80: [0.8, 0.8, 0.8],
+    Gray85: [0.85, 0.85, 0.85],
+    Gray90: [0.9, 0.9, 0.9],
+    Gray95: [0.95, 0.95, 0.95],
+    Gray: [0.752941, 0.752941, 0.752941],
+    Grey: [0.752941, 0.752941, 0.752941],
+    DimGray: [0.329412, 0.329412, 0.329412],
+    DimGrey: [0.329412, 0.329412, 0.329412],
+    LightGray: [0.658824, 0.658824, 0.658824],
+    LightGrey: [0.658824, 0.658824, 0.658824],
+    VLightGray: [0.8, 0.8, 0.8],
+    VLightGrey: [0.8, 0.8, 0.8],
+    Aquamarine: [0.439216, 0.858824, 0.576471],
+    BlueViolet: [0.62352, 0.372549, 0.623529],
+    Brown: [0.647059, 0.164706, 0.164706],
+    CadetBlue: [0.372549, 0.623529, 0.623529],
+    Coral: [1, 0.498039, 0],
+    CornflowerBlue: [0.258824, 0.258824, 0.435294],
+    DarkGreen: [0.184314, 0.309804, 0.184314],
+    DarkOliveGreen: [0.309804, 0.309804, 0.184314],
+    DarkOrchid: [0.6, 0.196078, 0.8],
+    DarkSlateBlue: [0.119608, 0.137255, 0.556863],
+    DarkSlateGray: [0.184314, 0.309804, 0.309804],
+    DarkSlateGrey: [0.184314, 0.309804, 0.309804],
+    DarkTurquoise: [0.439216, 0.576471, 0.858824],
+    Firebrick: [0.556863, 0.137255, 0.137255],
+    ForestGreen: [0.137255, 0.556863, 0.137255],
+    Gold: [0.8, 0.498039, 0.196078],
+    Goldenrod: [0.858824, 0.858824, 0.439216],
+    GreenYellow: [0.576471, 0.858824, 0.439216],
+    IndianRed: [0.309804, 0.184314, 0.184314],
+    Khaki: [0.623529, 0.623529, 0.372549],
+    LightBlue: [0.74902, 0.847059, 0.847059],
+    LightSteelBlue: [0.560784, 0.560784, 0.737255],
+    LimeGreen: [0.196078, 0.8, 0.196078],
+    Maroon: [0.556863, 0.137255, 0.419608],
+    MediumAquamarine: [0.196078, 0.8, 0.6],
+    MediumBlue: [0.196078, 0.196078, 0.8],
+    MediumForestGreen: [0.419608, 0.556863, 0.137255],
+    MediumGoldenrod: [0.917647, 0.917647, 0.678431],
+    MediumOrchid: [0.576471, 0.439216, 0.858824],
+    MediumSeaGreen: [0.258824, 0.435294, 0.258824],
+    MediumSlateBlue: [0.498039, 0, 1],
+    MediumSpringGreen: [0.498039, 1, 0],
+    MediumTurquoise: [0.439216, 0.858824, 0.858824],
+    MediumVioletRed: [0.858824, 0.439216, 0.576471],
+    MidnightBlue: [0.184314, 0.184314, 0.309804],
+    Navy: [0.137255, 0.137255, 0.556863],
+    NavyBlue: [0.137255, 0.137255, 0.556863],
+    Orange: [1, 0.5, 0],
+    OrangeRed: [1, 0.25, 0],
+    Orchid: [0.858824, 0.439216, 0.858824],
+    PaleGreen: [0.560784, 0.737255, 0.560784],
+    Pink: [0.737255, 0.560784, 0.560784],
+    Plum: [0.917647, 0.678431, 0.917647],
+    Salmon: [0.435294, 0.258824, 0.258824],
+    SeaGreen: [0.137255, 0.556863, 0.419608],
+    Sienna: [0.556863, 0.419608, 0.137255],
+    SkyBlue: [0.196078, 0.6, 0.8],
+    SlateBlue: [0, 0.498039, 1],
+    SpringGreen: [0, 1, 0.498039],
+    SteelBlue: [0.137255, 0.419608, 0.556863],
+    Tan: [0.858824, 0.576471, 0.439216],
+    Thistle: [0.847059, 0.74902, 0.847059],
+    Turquoise: [0.678431, 0.917647, 0.917647],
+    Violet: [0.309804, 0.184314, 0.309804],
+    VioletRed: [0.8, 0.196078, 0.6],
+    Wheat: [0.847059, 0.847059, 0.74902],
+    YellowGreen: [0.6, 0.8, 0.196078],
+    SummerSky: [0.22, 0.69, 0.87],
+    RichBlue: [0.35, 0.35, 0.67],
+    Brass: [0.71, 0.65, 0.26],
+    Copper: [0.72, 0.45, 0.2],
+    Bronze: [0.55, 0.47, 0.14],
+    Bronze2: [0.65, 0.49, 0.24],
+    Silver: [0.9, 0.91, 0.98],
+    BrightGold: [0.85, 0.85, 0.1],
+    OldGold: [0.81, 0.71, 0.23],
+    Feldspar: [0.82, 0.57, 0.46],
+    Quartz: [0.85, 0.85, 0.95],
+    Mica: [0, 0, 0], // colors.inc really does declare Mica as Black (textures.inc layers over it)
+    NeonPink: [1, 0.43, 0.78],
+    DarkPurple: [0.53, 0.12, 0.47],
+    NeonBlue: [0.3, 0.3, 1],
+    CoolCopper: [0.85, 0.53, 0.1],
+    MandarinOrange: [0.89, 0.47, 0.2],
+    LightWood: [0.91, 0.76, 0.65],
+    MediumWood: [0.65, 0.5, 0.39],
+    DarkWood: [0.52, 0.37, 0.26],
+    SpicyPink: [1, 0.11, 0.68],
+    SemiSweetChoc: [0.42, 0.26, 0.15],
+    BakersChoc: [0.36, 0.2, 0.09],
+    Flesh: [0.96, 0.8, 0.69],
+    NewTan: [0.92, 0.78, 0.62],
+    NewMidnightBlue: [0, 0, 0.61],
+    VeryDarkBrown: [0.35, 0.16, 0.14],
+    DarkBrown: [0.36, 0.25, 0.2],
+    DarkTan: [0.59, 0.41, 0.31],
+    GreenCopper: [0.32, 0.49, 0.46],
+    DkGreenCopper: [0.29, 0.46, 0.43],
+    DustyRose: [0.52, 0.39, 0.39],
+    HuntersGreen: [0.13, 0.37, 0.31],
+    Scarlet: [0.55, 0.09, 0.09],
+    Med_Purple: [0.73, 0.16, 0.96],
+    Light_Purple: [0.87, 0.58, 0.98],
+    Very_Light_Purple: [0.94, 0.81, 0.99],
+  };
+
+  // ---------------------------------------------------------------------------
+  // lexer. Tokens: {t:'id'|'num'|'str'|'p'|'dir', v, ln}. POV block comments nest.
+  // ---------------------------------------------------------------------------
+  function tokenize(src) {
+    const toks = [];
+    let i = 0,
+      ln = 1;
+    const n = src.length;
+    while (i < n) {
+      const ch = src[i];
+      if (ch === '\n') {
+        ln++;
+        i++;
+        continue;
+      }
+      if (ch === ' ' || ch === '\t' || ch === '\r') {
+        i++;
+        continue;
+      }
+      if (ch === '/' && src[i + 1] === '/') {
+        while (i < n && src[i] !== '\n') i++;
+        continue;
+      }
+      if (ch === '/' && src[i + 1] === '*') {
+        let depth = 1;
+        i += 2;
+        while (i < n && depth > 0) {
+          if (src[i] === '\n') ln++;
+          if (src[i] === '/' && src[i + 1] === '*') {
+            depth++;
+            i += 2;
+          } else if (src[i] === '*' && src[i + 1] === '/') {
+            depth--;
+            i += 2;
+          } else i++;
+        }
+        continue;
+      }
+      if (ch === '"') {
+        let s = '',
+          j = i + 1;
+        while (j < n && src[j] !== '"') {
+          s += src[j] === '\\' ? src[++j] : src[j];
+          j++;
+        }
+        toks.push({ t: 'str', v: s, ln });
+        i = j + 1;
+        continue;
+      }
+      if (ch === '#') {
+        let j = i + 1,
+          w = '';
+        while (j < n && /[A-Za-z_]/.test(src[j])) {
+          w += src[j];
+          j++;
+        }
+        toks.push({ t: 'dir', v: w, ln });
+        i = j;
+        continue;
+      }
+      if (/[0-9]/.test(ch) || (ch === '.' && /[0-9]/.test(src[i + 1] || ''))) {
+        let j = i,
+          num = '';
+        while (j < n && /[0-9]/.test(src[j])) {
+          num += src[j];
+          j++;
+        }
+        if (src[j] === '.') {
+          num += '.';
+          j++;
+          while (j < n && /[0-9]/.test(src[j])) {
+            num += src[j];
+            j++;
+          }
+        }
+        if (src[j] === 'e' || src[j] === 'E') {
+          let k = j + 1,
+            e = 'e';
+          if (src[k] === '+' || src[k] === '-') {
+            e += src[k];
+            k++;
+          }
+          if (/[0-9]/.test(src[k] || '')) {
+            while (k < n && /[0-9]/.test(src[k])) {
+              e += src[k];
+              k++;
+            }
+            num += e;
+            j = k;
+          }
+        }
+        toks.push({ t: 'num', v: parseFloat(num), ln });
+        i = j;
+        continue;
+      }
+      if (/[A-Za-z_]/.test(ch)) {
+        let j = i,
+          w = '';
+        while (j < n && /[A-Za-z0-9_]/.test(src[j])) {
+          w += src[j];
+          j++;
+        }
+        toks.push({ t: 'id', v: w, ln });
+        i = j;
+        continue;
+      }
+      const two = src.substr(i, 2);
+      if (two === '<=' || two === '>=' || two === '!=') {
+        toks.push({ t: 'p', v: two, ln });
+        i += 2;
+        continue;
+      }
+      toks.push({ t: 'p', v: ch, ln });
+      i++;
+    }
+    toks.push({ t: 'eof', v: '', ln });
+    return toks;
+  }
+
+  // ---------------------------------------------------------------------------
+  // value model. A value is a number, an array (vector/colour, length 2..5), or
+  // a FUNCTION of clock (a "dyn"). Dyns flow through every operator, so any
+  // expression touching `clock` stays symbolic and gets re-evaluated per frame
+  // without recompiling the shader.
+  // ---------------------------------------------------------------------------
+  const isDyn = (v) => typeof v === 'function';
+  const evC = (v, c) => (isDyn(v) ? v(c) : v);
+  function lift(f, ...args) {
+    if (args.some(isDyn)) return (c) => f(...args.map((a) => evC(a, c)));
+    return f(...args);
+  }
+  function numop(f) {
+    return (a, b) => {
+      if (typeof a === 'number' && typeof b === 'number') return f(a, b);
+      const A = Array.isArray(a) ? a : null,
+        B = Array.isArray(b) ? b : null;
+      const len = Math.max(A ? A.length : 1, B ? B.length : 1);
+      const out = new Array(len);
+      for (let i = 0; i < len; i++) out[i] = f(A ? (A[i] ?? 0) : a, B ? (B[i] ?? 0) : b);
+      return out;
+    };
+  }
+  const OP = {
+    add: numop((a, b) => a + b),
+    sub: numop((a, b) => a - b),
+    mul: numop((a, b) => a * b),
+    div: numop((a, b) => (b === 0 ? 1e30 * Math.sign(a || 1) : a / b)),
+    neg: (a) => OP.sub(0, a),
+  };
+  /**
+   * An SDL `array[N]` value. It has to be a plain JS array (cells hold ordinary
+   * values and `#declare a[i] = ...` writes into it), but a POV VECTOR is a JS
+   * array too, so `Array.isArray` alone cannot tell `a[0]` (an index) from
+   * `<1,2,3>[0]` (nonsense). The `isArr` tag is what separates them.
+   *
+   * @typedef {any[] & { isArr?: true }} SdlArray
+   */
+
+  /**
+   * Is this value a declared SDL array, as opposed to a vector?
+   *
+   * @param {unknown} v
+   * @returns {v is SdlArray}
+   */
+  const isSdlArray = (v) => Array.isArray(v) && /** @type {SdlArray} */ (v).isArr === true;
+
+  const asNum = (v) => (Array.isArray(v) ? v[0] : v);
+  const asVec3 = (v) => (Array.isArray(v) ? [v[0] ?? 0, v[1] ?? 0, v[2] ?? 0] : [v, v, v]);
+  const asVec5 = (v) =>
+    Array.isArray(v) ? [v[0] ?? 0, v[1] ?? 0, v[2] ?? 0, v[3] ?? 0, v[4] ?? 0] : [v, v, v, 0, 0];
+  function mulberry(state) {
+    return () => {
+      state.s = (state.s + 0x6d2b79f5) | 0;
+      let z = state.s;
+      z = Math.imul(z ^ (z >>> 15), z | 1);
+      z ^= z + Math.imul(z ^ (z >>> 7), z | 61);
+      return ((z ^ (z >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  const FN1 = {
+    sin: Math.sin,
+    cos: Math.cos,
+    tan: Math.tan,
+    asin: Math.asin,
+    acos: Math.acos,
+    atan: Math.atan,
+    sinh: Math.sinh,
+    cosh: Math.cosh,
+    tanh: Math.tanh,
+    sqrt: Math.sqrt,
+    exp: Math.exp,
+    ln: Math.log,
+    log: Math.log10,
+    abs: Math.abs,
+    ceil: Math.ceil,
+    floor: Math.floor,
+    int: Math.trunc,
+    degrees: (r) => (r * 180) / Math.PI,
+    radians: (d) => (d * Math.PI) / 180,
+    frac: (v) => v - Math.trunc(v),
+    sgn: Math.sign,
+  };
+
+  // ---------------------------------------------------------------------------
+  // parser. Recursive descent over a STACK of token frames (macro expansion and
+  // loops push/replay frames). Directives are interpreted during the parse, so
+  // #while/#for unroll into real objects. Errors speak POV.
+  // ---------------------------------------------------------------------------
+  class ParseError extends Error {
+    constructor(msg, ln) {
+      super(msg);
+      this.ln = ln;
+    }
+  }
+  const RESERVED_VEC = {
+    x: [1, 0, 0],
+    y: [0, 1, 0],
+    z: [0, 0, 1],
+    t: [0, 0, 0, 1],
+    u: [1, 0],
+    v: [0, 1],
+  };
+  const LOOP_BUDGET = 200000;
+
+  function lev(a, b) {
+    const m = a.length,
+      n = b.length;
+    const d = Array.from({ length: m + 1 }, (_, i) => [i, ...new Array(n).fill(0)]);
+    for (let j = 1; j <= n; j++) d[0][j] = j;
+    for (let i = 1; i <= m; i++)
+      for (let j = 1; j <= n; j++)
+        d[i][j] = Math.min(
+          d[i - 1][j] + 1,
+          d[i][j - 1] + 1,
+          d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+        );
+    return d[m][n];
+  }
+
+  // ---- directives: the SDL "preprocessor", interpreted during the parse -----
+  const OBJ_KEYWORDS = [
+    'sphere',
+    'box',
+    'plane',
+    'cylinder',
+    'cone',
+    'torus',
+    'blob',
+    'superellipsoid',
+    'union',
+    'difference',
+    'intersection',
+    'merge',
+    'object',
+  ];
+  const SKIP_OBJECTS = [
+    'lathe',
+    'prism',
+    'sor',
+    'height_field',
+    'mesh',
+    'mesh2',
+    'text',
+    'isosurface',
+    'parametric',
+    'poly',
+    'quartic',
+    'sphere_sweep',
+    'bicubic_patch',
+    'julia_fractal',
+    'disc',
+    'triangle',
+    'smooth_triangle',
+    'polygon',
+    'cubic',
+    'quadric',
+    'ovus',
+    'light_group',
+    'rainbow',
+    'media',
+  ];
+
+  // shims for the classic includes: enough for muscle memory to work.
+  const TEXTURES_INC_SRC = `
+#declare Polished_Chrome = texture { pigment { color rgb 0.23 } finish { reflection 0.65 specular 0.8 roughness 0.003 metallic ambient 0.05 } }
+#declare Polished_Brass = texture { pigment { color rgb <0.71,0.65,0.26> } finish { reflection 0.45 specular 0.8 roughness 0.004 metallic ambient 0.05 } }
+#declare New_Penny = texture { pigment { color rgb <0.72,0.45,0.20> } finish { reflection 0.4 specular 0.7 roughness 0.005 metallic } }
+#declare Mirror = texture { pigment { color rgb 0.05 } finish { reflection 0.97 specular 1 roughness 0.001 } }
+#declare Glass = texture { pigment { color rgbt <0.95,0.98,1,0.85> } finish { reflection { 0.05, 0.9 fresnel } specular 1 roughness 0.001 } }
+#declare T_Chrome_1A = texture { pigment { color rgb 0.3 } finish { reflection 0.25 specular 0.6 roughness 0.01 metallic } }
+#declare T_Chrome_2D = texture { pigment { color rgb 0.39 } finish { reflection 0.55 specular 0.8 roughness 0.003 metallic } }
+#declare T_Chrome_5E = texture { pigment { color rgb 0.45 } finish { reflection 0.75 specular 0.9 roughness 0.001 metallic } }
+#declare T_Gold_1A = texture { pigment { color rgb <0.55,0.42,0.15> } finish { reflection 0.2 specular 0.7 roughness 0.01 metallic } }
+#declare T_Gold_5C = texture { pigment { color rgb <0.83,0.67,0.22> } finish { reflection 0.55 specular 0.9 roughness 0.002 metallic } }
+#declare T_Silver_3A = texture { pigment { color rgb <0.68,0.69,0.72> } finish { reflection 0.5 specular 0.9 roughness 0.002 metallic } }
+#declare T_Stone25 = texture { pigment { marble turbulence 0.8 color_map { [0 color rgb <0.62,0.55,0.45>] [0.6 color rgb <0.45,0.38,0.30>] [1 color rgb <0.25,0.2,0.16>] } } finish { specular 0.1 roughness 0.05 } }
+#declare T_Stone21 = texture { pigment { marble turbulence 1.0 color_map { [0 color rgb <0.75,0.45,0.30>] [0.5 color rgb <0.55,0.25,0.14>] [1 color rgb <0.30,0.12,0.08>] } } finish { specular 0.2 roughness 0.03 } }
+#declare T_Wood6 = texture { pigment { marble turbulence 0.35 color_map { [0 color rgb <0.55,0.36,0.18>] [0.6 color rgb <0.40,0.24,0.10>] [1 color rgb <0.26,0.14,0.06>] } scale <0.3,1,0.3> } finish { specular 0.25 roughness 0.02 } }
+`;
+  const GLASS_INC_SRC = `
+#declare T_Glass1 = texture { pigment { color rgbt <0.9,0.95,1,0.85> } finish { reflection { 0.05, 0.95 fresnel } specular 1 roughness 0.001 } }
+#declare T_Glass2 = texture { pigment { color rgbt <0.85,1,0.9,0.8> } finish { reflection { 0.08, 0.9 fresnel } specular 1 roughness 0.001 } }
+#declare T_Old_Glass = texture { pigment { color rgbt <0.7,0.85,0.7,0.7> } finish { reflection { 0.1, 0.8 fresnel } specular 0.9 roughness 0.002 } }
+#declare T_Glass3 = texture { pigment { color rgbt <0.92,0.96,1,0.88> } finish { reflection { 0.04, 0.92 fresnel } specular 1 roughness 0.001 } }
+#declare T_Glass4 = texture { pigment { color rgbt <0.88,0.94,0.98,0.86> } finish { reflection { 0.06, 0.9 fresnel } specular 1 roughness 0.001 } }
+`;
+  // glass.inc interior identifiers: just the refractive index
+  const INTERIOR_IOR = {
+    I_Glass: 1.5,
+    I_Glass1: 1.45,
+    I_Glass2: 1.5,
+    I_Glass3: 1.55,
+    I_Glass4: 1.6,
+    I_Glass_Dispersion1: 1.5,
+    I_Glass_Dispersion2: 1.5,
+    I_Glass_Caustics1: 1.5,
+    I_Glass_Caustics2: 1.5,
+    I_Glass_Exit: 1.0,
+    I_Diamond: 2.42,
+    I_Sapphire: 1.77,
+    I_Emerald: 1.57,
+    I_Ruby: 1.77,
+    I_WaterIce: 1.31,
+  };
+  const INCLUDE_SHIMS = {
+    'colors.inc': COLORS_INC,
+    'colors_ns.inc': COLORS_INC,
+    'textures.inc': TEXTURES_INC_SRC,
+    'glass.inc': GLASS_INC_SRC,
+    'metals.inc': TEXTURES_INC_SRC,
+    'stones.inc': TEXTURES_INC_SRC,
+    'shapes.inc': null,
+    'consts.inc': null,
+    'skies.inc': null,
+    'woods.inc': null,
+    'functions.inc': null,
+    'math.inc': null,
+    'transforms.inc': null,
+    'finish.inc': null,
+    'stars.inc': null,
+    'stdinc.inc': null,
+    'rad_def.inc': null,
+    'screen.inc': null,
+  };
+
+  // ---- objects, textures, camera, lights -------------------------------------
+  function cloneNode(n) {
+    if (!n) return n;
+    const c = { ...n };
+    if (n.xf) c.xf = n.xf.slice();
+    if (n.tex)
+      c.tex = {
+        pigment: n.tex.pigment,
+        finish: n.tex.finish ? { ...n.tex.finish } : null,
+        pxf: n.tex.pxf.slice(),
+      };
+    if (n.children) c.children = n.children.map(cloneNode);
+    if (n.comps) c.comps = n.comps.slice();
+    return c;
+  }
+  const FLAG_MODS = [
+    'hollow',
+    'open',
+    'sturm',
+    'hierarchy',
+    'double_illuminate',
+    'uv_mapping',
+    'split_union',
+  ];
+  const MOD_KEYWORDS = new Set([
+    'translate',
+    'rotate',
+    'scale',
+    'matrix',
+    'texture',
+    'pigment',
+    'finish',
+    'material',
+    'normal',
+    'interior',
+    'interior_texture',
+    'photons',
+    'media',
+    'no_shadow',
+    'no_image',
+    'no_reflection',
+    'inverse',
+    'clipped_by',
+    'bounded_by',
+    'cutaway_textures',
+    'transform',
+    ...FLAG_MODS,
+  ]);
+
+  class Parser {
+    constructor(src, env) {
+      this.frames = [{ toks: tokenize(src), pos: 0, locals: null }];
+      this.globals = new Map();
+      this.macros = new Map();
+      this.includedFiles = new Set(); // #include shims already applied, so each lands once
+      this.warnings = [];
+      this.usesClock = false;
+      this.clockNow = env.clock ?? 0; // for clock used in structural decisions
+      this.structClock = false; // structure depends on clock -> reparse on scrub
+      this.iw = env.width || 800;
+      this.ih = env.height || 450;
+      this.budget = LOOP_BUDGET;
+      this.scene = {
+        objects: [],
+        lights: [],
+        camera: null,
+        background: null,
+        fog: null,
+        sky: null,
+        ambient: [0.1, 0.1, 0.1],
+      };
+    }
+    warn(msg) {
+      if (!this.warnings.includes(msg)) this.warnings.push(msg);
+    }
+    get f() {
+      return this.frames[this.frames.length - 1];
+    }
+    peek(k = 0) {
+      const f = this.f;
+      return f.toks[Math.min(f.pos + k, f.toks.length - 1)];
+    }
+    next() {
+      const f = this.f,
+        tk = f.toks[f.pos];
+      if (tk.t === 'eof' && this.frames.length > 1) {
+        this.frames.pop();
+        return this.next();
+      }
+      if (tk.t !== 'eof') f.pos++;
+      return tk;
+    }
+    atEof() {
+      return this.frames.length === 1 && this.peek().t === 'eof';
+    }
+    err(msg, ln) {
+      throw new ParseError(msg, ln ?? this.peek().ln);
+    }
+    expect(v) {
+      const tk = this.next();
+      if (tk.v !== v || (tk.t !== 'p' && tk.t !== 'id'))
+        this.err(`expected '${v}', got '${tk.v === '' ? 'end of scene' : tk.v}'`, tk.ln);
+      return tk;
+    }
+    eat(v) {
+      const tk = this.peek();
+      if ((tk.t === 'p' || tk.t === 'id') && tk.v === v) {
+        this.next();
+        return true;
+      }
+      return false;
+    }
+    comma() {
+      this.eat(',');
+    }
+    lookup(name) {
+      for (let i = this.frames.length - 1; i >= 0; i--) {
+        let s = this.frames[i].locals;
+        while (s) {
+          if (s.map.has(name)) return s.map.get(name);
+          s = s.up;
+        }
+      }
+      if (this.globals.has(name)) return this.globals.get(name);
+      return undefined;
+    }
+    declare(name, val, local) {
+      if (RESERVED_VEC[name])
+        this.err(`'${name}' is a reserved word in POV-Ray (it's a built-in vector)`);
+      if (local) {
+        let s = this.f.locals;
+        if (!s) s = this.f.locals = { map: new Map(), up: null };
+        s.map.set(name, val);
+      } else this.globals.set(name, val);
+    }
+    didYouMean(name, extra = []) {
+      const pool = [
+        ...this.globals.keys(),
+        ...this.macros.keys(),
+        ...Object.keys(RESERVED_VEC),
+        'sphere',
+        'box',
+        'plane',
+        'cylinder',
+        'cone',
+        'torus',
+        'blob',
+        'union',
+        'difference',
+        'intersection',
+        'merge',
+        'pigment',
+        'finish',
+        'texture',
+        'translate',
+        'rotate',
+        'scale',
+        'clock',
+        'checker',
+        'gradient',
+        ...extra,
+      ];
+      let best = null,
+        bd = 3;
+      for (const c of pool) {
+        if (Math.abs(c.length - name.length) > 2) continue;
+        const d = lev(name, c);
+        if (d < bd) {
+          bd = d;
+          best = c;
+        }
+      }
+      return best ? ` (did you mean '${best}'?)` : '';
+    }
+
+    // ---- expressions ------------------------------------------------------
+    parseExpr() {
+      const a = this.parseOr();
+      if (this.peek().t === 'p' && this.peek().v === '?') {
+        // POV has C-style ternary
+        this.next();
+        const b = this.parseExpr();
+        this.expect(':');
+        const c = this.parseExpr();
+        return lift((x, y, z) => (asNum(x) !== 0 ? y : z), a, b, c);
+      }
+      return a;
+    }
+    parseOr() {
+      let a = this.parseAnd();
+      while (this.peek().t === 'p' && this.peek().v === '|') {
+        this.next();
+        const b = this.parseAnd();
+        a = lift((x, y) => (asNum(x) !== 0 || asNum(y) !== 0 ? 1 : 0), a, b);
+      }
+      return a;
+    }
+    parseAnd() {
+      let a = this.parseRel();
+      while (this.peek().t === 'p' && this.peek().v === '&') {
+        this.next();
+        const b = this.parseRel();
+        a = lift((x, y) => (asNum(x) !== 0 && asNum(y) !== 0 ? 1 : 0), a, b);
+      }
+      return a;
+    }
+    parseRel() {
+      let a = this.parseAdd();
+      for (;;) {
+        const tk = this.peek();
+        // inside <...> vector literals, < and > belong to the literal, not to
+        // comparisons (parenthesise to compare; POV makes the same call)
+        if (this.noRel > 0) return a;
+        if (tk.t !== 'p' || !['<', '>', '<=', '>=', '=', '!='].includes(tk.v)) return a;
+        this.next();
+        const b = this.parseAdd();
+        const op = tk.v;
+        a = lift(
+          (x, y) => {
+            const f = {
+              '<': (p, q) => p < q,
+              '>': (p, q) => p > q,
+              '<=': (p, q) => p <= q,
+              '>=': (p, q) => p >= q,
+              '=': (p, q) => Math.abs(p - q) < 1e-10,
+              '!=': (p, q) => Math.abs(p - q) >= 1e-10,
+            }[op];
+            return f(asNum(x), asNum(y)) ? 1 : 0;
+          },
+          a,
+          b
+        );
+      }
+    }
+    parseAdd() {
+      let a = this.parseMul();
+      for (;;) {
+        const tk = this.peek();
+        if (tk.t === 'p' && tk.v === '+') {
+          this.next();
+          a = lift(OP.add, a, this.parseMul());
+        } else if (tk.t === 'p' && tk.v === '-') {
+          this.next();
+          a = lift(OP.sub, a, this.parseMul());
+        } else return a;
+      }
+    }
+    parseMul() {
+      let a = this.parseUnary();
+      for (;;) {
+        const tk = this.peek();
+        if (tk.t === 'p' && tk.v === '*') {
+          this.next();
+          a = lift(OP.mul, a, this.parseUnary());
+        } else if (tk.t === 'p' && tk.v === '/') {
+          this.next();
+          a = lift(OP.div, a, this.parseUnary());
+        } else return a;
+      }
+    }
+    parseUnary() {
+      const tk = this.peek();
+      if (tk.t === 'p' && tk.v === '-') {
+        this.next();
+        return lift(OP.neg, this.parseUnary());
+      }
+      if (tk.t === 'p' && tk.v === '+') {
+        this.next();
+        return this.parseUnary();
+      }
+      if (tk.t === 'p' && tk.v === '!') {
+        this.next();
+        return lift((v) => (asNum(v) === 0 ? 1 : 0), this.parseUnary());
+      }
+      return this.parsePostfix();
+    }
+    parsePostfix() {
+      let v = this.parsePrimary();
+      for (;;) {
+        if (this.peek().t === 'p' && this.peek().v === '.') {
+          this.next();
+          const m = this.next();
+          const idx = {
+            x: 0,
+            u: 0,
+            red: 0,
+            y: 1,
+            v: 1,
+            green: 1,
+            z: 2,
+            blue: 2,
+            filter: 3,
+            t: 4,
+            transmit: 4,
+          }[m.v];
+          if (idx === undefined) {
+            if (m.v === 'gray' || m.v === 'grey') {
+              v = lift((a) => {
+                const w = asVec3(a);
+                return w[0] * 0.297 + w[1] * 0.589 + w[2] * 0.114;
+              }, v);
+              continue;
+            }
+            this.err(`unknown vector member '.${m.v}'`, m.ln);
+          }
+          v = lift((a) => (Array.isArray(a) ? (a[idx] ?? 0) : a), v);
+        } else return v;
+      }
+    }
+    parseVectorLiteral() {
+      const ln = this.expect('<').ln;
+      this.noRel = (this.noRel || 0) + 1;
+      const comps = [this.parseExpr()];
+      while (this.eat(',')) comps.push(this.parseExpr());
+      this.expect('>');
+      this.noRel--;
+      if (comps.length < 2 || comps.length > 5)
+        this.err(`vector literals take 2..5 components, got ${comps.length}`, ln);
+      return lift((...cs) => cs.map(asNum), ...comps);
+    }
+    parsePrimary() {
+      const tk = this.peek();
+      if (tk.t === 'num') {
+        this.next();
+        return tk.v;
+      }
+      if (tk.t === 'p' && tk.v === '<') return this.parseVectorLiteral();
+      if (tk.t === 'p' && tk.v === '(') {
+        this.next();
+        const save = this.noRel || 0;
+        this.noRel = 0; // comparisons come back to life inside parentheses
+        const v = this.parseExpr();
+        this.noRel = save;
+        this.expect(')');
+        return v;
+      }
+      if (
+        tk.t === 'dir' &&
+        (tk.v === 'if' || tk.v === 'while' || tk.v === 'end' || tk.v === 'else')
+      ) {
+        this.err(`unexpected #${tk.v} inside an expression`, tk.ln);
+      }
+      if (tk.t === 'id') return this.parseIdentExpr();
+      this.err(`expected a value, got '${tk.v === '' ? 'end of scene' : tk.v}'`, tk.ln);
+    }
+    parseIdentExpr() {
+      const tk = this.next();
+      const name = tk.v;
+      if (name === 'clock') {
+        this.usesClock = true;
+        return (c) => c;
+      }
+      if (name === 'pi') return Math.PI;
+      if (name === 'true' || name === 'yes' || name === 'on') return 1;
+      if (name === 'false' || name === 'no' || name === 'off') return 0;
+      if (name === 'image_width') return this.iw;
+      if (name === 'image_height') return this.ih;
+      if (RESERVED_VEC[name]) return RESERVED_VEC[name].slice();
+      if (FN1[name]) {
+        this.expect('(');
+        const a = this.parseExpr();
+        this.expect(')');
+        return lift((v) => FN1[name](asNum(v)), a);
+      }
+      switch (name) {
+        case 'pow':
+        case 'atan2':
+        case 'mod':
+        case 'min':
+        case 'max':
+        case 'div':
+        case 'select': {
+          this.expect('(');
+          const args = [this.parseExpr()];
+          while (this.eat(',')) args.push(this.parseExpr());
+          this.expect(')');
+          const f = {
+            pow: (a, b) => Math.pow(a, b),
+            atan2: Math.atan2,
+            mod: (a, b) => a - Math.trunc(a / b) * b,
+            div: (a, b) => Math.trunc(a / b),
+            min: Math.min,
+            max: Math.max,
+            select: (s, ...rest) =>
+              rest[
+                Math.max(
+                  0,
+                  Math.min(rest.length - 1, s < 0 ? 0 : rest.length === 2 ? 1 : Math.sign(s) + 1)
+                )
+              ],
+          }[name];
+          return lift((...vs) => f(...vs.map(asNum)), ...args);
+        }
+        case 'vlength': {
+          this.expect('(');
+          const a = this.parseExpr();
+          this.expect(')');
+          return lift((v) => Math.hypot(...asVec3(v)), a);
+        }
+        case 'vnormalize': {
+          this.expect('(');
+          const a = this.parseExpr();
+          this.expect(')');
+          return lift((v) => {
+            const w = asVec3(v);
+            const l = Math.hypot(...w) || 1;
+            return [w[0] / l, w[1] / l, w[2] / l];
+          }, a);
+        }
+        case 'vdot': {
+          this.expect('(');
+          const a = this.parseExpr();
+          this.comma();
+          const b = this.parseExpr();
+          this.expect(')');
+          return lift(
+            (p, q) => {
+              const A = asVec3(p),
+                B = asVec3(q);
+              return A[0] * B[0] + A[1] * B[1] + A[2] * B[2];
+            },
+            a,
+            b
+          );
+        }
+        case 'vcross': {
+          this.expect('(');
+          const a = this.parseExpr();
+          this.comma();
+          const b = this.parseExpr();
+          this.expect(')');
+          return lift(
+            (p, q) => {
+              const A = asVec3(p),
+                B = asVec3(q);
+              return [
+                A[1] * B[2] - A[2] * B[1],
+                A[2] * B[0] - A[0] * B[2],
+                A[0] * B[1] - A[1] * B[0],
+              ];
+            },
+            a,
+            b
+          );
+        }
+        case 'vrotate':
+        case 'vaxis_rotate': {
+          this.expect('(');
+          const a = this.parseExpr();
+          this.comma();
+          const b = this.parseExpr();
+          let axis = null;
+          if (name === 'vaxis_rotate') {
+            this.comma();
+            axis = this.parseExpr();
+          }
+          this.expect(')');
+          if (name === 'vrotate')
+            return lift(
+              (p, r) => {
+                const M = mRotate(asVec3(r));
+                const w = asVec3(p);
+                return [
+                  M[0] * w[0] + M[1] * w[1] + M[2] * w[2],
+                  M[4] * w[0] + M[5] * w[1] + M[6] * w[2],
+                  M[8] * w[0] + M[9] * w[1] + M[10] * w[2],
+                ];
+              },
+              a,
+              b
+            );
+          return lift(
+            (p, ax, deg) => {
+              const A = asVec3(ax);
+              const l = Math.hypot(...A) || 1;
+              const M = mMul(
+                mYTo([A[0] / l, A[1] / l, A[2] / l]),
+                mMul(mRotY(asNum(deg)), mInvert(mYTo([A[0] / l, A[1] / l, A[2] / l])))
+              );
+              const w = asVec3(p);
+              return [
+                M[0] * w[0] + M[1] * w[1] + M[2] * w[2],
+                M[4] * w[0] + M[5] * w[1] + M[6] * w[2],
+                M[8] * w[0] + M[9] * w[1] + M[10] * w[2],
+              ];
+            },
+            a,
+            b,
+            axis
+          );
+        }
+        case 'seed': {
+          this.expect('(');
+          const a = this.parseExpr();
+          this.expect(')');
+          return { rng: mulberry({ s: asNum(evC(a, this.clockNow)) | 0 }) };
+        }
+        case 'rand': {
+          this.expect('(');
+          const a = this.parseExpr();
+          this.expect(')');
+          const stream = evC(a, this.clockNow);
+          if (!stream || !stream.rng) this.err('rand() wants a stream from seed(n)', tk.ln);
+          return stream.rng();
+        }
+        case 'rgb':
+        case 'rgbt':
+        case 'rgbf':
+        case 'rgbft':
+        case 'srgb':
+          return this.parseColorBody(name);
+        case 'color':
+        case 'colour':
+          return this.parseColorValue();
+      }
+      if (this.macros.has(name) && this.peek().v === '(') return this.invokeMacro(name, 'expr');
+      const val = this.lookup(name);
+      if (val === undefined)
+        this.err(`undeclared identifier '${name}'${this.didYouMean(name)}`, tk.ln);
+      if (val && val.kind) this.err(`'${name}' is a ${val.kind}, not a value`, tk.ln);
+      if (this.peek().v === '[' && isSdlArray(val)) {
+        this.next();
+        const idx = this.parseExpr();
+        this.expect(']');
+        const i = Math.trunc(asNum(evC(idx, this.clockNow)));
+        if (isDyn(idx)) this.structClock = true;
+        const cell = val[i];
+        if (cell === undefined)
+          this.err(`array index ${i} out of range (size ${val.length})`, tk.ln);
+        return cell;
+      }
+      return val;
+    }
+    // colour after an (optional) `color` keyword: rgb forms, names, or raw vector
+    parseColorValue() {
+      const tk = this.peek();
+      if (
+        tk.t === 'id' &&
+        ['rgb', 'rgbt', 'rgbf', 'rgbft', 'srgb', 'red', 'green', 'blue'].includes(tk.v)
+      ) {
+        if (tk.v === 'red' || tk.v === 'green' || tk.v === 'blue') {
+          // component-keyword form: color red 1 green 0.5
+          const col = [0, 0, 0, 0, 0];
+          while (
+            this.peek().t === 'id' &&
+            ['red', 'green', 'blue', 'filter', 'transmit'].includes(this.peek().v)
+          ) {
+            const w = this.next().v;
+            const e = this.parseExpr();
+            const idx = { red: 0, green: 1, blue: 2, filter: 3, transmit: 4 }[w];
+            col[idx] = asNum(evC(e, this.clockNow));
+            if (isDyn(e)) this.structClock = true;
+          }
+          return col;
+        }
+        this.next();
+        return this.parseColorBody(tk.v);
+      }
+      const v = this.parseExpr();
+      return lift((w) => asVec5(w), v);
+    }
+    parseColorBody(form) {
+      const e = this.parseExpr();
+      return lift((v) => {
+        const c = asVec5(typeof v === 'number' ? [v, v, v] : v);
+        if (form === 'rgbf') return [c[0], c[1], c[2], c[3], 0];
+        if (form === 'rgbt') return [c[0], c[1], c[2], 0, c[3]];
+        return c;
+      }, e);
+    }
+
+    normalize() {
+      while (this.frames.length > 1 && this.peek().t === 'eof') this.frames.pop();
+    }
+
+    parseScene() {
+      this.loadInclude('colors.inc', true); // povrayer always has the std library; so do we
+      for (;;) {
+        this.normalize();
+        if (this.atEof()) break;
+        this.parseStatement();
+      }
+      return this.scene;
+    }
+
+    // returns true if it consumed a directive (callable from any block context)
+    tryDirective() {
+      this.normalize();
+      const tk = this.peek();
+      if (tk.t !== 'dir') return false;
+      switch (tk.v) {
+        case 'declare':
+        case 'local': {
+          this.next();
+          this.handleDeclare(tk.v === 'local');
+          return true;
+        }
+        case 'while':
+          this.next();
+          this.handleWhile();
+          return true;
+        case 'for':
+          this.next();
+          this.handleFor();
+          return true;
+        case 'if':
+        case 'ifdef':
+        case 'ifndef':
+          this.next();
+          this.handleIf(tk.v);
+          return true;
+        case 'macro':
+          this.next();
+          this.handleMacroDef();
+          return true;
+        case 'include': {
+          this.next();
+          const s = this.next();
+          if (s.t !== 'str') this.err('#include wants a quoted file name', s.ln);
+          this.loadInclude(s.v, false);
+          return true;
+        }
+        case 'version': {
+          this.next();
+          this.parseExpr();
+          this.eat(';');
+          return true;
+        }
+        case 'default': {
+          this.next();
+          this.handleDefault();
+          return true;
+        }
+        case 'undef': {
+          this.next();
+          const id = this.next();
+          this.globals.delete(id.v);
+          return true;
+        }
+        case 'debug':
+        case 'warning':
+        case 'error': {
+          this.next();
+          const s = this.peek().t === 'str' ? this.next().v : '';
+          if (tk.v === 'error') this.err(`#error: ${s}`, tk.ln);
+          return true;
+        }
+        case 'switch':
+          this.next();
+          this.handleSwitch();
+          return true;
+        case 'fopen':
+        case 'fclose':
+        case 'read':
+        case 'write': {
+          this.next();
+          this.warn(`#${tk.v} isn't in turbo (skipped)`);
+          this.skipToDir(['end']);
+          return true;
+        }
+        // stray markers (handleSwitch owns them during execution): consume args, no-op
+        case 'break':
+          this.next();
+          return true;
+        case 'case':
+          this.next();
+          this.expect('(');
+          this.parseExpr();
+          this.expect(')');
+          return true;
+        case 'range':
+          this.next();
+          this.expect('(');
+          this.parseExpr();
+          this.comma();
+          this.parseExpr();
+          this.expect(')');
+          return true;
+        case 'else':
+        case 'elseif':
+        case 'end':
+          this.err(`#${tk.v} with no matching #if/#while`, tk.ln);
+      }
+      this.err(`unknown directive #${tk.v}`, tk.ln);
+    }
+
+    parseStatement() {
+      if (this.tryDirective()) return;
+      const tk = this.peek();
+      if (tk.t !== 'id')
+        this.err(`expected a scene item, got '${tk.v === '' ? 'end of scene' : tk.v}'`, tk.ln);
+      const kw = tk.v;
+      if (this.modSink && MOD_KEYWORDS.has(kw)) {
+        this.parseOneModifier(this.modSink);
+        return;
+      }
+      if (OBJ_KEYWORDS.includes(kw)) {
+        (this.csgSink || this.scene.objects).push(this.parseObject());
+        return;
+      }
+      if (SKIP_OBJECTS.includes(kw)) {
+        this.next();
+        this.warn(
+          kw === 'media'
+            ? "media is CPU-only; it'll show up in the real render"
+            : `${kw} isn't in turbo yet; it'll show up in the real render`
+        );
+        this.skipBlock();
+        return;
+      }
+      switch (kw) {
+        case 'camera':
+          this.next();
+          this.parseCamera();
+          return;
+        case 'light_source':
+          this.next();
+          this.parseLight();
+          return;
+        case 'background': {
+          this.next();
+          this.expect('{');
+          this.eat('color') || this.eat('colour');
+          this.scene.background = this.parseColorValue();
+          this.expect('}');
+          return;
+        }
+        case 'fog':
+          this.next();
+          this.parseFog();
+          return;
+        case 'sky_sphere':
+          this.next();
+          this.parseSkySphere();
+          return;
+        case 'global_settings':
+          this.next();
+          this.parseGlobalSettings();
+          return;
+        case 'plane':
+          return; // unreachable, kept for clarity
+      }
+      if (this.macros.has(kw)) {
+        this.next();
+        this.invokeMacro(kw, 'stmt');
+        return;
+      }
+      this.err(`unexpected '${kw}' at scene level${this.didYouMean(kw)}`, tk.ln);
+    }
+
+    handleDeclare(local) {
+      const id = this.next();
+      if (id.t !== 'id') this.err('#declare wants an identifier', id.ln);
+      if (this.peek().v === '[') {
+        // array cell assignment
+        this.next();
+        const idx = this.parseExpr();
+        this.expect(']');
+        this.expect('=');
+        const arr = this.lookup(id.v);
+        if (!isSdlArray(arr)) this.err(`'${id.v}' is not an array`, id.ln);
+        arr[Math.trunc(asNum(evC(idx, this.clockNow)))] = this.parseDeclareValue();
+        this.eat(';');
+        return;
+      }
+      this.expect('=');
+      this.declare(id.v, this.parseDeclareValue(), local);
+      this.eat(';');
+    }
+
+    parseDeclareValue() {
+      const tk = this.peek();
+      if (tk.t === 'id') {
+        if (tk.v === 'array') {
+          this.next();
+          this.expect('[');
+          const nExpr = this.parseExpr();
+          this.expect(']');
+          if (this.peek().v === '[') {
+            this.warn("multi-dimensional arrays aren't in turbo (flattened)");
+            this.next();
+            this.parseExpr();
+            this.expect(']');
+          }
+          const size = Math.trunc(asNum(evC(nExpr, this.clockNow)));
+          const arr = /** @type {SdlArray} */ (
+            new Array(Math.max(0, Math.min(size, 100000))).fill(0)
+          );
+          arr.isArr = true;
+          if (this.eat('{')) {
+            let i = 0;
+            while (!this.eat('}')) {
+              arr[i++] = this.parseDeclareValue();
+              this.eat(',');
+            }
+          }
+          return arr;
+        }
+        if (OBJ_KEYWORDS.includes(tk.v)) return { kind: 'object', node: this.parseObject() };
+        if (SKIP_OBJECTS.includes(tk.v)) {
+          this.next();
+          this.warn(`${tk.v} isn't in turbo yet; declared as an empty stand-in`);
+          this.skipBlock();
+          return { kind: 'object', node: null };
+        }
+        if (tk.v === 'texture') {
+          this.next();
+          return { kind: 'texture', tex: this.parseTexture() };
+        }
+        if (tk.v === 'material') {
+          this.next();
+          this.expect('{');
+          let tex = { pigment: null, finish: null, pxf: [] };
+          for (;;) {
+            if (this.tryDirective()) continue;
+            if (this.eat('}')) break;
+            const w = this.next();
+            if (w.v === 'texture') tex = this.parseTexture();
+            else if (w.v === 'interior') {
+              this.warn('interior (ior/refraction) is CPU-only');
+              this.skipBlock();
+            } else this.skipBlock();
+          }
+          return { kind: 'texture', tex };
+        }
+        if (tk.v === 'pigment') {
+          this.next();
+          return { kind: 'pigment', pig: this.parsePigment() };
+        }
+        if (tk.v === 'finish') {
+          this.next();
+          return { kind: 'finish', fin: this.parseFinish() };
+        }
+        if (tk.v === 'transform') {
+          this.warn("declared transform blocks aren't in turbo (identity)");
+          this.next();
+          this.skipBlock();
+          return M_ID.slice();
+        }
+        if (tk.v === 'function') {
+          this.next();
+          this.warn('function{} (isosurfaces) is CPU-only; declared as a stand-in');
+          if (this.eat('(')) {
+            while (!this.eat(')')) this.next();
+          }
+          this.skipBlock();
+          return { kind: 'function' };
+        }
+        if (tk.v === 'normal') {
+          this.next();
+          this.warn("normal{} bump maps aren't in turbo");
+          this.skipBlock();
+          return { kind: 'normal' };
+        }
+      }
+      return this.parseExpr();
+    }
+
+    // skip tokens (depth-aware over nested directives) until one of `stops`;
+    // consumes and returns the stopping directive name
+    skipToDir(stops) {
+      let depth = 0;
+      for (;;) {
+        const tk = this.next();
+        if (tk.t === 'eof') this.err(`ran out of scene looking for #${stops[0]} (clock ran out)`);
+        if (tk.t !== 'dir') continue;
+        if (['if', 'ifdef', 'ifndef', 'while', 'for', 'macro', 'switch'].includes(tk.v)) depth++;
+        else if (tk.v === 'end') {
+          if (depth === 0 && stops.includes('end')) return 'end';
+          if (depth > 0) depth--;
+        } else if (depth === 0 && stops.includes(tk.v)) return tk.v;
+      }
+    }
+
+    // execute statements until a stopping directive at this nesting level
+    parseUntilDir(stops) {
+      for (;;) {
+        this.normalize();
+        const tk = this.peek();
+        if (tk.t === 'eof') this.err(`ran out of scene looking for #${stops[0]}`);
+        if (tk.t === 'dir' && stops.includes(tk.v)) {
+          this.next();
+          return tk.v;
+        }
+        this.parseStatement();
+      }
+    }
+
+    truthy(v) {
+      if (isDyn(v)) {
+        this.structClock = true;
+        v = v(this.clockNow);
+      }
+      return asNum(v) !== 0;
+    }
+
+    handleIf(kind) {
+      let cond;
+      if (kind === 'if') {
+        this.expect('(');
+        cond = this.truthy(this.parseExpr());
+        this.expect(')');
+      } else {
+        this.expect('(');
+        const id = this.next();
+        cond = this.lookup(id.v) !== undefined || this.macros.has(id.v);
+        this.expect(')');
+        if (kind === 'ifndef') cond = !cond;
+      }
+      if (cond) {
+        const stop = this.parseUntilDir(['else', 'end']);
+        if (stop === 'else') this.skipToDir(['end']);
+      } else {
+        const stop = this.skipToDir(['else', 'end']);
+        if (stop === 'else') this.parseUntilDir(['end']);
+      }
+    }
+
+    handleWhile() {
+      const f = this.f,
+        condPos = f.pos;
+      for (;;) {
+        if (--this.budget < 0)
+          this.err('#while ran away (loop budget exceeded; turbo caps unrolling)');
+        f.pos = condPos;
+        this.expect('(');
+        const c = this.truthy(this.parseExpr());
+        this.expect(')');
+        if (!c) {
+          this.skipToDir(['end']);
+          return;
+        }
+        this.parseUntilDir(['end']);
+        if (this.f !== f) this.err('#while body left frames unbalanced (turbo bug)');
+      }
+    }
+
+    handleFor() {
+      this.expect('(');
+      const id = this.next();
+      if (id.t !== 'id') this.err('#for wants (Var, Start, End [, Step])', id.ln);
+      this.comma();
+      const start = asNum(evC(this.parseExpr(), this.clockNow));
+      this.comma();
+      const end = asNum(evC(this.parseExpr(), this.clockNow));
+      let step = 1;
+      if (this.eat(',')) step = asNum(evC(this.parseExpr(), this.clockNow));
+      this.expect(')');
+      if (step === 0)
+        this.err("#for step of 0 would render forever, even turbo isn't that fast", id.ln);
+      const f = this.f,
+        bodyPos = f.pos;
+      let v = start,
+        ran = false;
+      for (;;) {
+        const cont = step > 0 ? v <= end + 1e-9 : v >= end - 1e-9;
+        if (!cont) break;
+        if (--this.budget < 0) this.err('#for ran away (loop budget exceeded)');
+        f.pos = bodyPos;
+        this.declare(id.v, v, true);
+        this.parseUntilDir(['end']);
+        ran = true;
+        v += step;
+      }
+      // A loop that ran left the cursor past its own #end on the last pass, so
+      // only the zero-iteration case still has a body to skip.
+      if (!ran) this.skipToDir(['end']);
+    }
+
+    handleSwitch() {
+      this.expect('(');
+      const V = asNum(evC(this.parseExpr(), this.clockNow));
+      this.expect(')');
+      const readCaseArgs = (kind) => {
+        this.expect('(');
+        const a = asNum(evC(this.parseExpr(), this.clockNow));
+        let b = a;
+        if (kind === 'range') {
+          this.comma();
+          b = asNum(evC(this.parseExpr(), this.clockNow));
+        }
+        this.expect(')');
+        return V >= a - 1e-9 && V <= b + 1e-9;
+      };
+      for (;;) {
+        // hunt for the matching #case/#range/#else
+        const stop = this.skipToDir(['case', 'range', 'else', 'end']);
+        if (stop === 'end') return;
+        if (stop !== 'else' && !readCaseArgs(stop)) continue;
+        for (;;) {
+          // execute until #break or #end; markers fall through, POV-style
+          const fin = this.parseUntilDir(['break', 'end', 'case', 'range', 'else']);
+          if (fin === 'end') return;
+          if (fin === 'break') {
+            this.skipToDir(['end']);
+            return;
+          }
+          if (fin !== 'else') readCaseArgs(fin);
+        }
+      }
+    }
+
+    handleMacroDef() {
+      const id = this.next();
+      if (id.t !== 'id') this.err('#macro wants a name', id.ln);
+      this.expect('(');
+      const params = [];
+      if (!this.eat(')')) {
+        for (;;) {
+          const p = this.next();
+          if (p.t !== 'id') this.err('bad #macro parameter', p.ln);
+          params.push(p.v);
+          if (this.eat(')')) break;
+          this.expect(',');
+        }
+      }
+      // capture raw tokens to matching #end
+      const f = this.f,
+        startPos = f.pos;
+      this.skipToDir(['end']);
+      const body = f.toks.slice(startPos, f.pos - 1);
+      body.push({ t: 'eof', v: '', ln: id.ln });
+      this.macros.set(id.v, { params, body });
+    }
+
+    parseMacroArg() {
+      const tk = this.peek();
+      if (tk.t === 'id' && this.peek(1).v === '{') {
+        // whole blocks as macro arguments: Slab(-2.0, pigment { agate ... })
+        if (tk.v === 'pigment') {
+          this.next();
+          return { kind: 'pigment', pig: this.parsePigment() };
+        }
+        if (tk.v === 'texture') {
+          this.next();
+          return { kind: 'texture', tex: this.parseTexture() };
+        }
+        if (tk.v === 'finish') {
+          this.next();
+          return { kind: 'finish', fin: this.parseFinish() };
+        }
+        if (tk.v === 'normal') {
+          this.next();
+          this.skipBlock();
+          return { kind: 'normal' };
+        }
+        if (OBJ_KEYWORDS.includes(tk.v)) return { kind: 'object', node: this.parseObject() };
+      }
+      if (tk.t === 'id' && [',', ')'].includes(this.peek(1).v)) {
+        const val = this.lookup(tk.v);
+        if (val && val.kind) {
+          this.next();
+          return val;
+        } // pass textures/objects through
+      }
+      return this.parseExpr();
+    }
+
+    invokeMacro(name, ctx) {
+      if (--this.budget < 0) this.err('macro recursion budget exceeded');
+      const mac = this.macros.get(name);
+      this.expect('(');
+      const locals = { map: new Map(), up: null };
+      if (!this.eat(')')) {
+        for (let i = 0; ; i++) {
+          const v = this.parseMacroArg();
+          if (i < mac.params.length) locals.map.set(mac.params[i], v);
+          if (this.eat(')')) break;
+          this.expect(',');
+        }
+      }
+      for (const p of mac.params) if (!locals.map.has(p)) locals.map.set(p, 0);
+      this.frames.push({ toks: mac.body, pos: 0, locals });
+      if (ctx === 'expr') {
+        const v = this.parseExpr();
+        this.normalize();
+        if (this.f.toks === mac.body) this.frames.pop();
+        return v;
+      }
+      if (ctx === 'obj') {
+        while (this.tryDirective()); // macros often open with #local lines
+        const node = this.parseObject();
+        this.normalize();
+        if (this.f.toks === mac.body) this.frames.pop();
+        return node;
+      }
+      return null; // stmt context: frame drains via the main loop
+    }
+
+    loadInclude(file, quiet) {
+      const known = INCLUDE_SHIMS[file.toLowerCase()];
+      if (known === undefined) {
+        this.warn(`#include "${file}" isn't bundled in turbo; the real tracer has it`);
+        return;
+      }
+      if (known === null) return; // bundled, nothing extra to declare
+      if (this.includedFiles.has(file)) return;
+      this.includedFiles.add(file);
+      if (typeof known === 'object') {
+        for (const [k, v] of Object.entries(known)) this.globals.set(k, v.length ? v.slice() : v);
+        return;
+      }
+      this.frames.push({ toks: tokenize(known), pos: 0, locals: null });
+      this.parseUntilDirOrDrain();
+      if (!quiet)
+        this.warn(`#include "${file}": turbo bundles the famous bits, not the whole file`);
+    }
+
+    parseUntilDirOrDrain() {
+      const depth = this.frames.length;
+      while (this.frames.length >= depth) {
+        this.normalize();
+        if (this.frames.length < depth) break;
+        if (this.peek().t === 'eof') {
+          if (this.frames.length === 1) break;
+          this.frames.pop();
+          break;
+        }
+        this.parseStatement();
+      }
+    }
+
+    handleDefault() {
+      this.expect('{');
+      for (;;) {
+        if (this.tryDirective()) continue;
+        if (this.eat('}')) break;
+        const w = this.next();
+        if (w.v === 'texture') {
+          const tex = this.parseTexture();
+          if (tex.pigment) this.defaults = { ...this.defaults, pigment: tex.pigment };
+          if (tex.finish) this.defaults = { ...this.defaults, finish: tex.finish };
+        } else if (w.v === 'pigment')
+          this.defaults = { ...this.defaults, pigment: this.parsePigment() };
+        else if (w.v === 'finish') this.defaults = { ...this.defaults, finish: this.parseFinish() };
+        else this.skipBlock();
+      }
+    }
+
+    skipBlock() {
+      if (!this.eat('{')) {
+        // skip a single value instead
+        this.parseExpr();
+        return;
+      }
+      let depth = 1;
+      while (depth > 0) {
+        const tk = this.next();
+        if (tk.t === 'eof') this.err('unclosed { } block, no matching } before the scene ran out');
+        if (tk.t === 'p' && tk.v === '{') depth++;
+        if (tk.t === 'p' && tk.v === '}') depth--;
+      }
+    }
+
+    newTex() {
+      return { pigment: null, finish: null, pxf: [] };
+    }
+
+    isColorStart() {
+      const tk = this.peek();
+      if (tk.t === 'p' && tk.v === '<') return true;
+      if (tk.t === 'num') return true;
+      if (tk.t !== 'id') return false;
+      if (
+        [
+          'color',
+          'colour',
+          'rgb',
+          'rgbt',
+          'rgbf',
+          'rgbft',
+          'srgb',
+          'red',
+          'green',
+          'blue',
+        ].includes(tk.v)
+      )
+        return true;
+      const v = this.lookup(tk.v);
+      return Array.isArray(v) || typeof v === 'number' || isDyn(v);
+    }
+
+    parseObject() {
+      const tk = this.next();
+      const kw = tk.v,
+        ln = tk.ln;
+      const base = { xf: [], tex: this.newTex(), noShadow: false, inverse: false, ln };
+      this.expect('{');
+      let node;
+      switch (kw) {
+        case 'sphere': {
+          const c = this.parseExpr();
+          this.comma();
+          const r = this.parseExpr();
+          node = { ...base, prim: 'sphere', a: { c, r } };
+          break;
+        }
+        case 'box': {
+          const lo = this.parseExpr();
+          this.comma();
+          const hi = this.parseExpr();
+          node = { ...base, prim: 'box', a: { lo, hi } };
+          break;
+        }
+        case 'plane': {
+          const n = this.parseExpr();
+          this.comma();
+          const d = this.parseExpr();
+          node = { ...base, prim: 'plane', a: { n, d } };
+          break;
+        }
+        case 'cylinder': {
+          const p1 = this.parseExpr();
+          this.comma();
+          const p2 = this.parseExpr();
+          this.comma();
+          const r = this.parseExpr();
+          node = { ...base, prim: 'cylinder', a: { p1, p2, r } };
+          break;
+        }
+        case 'cone': {
+          const p1 = this.parseExpr();
+          this.comma();
+          const r1 = this.parseExpr();
+          this.comma();
+          const p2 = this.parseExpr();
+          this.comma();
+          const r2 = this.parseExpr();
+          node = { ...base, prim: 'cone', a: { p1, r1, p2, r2 } };
+          break;
+        }
+        case 'torus': {
+          const R = this.parseExpr();
+          this.comma();
+          const r = this.parseExpr();
+          node = { ...base, prim: 'torus', a: { R, r } };
+          break;
+        }
+        case 'superellipsoid': {
+          const e = this.parseExpr();
+          this.warn('superellipsoid is approximated as a rounded box on the GPU');
+          node = { ...base, prim: 'superellipsoid', a: { e } };
+          break;
+        }
+        case 'blob': {
+          node = { ...base, prim: 'blob', a: { threshold: 1.0 }, comps: [] };
+          for (;;) {
+            if (this.tryDirective()) continue;
+            const t = this.peek();
+            if (t.t === 'id' && t.v === 'threshold') {
+              this.next();
+              node.a.threshold = this.parseExpr();
+              continue;
+            }
+            if (t.t === 'id' && t.v === 'sphere') {
+              this.next();
+              this.expect('{');
+              const c = this.parseExpr();
+              this.comma();
+              const r = this.parseExpr();
+              let s = 1;
+              if (this.eat(',')) {
+                this.eat('strength');
+                s = this.parseExpr();
+              } else if (this.eat('strength')) s = this.parseExpr();
+              while (!this.eat('}')) {
+                if (this.tryDirective()) continue;
+                const m = this.next();
+                if (['translate', 'rotate', 'scale'].includes(m.v)) {
+                  this.warn("transforms on blob components aren't in turbo (skipped)");
+                  this.parseExpr();
+                } else if (m.v === 'pigment' || m.v === 'texture' || m.v === 'finish') {
+                  this.warn("per-component blob textures aren't in turbo (skipped)");
+                  this.skipBlock();
+                } else this.err(`unexpected '${m.v}' in blob sphere`, m.ln);
+              }
+              node.comps.push({ c, r, s });
+              continue;
+            }
+            if (t.t === 'id' && t.v === 'cylinder') {
+              this.next();
+              this.warn("blob cylinder components aren't in turbo (skipped)");
+              this.skipBlock();
+              continue;
+            }
+            if (t.t === 'id' && t.v === 'component') {
+              this.next();
+              const s = this.parseExpr();
+              this.comma();
+              const r = this.parseExpr();
+              this.comma();
+              const c = this.parseExpr();
+              node.comps.push({ c, r, s });
+              continue;
+            }
+            break;
+          }
+          break;
+        }
+        case 'union':
+        case 'merge':
+        case 'difference':
+        case 'intersection': {
+          node = { ...base, csg: kw === 'merge' ? 'union' : kw, children: [] };
+          // objects produced while a macro frame drains (Face(1) Face(2) ... in
+          // a union) must land HERE, not at scene level: csgSink redirects them.
+          const prevSink = this.csgSink;
+          this.csgSink = node.children;
+          for (;;) {
+            this.normalize();
+            if (this.tryDirective()) continue;
+            const t = this.peek();
+            if (t.t === 'id' && OBJ_KEYWORDS.includes(t.v)) {
+              node.children.push(this.parseObject());
+              continue;
+            }
+            if (t.t === 'id' && SKIP_OBJECTS.includes(t.v)) {
+              this.next();
+              this.warn(`${t.v} isn't in turbo yet; it'll show up in the real render`);
+              this.skipBlock();
+              continue;
+            }
+            if (t.t === 'id' && t.v === 'light_source') {
+              this.next();
+              this.parseLight();
+              continue;
+            }
+            if (t.t === 'id' && this.macros.has(t.v) && this.peek(1).v === '(') {
+              this.next();
+              this.invokeMacro(t.v, 'stmt');
+              continue;
+            }
+            break;
+          }
+          this.csgSink = prevSink;
+          if (node.children.length === 0)
+            this.warn(`empty ${kw} (all of its children were skipped?)`);
+          break;
+        }
+        case 'object': {
+          this.normalize();
+          const t = this.peek();
+          if (t.t === 'id' && OBJ_KEYWORDS.includes(t.v))
+            node = { ...cloneNode(this.parseObject()), ln };
+          else if (t.t === 'id' && this.macros.has(t.v)) {
+            this.next();
+            node = { ...cloneNode(this.invokeMacro(t.v, 'obj')), ln };
+          } else {
+            const id = this.next();
+            const val = this.lookup(id.v);
+            if (!val || val.kind !== 'object')
+              this.err(`'${id.v}' is not a declared object${this.didYouMean(id.v)}`, id.ln);
+            node = val.node ? cloneNode(val.node) : { ...base, prim: null };
+            node.ln = ln;
+          }
+          break;
+        }
+        default:
+          this.err(`turbo bug: parseObject('${kw}')`, ln);
+      }
+      this.parseModifiers(node);
+      this.expect('}');
+      return node;
+    }
+
+    parseModifiers(node) {
+      // modSink lets directives (#if texture{A} #else texture{B} #end) inside a
+      // modifier list route their items back to THIS node via parseStatement.
+      const prevSink = this.modSink;
+      this.modSink = node;
+      for (;;) {
+        this.normalize();
+        if (this.tryDirective()) continue;
+        const tk = this.peek();
+        if (tk.t === 'p' && tk.v === '}') {
+          this.modSink = prevSink;
+          return;
+        }
+        if (tk.t !== 'id')
+          this.err(
+            `expected an object modifier or '}', got '${tk.v === '' ? 'end of scene' : tk.v}'`,
+            tk.ln
+          );
+        this.parseOneModifier(node);
+      }
+    }
+
+    parseOneModifier(node) {
+      const tk = this.next();
+      switch (tk.v) {
+        case 'translate':
+          node.xf.push({ k: 't', v: this.parseExpr() });
+          break;
+        case 'rotate':
+          node.xf.push({ k: 'r', v: this.parseExpr() });
+          break;
+        case 'scale':
+          node.xf.push({ k: 's', v: this.parseExpr() });
+          break;
+        case 'matrix': {
+          this.expect('<');
+          const m = [this.parseExpr()];
+          while (this.eat(',')) m.push(this.parseExpr());
+          this.expect('>');
+          if (m.length !== 12) this.err(`matrix wants 12 values, got ${m.length}`, tk.ln);
+          node.xf.push({ k: 'm', v: m });
+          break;
+        }
+        case 'texture': {
+          const t2 = this.parseTexture();
+          if (t2.pigment) node.tex.pigment = t2.pigment;
+          if (t2.finish) node.tex.finish = { ...(node.tex.finish || {}), ...t2.finish };
+          node.tex.pxf.push(...t2.pxf);
+          break;
+        }
+        case 'pigment':
+          node.tex.pigment = this.parsePigment();
+          break;
+        case 'finish':
+          node.tex.finish = { ...(node.tex.finish || {}), ...this.parseFinish() };
+          break;
+        case 'material': {
+          this.expect('{');
+          for (;;) {
+            if (this.tryDirective()) continue;
+            if (this.eat('}')) break;
+            const w = this.next();
+            if (w.v === 'texture') {
+              const t2 = this.parseTexture();
+              if (t2.pigment) node.tex.pigment = t2.pigment;
+              if (t2.finish) node.tex.finish = { ...(node.tex.finish || {}), ...t2.finish };
+            } else if (w.v === 'interior') {
+              const ior = this.parseInterior();
+              if (ior !== null) node.ior = ior;
+            } else if (w.t === 'id' && this.lookup(w.v)?.kind === 'texture') {
+              const t2 = this.lookup(w.v).tex;
+              if (t2.pigment) node.tex.pigment = t2.pigment;
+              if (t2.finish) node.tex.finish = { ...(node.tex.finish || {}), ...t2.finish };
+            } else {
+              this.warn(`${w.v} in material{} is CPU-only`);
+              this.skipBlock();
+            }
+          }
+          break;
+        }
+        case 'normal':
+          this.warn("normal{} bump maps aren't in turbo; the real tracer has them");
+          this.skipBlock();
+          break;
+        case 'interior': {
+          const ior = this.parseInterior();
+          if (ior !== null) node.ior = ior;
+          break;
+        }
+        case 'interior_texture':
+          this.warn('interior_texture is CPU-only');
+          this.skipBlock();
+          break;
+        case 'photons':
+          this.warn('photons? buy a Cray. (or hit Ray-trace it)');
+          this.skipBlock();
+          break;
+        case 'media':
+          this.warn("media is CPU-only; it'll show up in the real render");
+          this.skipBlock();
+          break;
+        case 'no_shadow':
+          node.noShadow = true;
+          break;
+        case 'no_image':
+        case 'no_reflection':
+          this.warn(`${tk.v} isn't in turbo (object stays visible)`);
+          break;
+        case 'inverse':
+          node.inverse = true;
+          break;
+        case 'clipped_by':
+        case 'bounded_by':
+          this.warn(`${tk.v} isn't in turbo (skipped)`);
+          this.skipBlock();
+          break;
+        case 'cutaway_textures':
+          break;
+        case 'transform':
+          this.warn("transform{} blocks aren't in turbo (use translate/rotate/scale)");
+          this.skipBlock();
+          break;
+        default: {
+          if (FLAG_MODS.includes(tk.v)) {
+            const p = this.peek();
+            if (
+              p.t === 'num' ||
+              (p.t === 'id' && ['on', 'off', 'true', 'false', 'yes', 'no'].includes(p.v))
+            )
+              this.next();
+            break;
+          }
+          const val = this.lookup(tk.v);
+          if (val && val.kind === 'texture') {
+            if (val.tex.pigment) node.tex.pigment = val.tex.pigment;
+            if (val.tex.finish) node.tex.finish = { ...(node.tex.finish || {}), ...val.tex.finish };
+            break;
+          }
+          if (val && val.kind === 'normal') break; // normal{} stand-in from a macro arg
+          this.err(`unknown object modifier '${tk.v}'${this.didYouMean(tk.v)}`, tk.ln);
+        }
+      }
+    }
+
+    // interior { ior 1.5 ... }: returns the ior (dyn-capable) or null.
+    // Everything else in interior (media, caustics, fade_*) stays CPU-only.
+    parseInterior() {
+      this.expect('{');
+      let ior = null;
+      for (;;) {
+        this.normalize();
+        if (this.tryDirective()) continue;
+        if (this.eat('}')) break;
+        const w = this.next();
+        if (w.v === 'ior') ior = this.parseExpr();
+        else if (w.t === 'id' && INTERIOR_IOR[w.v] !== undefined) ior = INTERIOR_IOR[w.v];
+        else if (w.v === 'media') {
+          this.warn("media is CPU-only; it'll show up in the real render");
+          this.skipBlock();
+        } else if (
+          w.v === 'caustics' ||
+          w.v === 'dispersion' ||
+          w.v === 'dispersion_samples' ||
+          w.v === 'fade_power' ||
+          w.v === 'fade_distance'
+        ) {
+          this.warn(`interior ${w.v} is CPU-only`);
+          this.parseExpr();
+        } else if (w.v === 'fade_color') {
+          this.parseColorValue();
+        } else this.err(`unknown interior item '${w.v}'`, w.ln);
+      }
+      return ior;
+    }
+
+    parseOptionalColor() {
+      if (!this.isColorStart()) return null;
+      this.eat('color') || this.eat('colour');
+      return this.parseColorValue();
+    }
+
+    parsePigment() {
+      this.expect('{');
+      const pig = {
+        type: 0,
+        c1: null,
+        c2: null,
+        stops: null,
+        axis: [0, 1, 0],
+        turb: 0,
+        pxf: [],
+        freq: 1,
+        phase: 0,
+        wave: 0,
+      };
+      for (;;) {
+        this.normalize();
+        if (this.tryDirective()) continue;
+        const tk = this.peek();
+        if (tk.t === 'p' && tk.v === '}') {
+          this.next();
+          break;
+        }
+        if (tk.t === 'p' && tk.v === '<') {
+          pig.c1 = this.parseColorValue();
+          continue;
+        }
+        if (tk.t !== 'id') this.err(`unexpected '${tk.v}' in pigment`, tk.ln);
+        this.next();
+        switch (tk.v) {
+          case 'color':
+          case 'colour':
+            pig.c1 = this.parseColorValue();
+            break;
+          case 'rgb':
+          case 'rgbt':
+          case 'rgbf':
+          case 'rgbft':
+          case 'srgb':
+            pig.c1 = this.parseColorBody(tk.v);
+            break;
+          case 'checker': {
+            pig.type = 1;
+            const a = this.parseOptionalColor();
+            this.eat(',');
+            const b = this.parseOptionalColor();
+            if (a) pig.c1 = a;
+            if (b) pig.c2 = b;
+            break;
+          }
+          case 'hexagon': {
+            this.warn('hexagon pattern is approximated as checker');
+            pig.type = 1;
+            const a = this.parseOptionalColor();
+            this.eat(',');
+            const b = this.parseOptionalColor();
+            this.eat(',');
+            this.parseOptionalColor();
+            if (a) pig.c1 = a;
+            if (b) pig.c2 = b;
+            break;
+          }
+          case 'brick': {
+            this.warn('brick pattern is approximated as checker');
+            pig.type = 1;
+            const a = this.parseOptionalColor();
+            this.eat(',');
+            const b = this.parseOptionalColor();
+            if (a) pig.c1 = a;
+            if (b) pig.c2 = b;
+            break;
+          }
+          case 'gradient':
+            pig.type = 2;
+            pig.axis = this.parseExpr();
+            break;
+          case 'marble':
+            pig.type = 3;
+            break;
+          case 'agate':
+            this.warn('agate is approximated as marble');
+            pig.type = 3;
+            break;
+          case 'wood':
+            this.warn('wood is approximated as marble rings');
+            pig.type = 3;
+            break;
+          case 'bozo':
+            pig.type = 4;
+            break;
+          case 'spotted':
+          case 'leopard':
+            pig.type = 4;
+            break;
+          case 'granite':
+            this.warn('granite is approximated as bozo noise');
+            pig.type = 4;
+            break;
+          case 'radial':
+            pig.type = 5;
+            break;
+          case 'planar':
+            pig.type = 2;
+            pig.axis = [0, 1, 0];
+            break;
+          case 'cylindrical':
+            pig.type = 5;
+            break;
+          case 'spherical':
+            pig.type = 6;
+            break;
+          case 'color_map':
+          case 'colour_map': {
+            this.expect('{');
+            const stops = [];
+            for (;;) {
+              this.normalize();
+              if (this.tryDirective()) continue;
+              if (this.eat('}')) break;
+              this.expect('[');
+              const pos = this.parseExpr();
+              this.eat('color') || this.eat('colour');
+              const col = this.parseColorValue();
+              this.expect(']');
+              stops.push({ pos, col });
+            }
+            if (stops.length > 8) {
+              this.warn('color_map has more than 8 entries; turbo keeps the first 8');
+              stops.length = 8;
+            }
+            pig.stops = stops;
+            break;
+          }
+          case 'turbulence': {
+            const v = this.parseExpr();
+            pig.turb = lift((w) => asNum(Array.isArray(w) ? w[0] : w), v);
+            break;
+          }
+          case 'octaves':
+          case 'omega':
+          case 'lambda':
+          case 'agate_turb':
+            this.parseExpr();
+            break;
+          case 'frequency':
+            pig.freq = this.parseExpr();
+            break;
+          case 'phase':
+            pig.phase = this.parseExpr();
+            break;
+          case 'ramp_wave':
+            pig.wave = 0;
+            break;
+          case 'triangle_wave':
+            pig.wave = 1;
+            break;
+          case 'sine_wave':
+            pig.wave = 2;
+            break;
+          case 'scallop_wave':
+          case 'cubic_wave':
+          case 'poly_wave':
+            this.warn(`${tk.v} is approximated as sine_wave`);
+            pig.wave = 2;
+            break;
+          case 'scale':
+            pig.pxf.push({ k: 's', v: this.parseExpr() });
+            break;
+          case 'translate':
+            pig.pxf.push({ k: 't', v: this.parseExpr() });
+            break;
+          case 'rotate':
+            pig.pxf.push({ k: 'r', v: this.parseExpr() });
+            break;
+          case 'quick_color':
+          case 'quick_colour':
+            this.parseColorValue();
+            break;
+          case 'image_map':
+            this.warn("image_map is CPU-only; it'll show up in the real render");
+            this.skipBlock();
+            break;
+          case 'transmit':
+          case 'filter': {
+            const v = this.parseExpr();
+            const idx = tk.v === 'filter' ? 3 : 4;
+            pig.c1 = lift(
+              (c, t) => {
+                const w = asVec5(c ?? [0, 0, 0, 0, 0]);
+                w[idx] = asNum(t);
+                return w;
+              },
+              pig.c1 ?? [0, 0, 0, 0, 0],
+              v
+            );
+            break;
+          }
+          case 'crackle':
+            this.warn('crackle is approximated as bozo noise');
+            pig.type = 4;
+            break;
+          case 'object':
+            this.warn("object patterns aren't in turbo (solid stand-in)");
+            this.skipBlock();
+            break;
+          case 'function':
+            this.warn("function patterns aren't in turbo (solid stand-in)");
+            this.skipBlock();
+            break;
+          case 'pigment_map':
+            this.warn("pigment_map isn't in turbo (first colour wins); the real tracer blends");
+            this.skipBlock();
+            break;
+          case 'average':
+            this.warn("average pattern isn't in turbo");
+            break;
+          case 'warp':
+            this.warn("warp{} isn't in turbo (pattern stays unwarped)");
+            this.skipBlock();
+            break;
+          default: {
+            const val = this.lookup(tk.v);
+            if (val && val.kind === 'pigment') {
+              Object.assign(pig, val.pig);
+              pig.pxf = val.pig.pxf.slice();
+              break;
+            }
+            if (val !== undefined && !val.kind) {
+              pig.c1 = lift((w) => asVec5(w), val);
+              break;
+            }
+            if (val === undefined && /^[A-Z]/.test(tk.v)) {
+              this.warn(
+                `pigment '${tk.v}' isn't bundled in turbo (gray stand-in); the real tracer has it`
+              );
+              pig.c1 = [0.55, 0.55, 0.55, 0, 0];
+              break;
+            }
+            this.err(
+              `unknown pigment item '${tk.v}'${this.didYouMean(tk.v, ['checker', 'gradient', 'color_map'])}`,
+              tk.ln
+            );
+          }
+        }
+      }
+      if (pig.type === 1 && !pig.c1 && !pig.c2) {
+        pig.c1 = [0, 0, 1, 0, 0];
+        pig.c2 = [0, 1, 0, 0, 0];
+      } // the classic accident
+      if (!pig.c1) pig.c1 = [0, 0, 0, 0, 0];
+      if (pig.type === 1 && !pig.c2) pig.c2 = [0, 0, 0, 0, 0];
+      if (pig.type >= 2 && !pig.stops)
+        pig.stops = [
+          { pos: 0, col: [0, 0, 0, 0, 0] },
+          { pos: 1, col: [1, 1, 1, 0, 0] },
+        ];
+      return pig;
+    }
+
+    parseFinish() {
+      this.expect('{');
+      const fin = {};
+      const lum = (v) =>
+        lift(
+          (w) => (Array.isArray(w) ? w[0] * 0.297 + (w[1] ?? 0) * 0.589 + (w[2] ?? 0) * 0.114 : w),
+          v
+        );
+      for (;;) {
+        this.normalize();
+        if (this.tryDirective()) continue;
+        const tk = this.peek();
+        if (tk.t === 'p' && tk.v === '}') {
+          this.next();
+          break;
+        }
+        if (tk.t !== 'id') this.err(`unexpected '${tk.v}' in finish`, tk.ln);
+        this.next();
+        switch (tk.v) {
+          case 'ambient':
+            fin.ambient = lum(this.parseColorValue());
+            break;
+          case 'emission':
+            fin.emission = this.parseColorValue();
+            break;
+          case 'diffuse': {
+            this.eat('albedo');
+            fin.diffuse = this.parseExpr();
+            if (this.eat(',')) this.parseExpr();
+            break;
+          }
+          case 'brilliance':
+            this.parseExpr();
+            break;
+          case 'phong':
+            this.eat('albedo');
+            fin.phong = this.parseExpr();
+            break;
+          case 'phong_size':
+            fin.phongSize = this.parseExpr();
+            break;
+          case 'specular':
+            this.eat('albedo');
+            fin.specular = this.parseExpr();
+            break;
+          case 'roughness':
+            fin.roughness = this.parseExpr();
+            break;
+          case 'metallic': {
+            fin.metallic = 1;
+            const p = this.peek();
+            if (p.t === 'num') fin.metallic = this.next().v;
+            break;
+          }
+          case 'reflection': {
+            if (this.eat('{')) {
+              const a = this.parseColorValue();
+              let b = null;
+              if (this.eat(',')) b = this.parseColorValue();
+              const r = {
+                rmin: b ? a : null,
+                rmax: b || a,
+                fresnel: 0,
+                falloff: 1,
+                metallic: 0,
+              };
+              for (;;) {
+                if (this.eat('}')) break;
+                const w = this.next();
+                if (w.v === 'fresnel') {
+                  r.fresnel = 1;
+                  const p = this.peek();
+                  if (p.t === 'num' || (p.t === 'id' && ['on', 'off'].includes(p.v)))
+                    r.fresnel = asNum(evC(this.parsePrimaryFlag(), 0));
+                } else if (w.v === 'falloff') r.falloff = this.parseExpr();
+                else if (w.v === 'metallic') r.metallic = 1;
+                else if (w.v === 'exponent') this.parseExpr();
+                else this.err(`unknown reflection item '${w.v}'`, w.ln);
+              }
+              fin.reflection = r;
+            } else {
+              const c = this.parseColorValue();
+              fin.reflection = { rmin: null, rmax: c, fresnel: 0, falloff: 1, metallic: 0 };
+            }
+            break;
+          }
+          case 'conserve_energy':
+            break;
+          case 'crand':
+            this.parseExpr();
+            break;
+          case 'fresnel': {
+            const p = this.peek();
+            if (p.t === 'num') this.next();
+            fin.fresnelFlag = true;
+            break;
+          }
+          case 'irid':
+            this.warn('irid is CPU-only');
+            this.skipBlock();
+            break;
+          case 'subsurface':
+            this.warn('subsurface is CPU-only');
+            this.skipBlock();
+            break;
+          case 'use_alpha':
+            this.parseExpr();
+            break;
+          default: {
+            const val = this.lookup(tk.v);
+            if (val && val.kind === 'finish') {
+              Object.assign(fin, val.fin);
+              break;
+            }
+            if (val === undefined && /^[A-Z]/.test(tk.v)) {
+              this.warn(
+                `finish '${tk.v}' isn't bundled in turbo (defaults used); the real tracer has it`
+              );
+              break;
+            }
+            this.err(
+              `unknown finish item '${tk.v}'${this.didYouMean(tk.v, ['specular', 'roughness', 'reflection', 'ambient'])}`,
+              tk.ln
+            );
+          }
+        }
+      }
+      return fin;
+    }
+
+    parsePrimaryFlag() {
+      const tk = this.next();
+      if (tk.t === 'num') return tk.v;
+      return tk.v === 'on' || tk.v === 'true' || tk.v === 'yes' ? 1 : 0;
+    }
+
+    parseTexture() {
+      this.expect('{');
+      const tex = this.newTex();
+      this.parseTextureItems(tex, '}');
+      return tex;
+    }
+
+    mergeTex(tex, sub) {
+      if (sub.pigment) tex.pigment = sub.pigment;
+      if (sub.finish) tex.finish = { ...(tex.finish || {}), ...sub.finish };
+      tex.pxf.push(...sub.pxf);
+    }
+
+    // one sub-texture: either `texture { ... }` or a declared texture identifier
+    parseSubTexture() {
+      this.normalize();
+      const t = this.peek();
+      if (t.t === 'id' && t.v === 'texture') {
+        this.next();
+        return this.parseTexture();
+      }
+      if (t.t === 'id') {
+        const val = this.lookup(t.v);
+        if (val && val.kind === 'texture') {
+          this.next();
+          return val.tex;
+        }
+      }
+      return null;
+    }
+
+    parseTextureItems(tex, term) {
+      const PATTERNS = [
+        'gradient',
+        'cylindrical',
+        'spherical',
+        'radial',
+        'bozo',
+        'marble',
+        'granite',
+        'agate',
+        'wood',
+        'planar',
+        'leopard',
+        'spotted',
+        'brick',
+        'hexagon',
+        'crackle',
+      ];
+      for (;;) {
+        this.normalize();
+        if (this.tryDirective()) continue;
+        const tk = this.peek();
+        if (tk.t === 'p' && tk.v === term) {
+          this.next();
+          break;
+        }
+        if (tk.t !== 'id') this.err(`unexpected '${tk.v}' in texture`, tk.ln);
+        this.next();
+        switch (tk.v) {
+          case 'pigment':
+            tex.pigment = this.parsePigment();
+            break;
+          case 'finish':
+            tex.finish = { ...(tex.finish || {}), ...this.parseFinish() };
+            break;
+          case 'normal':
+            this.warn("normal{} bump maps aren't in turbo; the real tracer has them");
+            this.skipBlock();
+            break;
+          case 'scale':
+            tex.pxf.push({ k: 's', v: this.parseExpr() });
+            break;
+          case 'translate':
+            tex.pxf.push({ k: 't', v: this.parseExpr() });
+            break;
+          case 'rotate':
+            tex.pxf.push({ k: 'r', v: this.parseExpr() });
+            break;
+          case 'checker': {
+            // texture-level checker: synthesise a checker pigment from the two
+            // sub-textures' pigments, keep the first one's finish
+            const t1 = this.parseSubTexture();
+            this.eat(',');
+            const t2 = this.parseSubTexture();
+            if (t1 && t2 && t1.pigment && t2.pigment) {
+              this.warn('checker of textures: pigments are checkered, first finish wins');
+              tex.pigment = {
+                ...t1.pigment,
+                type: 1,
+                c1: t1.pigment.c1,
+                c2: t2.pigment.c1,
+                pxf: [],
+              };
+              tex.finish = { ...(tex.finish || {}), ...(t1.finish || {}) };
+            } else if (t1) {
+              this.warn('texture checker approximated by its first texture');
+              this.mergeTex(tex, t1);
+            } else this.warn('texture checker without sub-textures is ignored');
+            break;
+          }
+          case 'texture_map': {
+            this.expect('{');
+            const entries = [];
+            for (;;) {
+              this.normalize();
+              if (this.tryDirective()) continue;
+              if (this.eat('}')) break;
+              this.expect('[');
+              this.parseExpr(); // position: turbo picks one representative entry
+              const sub = this.newTex();
+              const ident = this.parseSubTexture();
+              if (ident) {
+                this.mergeTex(sub, ident);
+                this.expect(']');
+              } else this.parseTextureItems(sub, ']');
+              entries.push(sub);
+            }
+            if (entries.length) {
+              this.warn('texture_map is approximated by its middle entry; the real tracer blends');
+              this.mergeTex(tex, entries[Math.floor(entries.length / 2)]);
+            }
+            break;
+          }
+          case 'turbulence':
+          case 'frequency':
+          case 'phase':
+          case 'octaves':
+          case 'omega':
+          case 'lambda':
+          case 'agate_turb':
+            this.parseExpr();
+            break;
+          case 'tiles':
+          case 'material_map':
+            this.warn(`${tk.v} textures aren't in turbo`);
+            this.skipBlock();
+            break;
+          case 'uv_mapping':
+            break;
+          default: {
+            if (PATTERNS.includes(tk.v)) {
+              // pattern selector for an upcoming texture_map; the map case above
+              // approximates anyway, so the selector itself needs no state
+              if (tk.v === 'gradient') this.parseExpr();
+              break;
+            }
+            const val = this.lookup(tk.v);
+            if (val && val.kind === 'texture') {
+              this.mergeTex(tex, val.tex);
+              break;
+            }
+            if (isSdlArray(val) && this.peek().v === '[') {
+              this.next();
+              const idx = this.parseExpr();
+              this.expect(']');
+              const cell = val[Math.trunc(asNum(evC(idx, this.clockNow)))];
+              if (cell && cell.kind === 'texture') {
+                this.mergeTex(tex, cell.tex);
+                break;
+              }
+              this.err(`'${tk.v}[...]' is not a texture`, tk.ln);
+            }
+            if (val === undefined && /^[A-Z]/.test(tk.v)) {
+              this.warn(
+                `texture '${tk.v}' isn't bundled in turbo (plain stand-in); the real tracer has it`
+              );
+              if (!tex.pigment)
+                tex.pigment = {
+                  type: 0,
+                  c1: [0.55, 0.55, 0.55, 0, 0],
+                  c2: null,
+                  stops: null,
+                  axis: [0, 1, 0],
+                  turb: 0,
+                  pxf: [],
+                  freq: 1,
+                  phase: 0,
+                  wave: 0,
+                };
+              break;
+            }
+            this.err(`unknown texture item '${tk.v}'${this.didYouMean(tk.v)}`, tk.ln);
+          }
+        }
+      }
+    }
+
+    parseCamera() {
+      this.expect('{');
+      const cam = {
+        location: [0, 0, -5],
+        look_at: [0, 0, 0],
+        angle: null,
+        right: null,
+        up: null,
+        sky: [0, 1, 0],
+        direction: null,
+      };
+      for (;;) {
+        this.normalize();
+        if (this.tryDirective()) continue;
+        const tk = this.peek();
+        if (tk.t === 'p' && tk.v === '}') {
+          this.next();
+          break;
+        }
+        if (tk.t !== 'id') this.err(`unexpected '${tk.v}' in camera`, tk.ln);
+        this.next();
+        switch (tk.v) {
+          case 'location':
+            cam.location = this.parseExpr();
+            break;
+          case 'look_at':
+            cam.look_at = this.parseExpr();
+            break;
+          case 'angle':
+            cam.angle = this.parseExpr();
+            if (this.eat(',')) this.parseExpr();
+            break;
+          case 'right':
+            cam.right = this.parseExpr();
+            break;
+          case 'up':
+            cam.up = this.parseExpr();
+            break;
+          case 'sky':
+            cam.sky = this.parseExpr();
+            break;
+          case 'direction':
+            cam.direction = this.parseExpr();
+            break;
+          case 'perspective':
+            break;
+          case 'orthographic':
+          case 'fisheye':
+          case 'ultra_wide_angle':
+          case 'omnimax':
+          case 'panoramic':
+          case 'spherical':
+          case 'cylinder':
+            this.warn(`${tk.v} cameras aren't in turbo (perspective only)`);
+            if (tk.v === 'cylinder') this.parseExpr();
+            break;
+          case 'aperture':
+          case 'blur_samples':
+          case 'confidence':
+          case 'variance':
+            this.parseExpr();
+            this.warn('focal blur is CPU-only; hit Ray-trace it');
+            break;
+          case 'focal_point':
+            this.parseExpr();
+            break;
+          case 'rotate':
+          case 'translate':
+          case 'scale':
+            this.warn("camera transforms aren't in turbo (use location/look_at)");
+            this.parseExpr();
+            break;
+          case 'look_at_':
+            break;
+          default:
+            this.err(
+              `unknown camera item '${tk.v}'${this.didYouMean(tk.v, ['location', 'look_at', 'angle'])}`,
+              tk.ln
+            );
+        }
+      }
+      this.scene.camera = cam;
+    }
+
+    parseLight() {
+      this.expect('{');
+      const pos = this.parseExpr();
+      this.comma();
+      this.eat('color') || this.eat('colour');
+      const light = {
+        pos,
+        color: this.parseColorValue(),
+        shadowless: false,
+        soft: 0,
+        fadeDist: 0,
+        fadePow: 0,
+      };
+      for (;;) {
+        this.normalize();
+        if (this.tryDirective()) continue;
+        const tk = this.peek();
+        if (tk.t === 'p' && tk.v === '}') {
+          this.next();
+          break;
+        }
+        if (tk.t !== 'id') this.err(`unexpected '${tk.v}' in light_source`, tk.ln);
+        this.next();
+        switch (tk.v) {
+          case 'shadowless':
+            light.shadowless = true;
+            break;
+          case 'area_light': {
+            const v1 = this.parseExpr();
+            this.comma();
+            this.parseExpr();
+            this.comma();
+            this.parseExpr();
+            this.comma();
+            this.parseExpr();
+            light.soft = lift((v) => Math.max(0.2, Math.hypot(...asVec3(v)) * 0.5), v1);
+            break;
+          }
+          case 'adaptive':
+            this.parseExpr();
+            break;
+          case 'jitter': {
+            const p = this.peek();
+            if (p.t === 'num') this.next();
+            break;
+          }
+          case 'circular':
+          case 'orient':
+          case 'parallel':
+          case 'media_interaction':
+          case 'media_attenuation': {
+            const p = this.peek();
+            if (p.t === 'id' && ['on', 'off'].includes(p.v)) this.next();
+            if (tk.v === 'parallel') this.warn('parallel lights are treated as point lights');
+            break;
+          }
+          case 'fade_distance':
+            light.fadeDist = this.parseExpr();
+            break;
+          case 'fade_power':
+            light.fadePow = this.parseExpr();
+            break;
+          case 'spotlight':
+            this.warn('spotlight is treated as a point light in turbo');
+            break;
+          case 'radius':
+          case 'falloff':
+          case 'tightness':
+            this.parseExpr();
+            break;
+          case 'point_at':
+            this.parseExpr();
+            break;
+          case 'photons':
+            this.warn('photons? buy a Cray. (or hit Ray-trace it)');
+            this.skipBlock();
+            break;
+          case 'projected_through':
+            this.warn("projected_through isn't in turbo (plain point light)");
+            this.skipBlock();
+            break;
+          case 'looks_like': {
+            this.expect('{');
+            this.normalize();
+            const t = this.peek();
+            if (t.t === 'id' && OBJ_KEYWORDS.includes(t.v)) {
+              const node = this.parseObject();
+              node.xf.push({ k: 't', v: light.pos });
+              node.noShadow = true;
+              this.scene.objects.push(node);
+            } else {
+              const id = this.next();
+              const val = this.lookup(id.v);
+              if (val?.kind === 'object' && val.node) {
+                const node = cloneNode(val.node);
+                node.xf.push({ k: 't', v: light.pos });
+                node.noShadow = true;
+                this.scene.objects.push(node);
+              }
+            }
+            this.expect('}');
+            break;
+          }
+          case 'translate':
+            light.pos = lift((p, v) => OP.add(p, v), light.pos, this.parseExpr());
+            break;
+          case 'rotate': {
+            const r = this.parseExpr();
+            light.pos = lift(
+              (p, rv) => {
+                const M = mRotate(asVec3(rv)),
+                  w = asVec3(p);
+                return [
+                  M[0] * w[0] + M[1] * w[1] + M[2] * w[2],
+                  M[4] * w[0] + M[5] * w[1] + M[6] * w[2],
+                  M[8] * w[0] + M[9] * w[1] + M[10] * w[2],
+                ];
+              },
+              light.pos,
+              r
+            );
+            break;
+          }
+          default:
+            this.err(
+              `unknown light_source item '${tk.v}'${this.didYouMean(tk.v, ['shadowless', 'area_light'])}`,
+              tk.ln
+            );
+        }
+      }
+      if (this.scene.lights.length >= 8) this.warn('more than 8 lights; turbo keeps the first 8');
+      else this.scene.lights.push(light);
+    }
+
+    parseFog() {
+      this.expect('{');
+      const fog = { dist: 100, color: [0.5, 0.5, 0.5, 0, 0] };
+      for (;;) {
+        this.normalize();
+        if (this.tryDirective()) continue;
+        const tk = this.peek();
+        if (tk.t === 'p' && tk.v === '}') {
+          this.next();
+          break;
+        }
+        this.next();
+        switch (tk.v) {
+          case 'fog_type': {
+            const t = asNum(evC(this.parseExpr(), 0));
+            if (t === 2) this.warn('ground fog (fog_type 2) is approximated as constant fog');
+            break;
+          }
+          case 'distance':
+            fog.dist = this.parseExpr();
+            break;
+          case 'color':
+          case 'colour':
+            fog.color = this.parseColorValue();
+            break;
+          case 'rgb':
+          case 'rgbt':
+          case 'rgbf':
+          case 'rgbft':
+            fog.color = this.parseColorBody(tk.v);
+            break;
+          case 'fog_offset':
+          case 'fog_alt':
+          case 'turb_depth':
+            this.parseExpr();
+            break;
+          case 'turbulence':
+            this.parseExpr();
+            break;
+          case 'up':
+            this.parseExpr();
+            break;
+          default:
+            this.err(`unknown fog item '${tk.v}'`, tk.ln);
+        }
+      }
+      this.scene.fog = fog;
+    }
+
+    parseSkySphere() {
+      this.expect('{');
+      for (;;) {
+        this.normalize();
+        if (this.tryDirective()) continue;
+        const tk = this.peek();
+        if (tk.t === 'p' && tk.v === '}') {
+          this.next();
+          break;
+        }
+        this.next();
+        if (tk.v === 'pigment') this.scene.sky = this.parsePigment();
+        else if (tk.v === 'emission') this.parseColorValue();
+        else if (['scale', 'translate', 'rotate'].includes(tk.v)) {
+          if (this.scene.sky) this.scene.sky.pxf.push({ k: tk.v[0], v: this.parseExpr() });
+          else this.parseExpr();
+        } else this.err(`unknown sky_sphere item '${tk.v}'`, tk.ln);
+      }
+    }
+
+    parseGlobalSettings() {
+      this.expect('{');
+      for (;;) {
+        this.normalize();
+        if (this.tryDirective()) continue;
+        const tk = this.peek();
+        if (tk.t === 'p' && tk.v === '}') {
+          this.next();
+          break;
+        }
+        this.next();
+        switch (tk.v) {
+          case 'assumed_gamma':
+            this.parseExpr();
+            break;
+          case 'ambient_light': {
+            this.eat('color') || this.eat('colour');
+            const c = this.parseColorValue();
+            this.scene.ambient = lift((v) => asVec3(v), c);
+            break;
+          }
+          case 'max_trace_level':
+          case 'adc_bailout':
+          case 'number_of_waves':
+          case 'noise_generator':
+          case 'irid_wavelength':
+          case 'max_intersections':
+            this.parseExpr();
+            break;
+          case 'charset':
+            this.next();
+            break;
+          case 'radiosity':
+            this.warn('radiosity? ooh, fancy. (CPU-only; turbo fakes a little ambient instead)');
+            this.scene.radiosity = true;
+            this.skipBlock();
+            break;
+          case 'photons':
+            this.warn('photons? buy a Cray. (or hit Ray-trace it)');
+            this.skipBlock();
+            break;
+          case 'subsurface':
+            this.warn('subsurface is CPU-only');
+            this.skipBlock();
+            break;
+          default: {
+            this.warn(`global_settings ${tk.v} is ignored in turbo`);
+            if (this.peek().v === '{') this.skipBlock();
+            else this.parseExpr();
+          }
+        }
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // compiler: scene AST -> GLSL (structure) + per-frame param writers (numbers).
+  // Parameter-texture layout (vec4 slots):
+  //   0 ro+clock | 1 right+pixK | 2 up | 3 dir*dirLen | 4 bg+fogDist
+  //   5 fogColor+fogTransmit | 6 ambient+radiosity | 7 res+time
+  //   8.. lights (2 each) | materials (19 each) | leaves (variable)
+  // ---------------------------------------------------------------------------
+  const MAT_STRIDE = 19;
+  const MAX_VEC4 = 16384; // params live in a 1024-wide RGBA32F texture, 16 rows
+  const FIN_DEFAULTS = {
+    ambient: 0.1,
+    diffuse: 0.6,
+    specular: 0,
+    roughness: 0.05,
+    phong: 0,
+    phongSize: 40,
+    metallic: 0,
+    emission: null,
+    reflection: null,
+    fresnelFlag: false,
+  };
+
+  function compileScene(scene, parser) {
+    const dynIds = new WeakMap();
+    let dynN = 0;
+    const keyOf = (v) => {
+      if (isDyn(v)) {
+        if (!dynIds.has(v)) dynIds.set(v, ++dynN);
+        return `D${dynIds.get(v)}`;
+      }
+      if (Array.isArray(v)) return `[${v.map(keyOf)}]`;
+      if (v && typeof v === 'object')
+        return JSON.stringify(v, (_k, x) => (isDyn(x) ? keyOf(x) : x));
+      return String(v);
+    };
+
+    const NL = Math.min(8, scene.lights.length);
+    let top = 8 + NL * 3;
+    const matBase = top;
+    const matKeys = new Map();
+    const materials = [];
+    const defaults = parser.defaults || {};
+
+    function resolveMaterial(tex, inherited, leafChain, ior) {
+      const pig = tex.pigment ||
+        inherited.pigment ||
+        defaults.pigment || {
+          type: 0,
+          c1: [0, 0, 0, 0, 0],
+          c2: [0, 0, 0, 0, 0],
+          stops: null,
+          axis: [0, 1, 0],
+          turb: 0,
+          pxf: [],
+          freq: 1,
+          phase: 0,
+          wave: 0,
+        };
+      const fin = {
+        ...FIN_DEFAULTS,
+        ...(defaults.finish || {}),
+        ...(inherited.finish || {}),
+        ...(tex.finish || {}),
+      };
+      // pigments ride along with the object: pattern space = inverse(world * pigmentXf).
+      // Solid pigments have no pattern space, so they dedupe across all transforms
+      // (one chrome material for a #for-loop of 50 chrome spheres).
+      const pxf = pig.type === 0 ? [] : [...pig.pxf, ...tex.pxf, ...leafChain];
+      const mat = { pig, fin, pxf, ior: ior ?? 1 };
+      const key = keyOf({
+        p: { ...pig, pxf: pig.pxf },
+        f: fin,
+        i: keyOf(mat.ior),
+        x: pxf.map((e) => ({ k: e.k, v: keyOf(e.v) })),
+      });
+      if (matKeys.has(key)) return matKeys.get(key);
+      const id = materials.length;
+      materials.push(mat);
+      matKeys.set(key, id);
+      return id;
+    }
+
+    // ---- walk the CSG tree, flattening to leaves ------------------------------
+    const leaves = [];
+    function walk(node, chain, inhTex, neg, solidCtx) {
+      if (!node || node.prim === null) return null;
+      const myChain = [...node.xf.map(xfEntry), ...chain];
+      if (node.csg) {
+        const tex = {
+          pigment: node.tex.pigment || inhTex.pigment,
+          finish: node.tex.finish
+            ? { ...(inhTex.finish || {}), ...node.tex.finish }
+            : inhTex.finish,
+          ior: node.ior ?? inhTex.ior,
+        };
+        // dOp() does the negating for difference children; leaf.neg is only for
+        // an explicit `inverse` flag, never both (that would cancel out).
+        const childSolid = solidCtx || node.csg !== 'union';
+        const kids = node.children
+          .map((ch) => walk(ch, myChain, tex, neg, childSolid))
+          .filter((x) => x !== null);
+        if (!kids.length) return null;
+        return { op: node.csg, kids };
+      }
+      const matId = resolveMaterial(node.tex, inhTex, myChain, node.ior ?? inhTex.ior);
+      const leaf = {
+        node,
+        chain: myChain,
+        matId,
+        neg: node.inverse ? !neg : neg,
+        idx: leaves.length,
+      };
+      // POV's backdrop idiom (`plane { z, 14 }`) leaves the camera inside the
+      // plane's solid half. Outside solid CSG the sign never matters, so march
+      // the plane as a two-sided surface, which is what POV's primary rays see.
+      leaf.twoSided = node.prim === 'plane' && !solidCtx && !leaf.neg;
+      leaves.push(leaf);
+      return { leafIdx: leaf.idx };
+    }
+    function xfEntry(e) {
+      return e;
+    }
+    const roots = scene.objects.map((o) => walk(o, [], {}, false, false)).filter((x) => x !== null);
+
+    // the sky_sphere pigment is just another material, sampled by ray direction
+    let skyMatId = -1;
+    if (scene.sky) skyMatId = resolveMaterial({ pigment: scene.sky, finish: {}, pxf: [] }, {}, []);
+
+    // flat-union grouping: a #for loop of 50 chrome spheres becomes ONE GLSL
+    // loop over a contiguous parameter-slot range instead of 50 inlined functions. This is
+    // the difference between a 100ms and a multi-second Metal shader compile.
+    const slotsOf = (lf) => {
+      const p = lf.node.prim;
+      return (
+        3 +
+        (p === 'plane' || p === 'cone' ? 2 : 1) +
+        (p === 'blob' ? lf.node.comps.length * 2 + 1 : 0)
+      );
+    };
+    const grouped = new Set();
+    const groupsList = [];
+    // Group homogeneous leaf runs anywhere in the CSG forest: the top-level
+    // roots are an implicit union, and a Menger sponge's 1000 cutter boxes
+    // inside a difference qualify just the same (kids[0] of a difference is the
+    // base and must stay put; everything after it commutes).
+    function collectGroups(kids, isDiff) {
+      const cand = new Map();
+      kids.forEach((t, i) => {
+        if (t.leafIdx === undefined) {
+          if (t.kids) collectGroups(t.kids, t.op === 'difference');
+          return;
+        }
+        if (isDiff && i === 0) return;
+        const lf = leaves[t.leafIdx];
+        if (lf.neg || lf.twoSided || !lf.node.prim || lf.node.prim === 'blob' || lf.node.noShadow)
+          return;
+        const sig = lf.node.prim + ':' + lf.matId;
+        if (!cand.has(sig)) cand.set(sig, []);
+        cand.get(sig).push(i);
+      });
+      for (const idxs of cand.values()) {
+        if (idxs.length < 4) continue;
+        const lf0 = leaves[kids[idxs[0]].leafIdx];
+        const g = {
+          prim: lf0.node.prim,
+          matId: lf0.matId,
+          stride: slotsOf(lf0),
+          lis: idxs.map((i) => kids[i].leafIdx),
+        };
+        g.lis.forEach((li) => grouped.add(li));
+        groupsList.push(g);
+        kids[idxs[0]] = { groupIdx: groupsList.length - 1 };
+        for (const i of idxs.slice(1)) kids[i] = null;
+      }
+      for (let i = kids.length - 1; i >= 0; i--) if (kids[i] === null) kids.splice(i, 1);
+    }
+    collectGroups(roots, false);
+
+    top += materials.length * MAT_STRIDE;
+    const leafBase = new Array(leaves.length);
+    const allocOrder = [];
+    for (const g of groupsList) allocOrder.push(...g.lis); // grouped leaves: contiguous
+    for (let i = 0; i < leaves.length; i++) if (!grouped.has(i)) allocOrder.push(i);
+    for (const li of allocOrder) {
+      leafBase[li] = top;
+      top += slotsOf(leaves[li]);
+    }
+    for (const g of groupsList) g.base = leafBase[g.lis[0]];
+    if (leaves.length > 512)
+      throw new ParseError(
+        `${leaves.length} objects is past turbo's real-time budget (512). This one's a job for the real tracer: hit Ray-trace it.`,
+        1
+      );
+    if (top > MAX_VEC4)
+      throw new ParseError(
+        `scene needs ${top} parameter slots, turbo has ${MAX_VEC4}. Fewer objects, or Ray-trace it for real.`,
+        1
+      );
+
+    // ---- GLSL: group loops + one function per remaining leaf -----------------
+    const G = [];
+    function primDist(p, A, A2, blobIdx) {
+      if (p === 'sphere') return `length(q) - ${A}.x`;
+      if (p === 'box') return `sdBox(q, ${A}.xyz)`;
+      if (p === 'plane') return `dot(q, ${A}.xyz) - ${A2}.x`;
+      if (p === 'cylinder') return `sdCyl(q, ${A}.x, ${A}.y)`;
+      if (p === 'cone') return `sdCone(q, ${A}.x, ${A}.y, ${A}.z)`;
+      if (p === 'torus') return `sdTorus(q, ${A}.x, ${A}.y)`;
+      if (p === 'superellipsoid') return `sdRBox(q, vec3(1.0 - ${A}.x), ${A}.x)`;
+      if (p === 'blob') return `sdBlob${blobIdx}(q)`;
+      return `1e9`;
+    }
+    groupsList.forEach((g, gi) => {
+      G.push(`vec2 g${gi}(vec3 p){ /* ${g.lis.length}x ${g.prim}, mat ${g.matId} */
+  vec2 r = vec2(1e9, -1.0);
+  for (int k = 0; k < ${g.lis.length}; k++) {
+    int b = ${g.base} + k*${g.stride};
+    vec3 q = vec3(dot(u[b].xyz, p) + u[b].w, dot(u[b+1].xyz, p) + u[b+1].w, dot(u[b+2].xyz, p) + u[b+2].w);
+    float d = (${primDist(g.prim, 'u[b+3]', 'u[b+4]', null)}) * u[b+3].w;
+    if (d < r.x) r = vec2(d, ${g.matId}.0);
+  }
+  return r;
+}`);
+    });
+    leaves.forEach((lf, i) => {
+      if (grouped.has(i)) return;
+      const B = leafBase[i],
+        p = lf.node.prim,
+        A = `u[${B + 3}]`,
+        A2 = `u[${B + 4}]`;
+      const dist = primDist(p, A, A2, i);
+      if (p === 'blob') {
+        const n = lf.node.comps.length,
+          CB = B + 5;
+        G.push(`float sdBlob${i}(vec3 q){
+  float F = 0.0, dn = 1e9;
+  for (int k = 0; k < ${n}; k++) {
+    vec4 c = u[${CB} + k*2];
+    float r2 = dot(q - c.xyz, q - c.xyz), R2 = c.w*c.w;
+    dn = min(dn, sqrt(r2) - c.w);
+    if (r2 < R2) { float w = 1.0 - r2/R2; F += u[${CB} + k*2 + 1].x * w * w; }
+  }
+  float T = u[${B + 4}].x, L = max(u[${B + 4}].y, 1e-4);
+  if (F <= 0.0) return max(dn, 1e-3);
+  return (T - F) / L;
+}`);
+      }
+      G.push(`vec2 o${i}(vec3 p){ /* ${p}, SDL line ${lf.node.ln}, mat ${lf.matId} */
+  vec3 q = vec3(dot(u[${B}].xyz, p) + u[${B}].w, dot(u[${B + 1}].xyz, p) + u[${B + 1}].w, dot(u[${B + 2}].xyz, p) + u[${B + 2}].w);
+  float d = ${lf.twoSided ? `abs(${dist})` : `(${dist})`} * ${A}.w;
+  return vec2(${lf.neg ? '-d' : 'd'}, ${lf.matId}.0);
+}`);
+    });
+    // CSG nodes become functions of sequential statements, never nested
+    // expressions: a #while-built difference of 500 cutters would otherwise
+    // nest dOp() 500 deep and hit "Expression too complex" on ANGLE.
+    let cseq = 0;
+    function emitNode(t) {
+      if (t.groupIdx !== undefined) return `g${t.groupIdx}`;
+      if (t.leafIdx !== undefined) return `o${t.leafIdx}`;
+      const names = t.kids.map(emitNode);
+      const op = t.op === 'union' ? 'uOp' : t.op === 'intersection' ? 'iOp' : 'dOp';
+      const name = `c${cseq++}`;
+      G.push(
+        `vec2 ${name}(vec3 p){\n  vec2 r = ${names[0]}(p);\n${names
+          .slice(1)
+          .map((n) => `  r = ${op}(r, ${n}(p));`)
+          .join('\n')}\n  return r;\n}`
+      );
+      return name;
+    }
+    function emitForest(trees, retX) {
+      if (!trees.length) return retX ? `return 1e9;` : `return vec2(1e9, -1.0);`;
+      const names = trees.map(emitNode);
+      return `vec2 r = ${names[0]}(p);\n${names
+        .slice(1)
+        .map((n) => `  r = uOp(r, ${n}(p));`)
+        .join('\n')}\n  return r${retX ? '.x' : ''};`;
+    }
+    G.push(`vec2 map(vec3 p){\n  ${emitForest(roots, false)}\n}`);
+
+    // shadow-caster map: identical forest minus no_shadow leaves (groups never
+    // contain no_shadow leaves). Alias when nothing differs.
+    function pruneSh(t) {
+      if (t.groupIdx !== undefined) return t;
+      if (t.leafIdx !== undefined) return leaves[t.leafIdx].node.noShadow ? null : t;
+      const kids = t.kids.map(pruneSh);
+      if (kids[0] === null) return null; // difference/intersection base gone -> gone
+      const keep =
+        t.op === 'union' ? kids.filter((k) => k !== null) : kids.map((k, i) => k ?? t.kids[i]);
+      if (t.op === 'union' && !keep.length) return null;
+      return { op: t.op, kids: keep };
+    }
+    const anyNoShadow = leaves.some((l) => l.node.noShadow);
+    if (!anyNoShadow) G.push(`float mapSh(vec3 p){ return map(p).x; }`);
+    else
+      G.push(
+        `float mapSh(vec3 p){\n  ${emitForest(
+          roots.map(pruneSh).filter((x) => x !== null),
+          true
+        )}\n}`
+      );
+
+    // ---- per-frame writers ----------------------------------------------------
+    const writers = [];
+    function chainMatrix(chain, c) {
+      let M = M_ID;
+      for (const e of chain) {
+        let em;
+        if (e.k === 't') em = mTranslate(asVec3(evC(e.v, c)));
+        else if (e.k === 'r') em = mRotate(asVec3(evC(e.v, c)));
+        else if (e.k === 's') {
+          const s = evC(e.v, c);
+          const v = asVec3(typeof s === 'number' ? [s, s, s] : s).map((x) =>
+            Math.abs(x) < 1e-9 ? 1e-9 : x
+          );
+          em = mScale(v);
+        } else if (e.k === 'm') {
+          const m = e.v.map((x) => asNum(evC(x, c)));
+          em = [m[0], m[3], m[6], m[9], m[1], m[4], m[7], m[10], m[2], m[5], m[8], m[11]];
+        } else if (e.k === 'pre') em = e.m(c);
+        M = mMul(em, M);
+      }
+      return M;
+    }
+    const put = (arr, slot, x, y, z, w) => {
+      const o = slot * 4;
+      arr[o] = x;
+      arr[o + 1] = y;
+      arr[o + 2] = z;
+      arr[o + 3] = w;
+    };
+
+    leaves.forEach((lf, i) => {
+      const B = leafBase[i],
+        node = lf.node,
+        a = node.a || {};
+      writers.push((c, arr) => {
+        let pre = null,
+          intr = null,
+          intr2 = null;
+        const p = node.prim;
+        if (p === 'sphere') {
+          pre = mTranslate(asVec3(evC(a.c, c)));
+          intr = [asNum(evC(a.r, c)), 0, 0];
+        } else if (p === 'box') {
+          const lo = asVec3(evC(a.lo, c)),
+            hi = asVec3(evC(a.hi, c));
+          pre = mTranslate([(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2]);
+          intr = [
+            Math.abs(hi[0] - lo[0]) / 2,
+            Math.abs(hi[1] - lo[1]) / 2,
+            Math.abs(hi[2] - lo[2]) / 2,
+          ];
+        } else if (p === 'plane') {
+          const n = asVec3(evC(a.n, c)),
+            l = Math.hypot(...n) || 1;
+          intr = [n[0] / l, n[1] / l, n[2] / l];
+          intr2 = [asNum(evC(a.d, c)), 0, 0];
+        } else if (p === 'cylinder' || p === 'cone') {
+          const p1 = asVec3(evC(a.p1, c)),
+            p2 = asVec3(evC(a.p2, c));
+          const ax = [p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]];
+          const len = Math.hypot(...ax) || 1e-9;
+          pre = mMul(
+            mTranslate([(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2, (p1[2] + p2[2]) / 2]),
+            mYTo([ax[0] / len, ax[1] / len, ax[2] / len])
+          );
+          intr =
+            p === 'cylinder'
+              ? [asNum(evC(a.r, c)), len / 2, 0]
+              : [asNum(evC(a.r1, c)), asNum(evC(a.r2, c)), len / 2];
+        } else if (p === 'torus') {
+          intr = [asNum(evC(a.R, c)), asNum(evC(a.r, c)), 0];
+        } else if (p === 'superellipsoid') {
+          const e = asVec3(evC(a.e, c));
+          intr = [Math.min(0.45, Math.max(0.02, (e[0] + e[1]) * 0.2)), 0, 0];
+        } else if (p === 'blob') {
+          intr = [0, 0, 0];
+        }
+        const chain = pre ? [{ k: 'pre', m: () => pre }, ...lf.chain] : lf.chain;
+        const M = chainMatrix(chain, c);
+        const Mi = mInvert(M);
+        const fix = mDistFix(Mi);
+        put(arr, B, Mi[0], Mi[1], Mi[2], Mi[3]);
+        put(arr, B + 1, Mi[4], Mi[5], Mi[6], Mi[7]);
+        put(arr, B + 2, Mi[8], Mi[9], Mi[10], Mi[11]);
+        put(arr, B + 3, intr[0], intr[1], intr[2], fix);
+        if (intr2) put(arr, B + 4, intr2[0], intr2[1], intr2[2], 0);
+        if (p === 'blob') {
+          let lip = 0;
+          node.comps.forEach((cp, k) => {
+            const cc = asVec3(evC(cp.c, c)),
+              R = Math.max(1e-4, asNum(evC(cp.r, c))),
+              s = asNum(evC(cp.s, c));
+            lip += (1.54 * Math.abs(s)) / R;
+            put(arr, B + 5 + k * 2, cc[0], cc[1], cc[2], R);
+            put(arr, B + 5 + k * 2 + 1, s, 0, 0, 0);
+          });
+          put(arr, B + 4, asNum(evC(a.threshold, c)), Math.max(lip, 1e-4), 0, 0);
+        }
+      });
+    });
+
+    materials.forEach((m, id) => {
+      const B = matBase + id * MAT_STRIDE;
+      writers.push((c, arr) => {
+        const pig = m.pig,
+          fin = m.fin;
+        const c1 = asVec5(evC(pig.c1, c) ?? [0, 0, 0, 0, 0]);
+        const c2 = asVec5(evC(pig.c2, c) ?? [0, 0, 0, 0, 0]);
+        const trans = (col) => Math.min(1, (col[3] ?? 0) * 0.6 + (col[4] ?? 0));
+        const axis = asVec3(evC(pig.axis, c));
+        put(
+          arr,
+          B,
+          pig.type,
+          asNum(evC(pig.turb, c)),
+          asNum(evC(pig.freq, c)) || 1,
+          asNum(evC(pig.phase, c))
+        );
+        put(arr, B + 1, axis[0], axis[1], axis[2], pig.wave);
+        put(arr, B + 2, c1[0], c1[1], c1[2], trans(c1));
+        put(arr, B + 3, c2[0], c2[1], c2[2], trans(c2));
+        put(
+          arr,
+          B + 4,
+          asNum(evC(fin.ambient, c)) + (scene.radiosity ? 0.08 : 0),
+          asNum(evC(fin.diffuse, c)),
+          asNum(evC(fin.specular, c)),
+          Math.max(1e-4, asNum(evC(fin.roughness, c)))
+        );
+        put(
+          arr,
+          B + 5,
+          asNum(evC(fin.phong, c)),
+          Math.max(1, asNum(evC(fin.phongSize, c))),
+          asNum(evC(m.ior, c)) || 1,
+          asNum(evC(fin.metallic, c))
+        );
+        const em = fin.emission ? asVec5(evC(fin.emission, c)) : [0, 0, 0, 0, 0];
+        put(arr, B + 6, em[0], em[1], em[2], fin.fresnelFlag ? 1 : 0);
+        const R = fin.reflection;
+        const lumOf = (v) => {
+          const w = asVec5(evC(v, c));
+          return w[0] * 0.297 + w[1] * 0.589 + w[2] * 0.114;
+        };
+        if (R) {
+          const rmax = lumOf(R.rmax),
+            rmin = R.rmin !== null && R.rmin !== undefined ? lumOf(R.rmin) : R.fresnel ? 0 : rmax;
+          put(
+            arr,
+            B + 7,
+            rmin,
+            rmax,
+            asNum(evC(R.falloff, c)) || 1,
+            (asNum(evC(R.fresnel, c)) ? 1 : 0) + (R.metallic ? 2 : 0)
+          );
+        } else put(arr, B + 7, 0, 0, 1, 0);
+        const Mi = mInvert(chainMatrix(m.pxf, c));
+        put(arr, B + 8, Mi[0], Mi[1], Mi[2], Mi[3]);
+        put(arr, B + 9, Mi[4], Mi[5], Mi[6], Mi[7]);
+        put(arr, B + 10, Mi[8], Mi[9], Mi[10], Mi[11]);
+        const stops = pig.stops || [];
+        for (let s = 0; s < 8; s++) {
+          const st = stops[Math.min(s, stops.length - 1)] || { pos: s, col: [0, 0, 0, 0, 0] };
+          const col = asVec5(evC(st.col, c));
+          put(arr, B + 11 + s, col[0], col[1], col[2], asNum(evC(st.pos, c)));
+        }
+      });
+    });
+
+    for (let li = 0; li < NL; li++) {
+      const L = scene.lights[li],
+        B = 8 + li * 3;
+      writers.push((c, arr) => {
+        const p = asVec3(evC(L.pos, c)),
+          col = asVec5(evC(L.color, c));
+        put(arr, B, p[0], p[1], p[2], L.shadowless ? 1 : 0);
+        put(arr, B + 1, col[0], col[1], col[2], asNum(evC(L.soft, c)) || 0);
+        put(arr, B + 2, asNum(evC(L.fadeDist, c)) || 0, asNum(evC(L.fadePow, c)) || 0, 0, 0);
+      });
+    }
+
+    // header slots 0..7 (camera, fog, background) are written by the engine,
+    // which owns orbit state and canvas size.
+    return {
+      glsl: G.join('\n\n'),
+      writers,
+      total: top,
+      NL,
+      materials,
+      matBase,
+      leaves,
+      skyMatId,
+      roots,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // the GLSL renderer. POV's lighting model on purpose: plain N.L diffuse, no
+  // distance falloff (unless fade_*), both phong and blinn specular lobes,
+  // additive reflection, exponential fog, clamp + sRGB at the end. The only
+  // deliberate infidelities: slightly-soft shadow edges (reads like POV's +A)
+  // and screen-space epsilon raymarching.
+  // ---------------------------------------------------------------------------
+  function shaderSource(c) {
+    // Param storage is an RGBA32F texture, not a UBO: ANGLE/Metal caps uniform
+    // blocks at 16KB (1024 vec4), which big #while scenes blow through. All
+    // emitted code writes u[i]; the regex at the bottom rewrites it to U(i).
+    const src = `#version 300 es
+precision highp float;
+uniform highp sampler2D uP;
+vec4 U(int i){ return texelFetch(uP, ivec2(i & 1023, i >> 10), 0); }
+out vec4 frag;
+#define NL ${c.NL}
+#define MATB ${c.matBase}
+#define MATS ${MAT_STRIDE}
+
+float sdBox(vec3 p, vec3 b){ vec3 q = abs(p) - b; return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0); }
+float sdRBox(vec3 p, vec3 b, float r){ vec3 q = abs(p) - b; return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - r; }
+float sdCyl(vec3 p, float r, float h){ vec2 d = abs(vec2(length(p.xz), p.y)) - vec2(r, h); return min(max(d.x, d.y), 0.0) + length(max(d, 0.0)); }
+float sdTorus(vec3 p, float R, float r){ return length(vec2(length(p.xz) - R, p.y)) - r; }
+float sdCone(vec3 p, float r1, float r2, float h){
+  vec2 q = vec2(length(p.xz), p.y);
+  vec2 k1 = vec2(r2, h);
+  vec2 k2 = vec2(r2 - r1, 2.0*h);
+  vec2 ca = vec2(q.x - min(q.x, (q.y < 0.0) ? r1 : r2), abs(q.y) - h);
+  vec2 cb = q - k1 + k2 * clamp(dot(k1 - q, k2) / dot(k2, k2), 0.0, 1.0);
+  float s = (cb.x < 0.0 && ca.y < 0.0) ? -1.0 : 1.0;
+  return s * sqrt(min(dot(ca, ca), dot(cb, cb)));
+}
+vec2 uOp(vec2 a, vec2 b){ return a.x < b.x ? a : b; }
+vec2 iOp(vec2 a, vec2 b){ return a.x > b.x ? a : b; }
+vec2 dOp(vec2 a, vec2 b){ return a.x > -b.x ? a : vec2(-b.x, b.y); }
+
+float hash3(vec3 p){ p = fract(p*0.3183099 + vec3(0.1, 0.17, 0.13)); p *= 17.0; return fract(p.x*p.y*p.z*(p.x + p.y + p.z)); }
+float vnoise(vec3 x){
+  vec3 i = floor(x), f = fract(x);
+  f = f*f*(3.0 - 2.0*f);
+  return mix(mix(mix(hash3(i), hash3(i + vec3(1,0,0)), f.x), mix(hash3(i + vec3(0,1,0)), hash3(i + vec3(1,1,0)), f.x), f.y),
+             mix(mix(hash3(i + vec3(0,0,1)), hash3(i + vec3(1,0,1)), f.x), mix(hash3(i + vec3(0,1,1)), hash3(i + vec3(1,1,1)), f.x), f.y), f.z);
+}
+float fbm(vec3 p){ return vnoise(p)*0.5333 + vnoise(p*2.0)*0.2667 + vnoise(p*4.0)*0.1333 + vnoise(p*8.0)*0.0667; }
+vec3 fbm3(vec3 p){ return vec3(fbm(p), fbm(p + vec3(7.1, 3.3, 9.7)), fbm(p + vec3(2.4, 8.8, 5.1))); }
+
+${c.glsl}
+
+vec3 calcNormal(vec3 p, float h){
+  const vec2 k = vec2(1.0, -1.0);
+  return normalize(k.xyy*map(p + k.xyy*h).x + k.yyx*map(p + k.yyx*h).x + k.yxy*map(p + k.yxy*h).x + k.xxx*map(p + k.xxx*h).x);
+}
+float softShadow(vec3 ro, vec3 ld, float maxT, float soft){
+  float k = soft > 0.0 ? 8.0/soft : 64.0;
+  float res = 1.0, t = 0.02;
+  for (int i = 0; i < 48; i++){
+    float h = mapSh(ro + ld*t);
+    res = min(res, k*h/t);
+    if (res < 0.001 || t > maxT - 0.04) break;
+    t += clamp(h, 0.012, 0.5);
+  }
+  return clamp(res, 0.0, 1.0);
+}
+
+// pattern colour: world point -> (rgb, transmit). mb = material base slot.
+vec4 patColor(int mb, vec3 pw){
+  vec4 h = u[mb];
+  vec3 q = vec3(dot(u[mb+8].xyz, pw) + u[mb+8].w, dot(u[mb+9].xyz, pw) + u[mb+9].w, dot(u[mb+10].xyz, pw) + u[mb+10].w);
+  int type = int(h.x + 0.5);
+  if (type == 0) return u[mb+2];
+  if (type == 1) {
+    float ck = mod(floor(q.x + 1e-4) + floor(q.y + 1e-4) + floor(q.z + 1e-4), 2.0);
+    return ck < 0.5 ? u[mb+2] : u[mb+3];
+  }
+  vec3 qq = q + (h.y > 0.0 ? h.y * (fbm3(q*1.9) - 0.5) * 2.0 : vec3(0.0));
+  float t;
+  if (type == 2) t = dot(qq, u[mb+1].xyz);
+  else if (type == 3) t = qq.x;
+  else if (type == 4) t = vnoise(qq);
+  else if (type == 5) t = atan(qq.x, qq.z)/6.28318530 + 0.5;
+  else t = clamp(1.0 - length(qq), 0.0, 1.0);
+  t = fract(t * h.z + h.w);
+  float wv = u[mb+1].w;
+  if (type == 3 && wv < 0.5) wv = 1.0;       // marble's built-in triangle wave
+  if (wv > 1.5) t = 0.5 - 0.5*cos(t*6.28318530);
+  else if (wv > 0.5) t = 1.0 - abs(2.0*t - 1.0);
+  vec3 col = u[mb+11].rgb;
+  for (int s = 0; s < 7; s++){
+    vec4 s0 = u[mb+11+s], s1 = u[mb+12+s];
+    if (t >= s0.w) col = (s1.w > s0.w) ? mix(s0.rgb, s1.rgb, clamp((t - s0.w)/(s1.w - s0.w), 0.0, 1.0)) : s1.rgb;
+  }
+  return vec4(col, 0.0);
+}
+
+vec3 skyColor(vec3 rd){
+  ${c.skyMatId >= 0 ? `vec3 sky = patColor(MATB + ${c.skyMatId}*MATS, rd).rgb;` : `vec3 sky = u[4].rgb;`}
+  if (u[4].w > 0.0) sky = mix(u[5].rgb, sky, u[5].w);
+  return sky;
+}
+
+// POV-style local shading: ambient + emission + per-light N.L diffuse,
+// phong (reflect lobe) and specular (blinn lobe), hard-ish shadows.
+// Transparency thins the diffuse layer (POV does the same); highlights stay.
+vec3 shadeLocal(vec3 p, vec3 n, vec3 rd, int mb, vec3 base, float eps, float trans){
+  vec4 fa = u[mb+4];
+  vec4 fb = u[mb+5];
+  float opaq = 1.0 - trans;
+  vec3 col = base * fa.x * u[6].rgb * opaq + base * u[mb+6].rgb;
+  for (int i = 0; i < NL; i++){
+    vec4 lp = u[8 + i*3], lc = u[8 + i*3 + 1], lf = u[8 + i*3 + 2];
+    vec3 ld = lp.xyz - p;
+    float dist = max(length(ld), 1e-6);
+    ld /= dist;
+    float ndl = dot(n, ld);
+    float sh = (lp.w > 0.5) ? 1.0 : softShadow(p + n*eps*2.0, ld, dist, lc.w);
+    if (sh < 0.002) continue;
+    float att = (lf.x > 0.0) ? 2.0 / (1.0 + pow(dist/lf.x, lf.y)) : 1.0;
+    vec3 li = lc.rgb * sh * att;
+    col += base * fa.y * max(ndl, 0.0) * li * opaq;
+    if (ndl > 0.0) {
+      vec3 tint = mix(vec3(1.0), base, fb.w);
+      if (fa.z > 0.0) col += tint * fa.z * pow(max(dot(n, normalize(ld - rd)), 0.0), 1.0/fa.w) * li;
+      if (fb.x > 0.0) col += tint * fb.x * pow(max(dot(reflect(-ld, n), -rd), 0.0), fb.y) * li;
+    }
+  }
+  return col;
+}
+
+vec2 march(vec3 ro, vec3 rd, float pixK){
+  float t = 2.0*pixK;
+  float best = 1e9, bestT = -1.0, bestM = -1.0;
+  for (int i = 0; i < 160; i++){
+    vec2 m = map(ro + rd*t);
+    float eps = pixK*t + 1e-4;
+    if (m.x < eps) return vec2(t, m.y);
+    float rel = m.x / max(eps, 1e-6);
+    if (rel < best) { best = rel; bestT = t; bestM = m.y; }
+    t += m.x;
+    if (t > 120.0) break;
+  }
+  if (best < 2.5) return vec2(bestT, bestM); // thin-CSG rescue: closest approach
+  return vec2(-1.0, -1.0);
+}
+
+void main(){
+  vec2 ndc = gl_FragCoord.xy / u[7].xy - 0.5;
+  vec3 ro = u[0].xyz;
+  vec3 rd = normalize(ndc.x * u[1].xyz + ndc.y * u[2].xyz + u[3].xyz);
+  float pixK = u[1].w;
+  vec3 acc = vec3(0.0), att = vec3(1.0);
+  for (int b = 0; b < 3; b++){
+    vec2 hit = march(ro, rd, pixK);
+    if (hit.x < 0.0) { acc += att * skyColor(rd); break; }
+    float t = hit.x;
+    int mb = MATB + int(hit.y + 0.5)*MATS;
+    vec3 p = ro + rd*t;
+    float eps = pixK*t + 1e-4;
+    vec3 n = calcNormal(p, max(eps, t*7e-4));
+    if (dot(n, rd) > 0.0) n = -n;
+    vec4 pat = patColor(mb, p);
+    vec3 local = shadeLocal(p, n, rd, mb, pat.rgb, eps, pat.a);
+    float fogA = (u[4].w > 0.0) ? exp(-t/u[4].w) : 1.0;
+    acc += att * (local*fogA + u[5].rgb*(1.0 - fogA));
+    vec4 rf = u[mb+7];
+    float falloff = (rf.w == 1.0 || rf.w == 3.0) ? 5.0 : max(rf.z, 1.0);
+    float refl = rf.x + (rf.y - rf.x) * pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), falloff);
+    float trans = pat.a;
+    if (trans > 0.05 && trans > refl) {
+      float ior = u[mb+5].z;
+      if (ior > 1.001) {
+        // real refraction: bend in, march the interior to the far surface,
+        // bend out (one total-internal-reflection bounce allowed), and tint
+        // by Beer's law over the interior path. The bent checkerboard lives.
+        att *= fogA * trans;
+        vec3 rdIn = refract(rd, n, 1.0/ior);
+        if (dot(rdIn, rdIn) < 0.25) rdIn = reflect(rd, n);
+        vec3 pp = p;
+        bool out_ = false;
+        for (int leg = 0; leg < 2 && !out_; leg++) {
+          float tIn = eps*6.0;
+          for (int s = 0; s < 64; s++) {
+            float di = map(pp + rdIn*tIn).x;
+            if (di > -eps*2.0) break;
+            tIn += max(-di, eps*3.0);
+          }
+          att *= exp(-(vec3(1.0) - pat.rgb) * tIn * 0.5);
+          vec3 pe = pp + rdIn*tIn;
+          vec3 ne = calcNormal(pe, eps);
+          if (dot(ne, rdIn) < 0.0) ne = -ne; // outward along the exiting ray
+          vec3 rdo = refract(rdIn, -ne, ior);
+          if (dot(rdo, rdo) > 0.25) { ro = pe + rdo*eps*6.0; rd = rdo; out_ = true; }
+          else { rdIn = reflect(rdIn, -ne); pp = pe + rdIn*eps*6.0; }
+        }
+        if (!out_) { ro = pp + rdIn*eps*6.0; rd = rdIn; } // give up gracefully after 2 TIR legs
+        continue;
+      }
+      // no interior{}: POV doesn't bend either, just pass the tint through
+      att *= fogA * trans * mix(vec3(1.0), pat.rgb, 0.5);
+      float tt = eps*4.0;
+      for (int s = 0; s < 40; s++){ float d = map(p + rd*tt).x; if (d > eps*2.0) break; tt += max(abs(d), 0.02); }
+      ro = p + rd*tt;
+      continue;
+    }
+    if (refl > 0.004) {
+      vec3 tint = (rf.w >= 2.0) ? pat.rgb : vec3(1.0);
+      att *= fogA * refl * tint;
+      rd = reflect(rd, n);
+      ro = p + n*eps*3.0;
+      if (max(att.x, max(att.y, att.z)) > 0.01) continue;
+    }
+    break;
+  }
+  // POV with assumed_gamma 1: clamp then encode. Dither kills the sky banding.
+  float dith = fract(52.9829189*fract(0.06711056*gl_FragCoord.x + 0.00583715*gl_FragCoord.y)) - 0.5;
+  vec3 col = pow(clamp(acc, 0.0, 1.0), vec3(1.0/2.2)) + dith*(1.0/255.0);
+  frag = vec4(col, 1.0);
+}`;
+    return src.replace(/\bu\[([^\]]+)\]/g, 'U($1)');
+  }
+
+  // ---------------------------------------------------------------------------
+  // engine: GL plumbing, parameter streaming, async program swaps, the frame loop.
+  // The product thesis lives here: parse on every keystroke; if the generated
+  // GLSL is unchanged, only uniforms move (same-frame "tweak"); otherwise a
+  // debounced background compile swaps in without ever blanking the canvas.
+  // ---------------------------------------------------------------------------
+  const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById('gl'));
+  const gl = canvas.getContext('webgl2', {
+    antialias: false,
+    powerPreference: 'high-performance',
+  });
+  if (!gl)
+    document.body.innerHTML =
+      "<p style='color:#fff;padding:24px'>WebGL2 not available in this browser.</p>";
+  const parallelExt = gl && gl.getExtension('KHR_parallel_shader_compile');
+  const VERT_SRC = `#version 300 es
+void main(){
+  vec2 v[3] = vec2[3](vec2(-1.0,-1.0), vec2(3.0,-1.0), vec2(-1.0,3.0));
+  gl_Position = vec4(v[gl_VertexID], 0.0, 1.0);
+}`;
+  function glCompile(type, src) {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    return sh;
+  }
+  const vertShader = gl ? glCompile(gl.VERTEX_SHADER, VERT_SRC) : null;
+  // the parameter texture: 1024 texels wide, one row per 1024 vec4 slots
+  const paramTex = gl ? gl.createTexture() : null;
+  if (gl) {
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, paramTex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, 1024, MAX_VEC4 / 1024);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  }
+  function uploadParams(data) {
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 1024, data.length / 4096, gl.RGBA, gl.FLOAT, data);
+  }
+
+  const vsub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+  const vadd = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+  const vmul = (a, s) => [a[0] * s, a[1] * s, a[2] * s];
+  const vcross = (a, b) => [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+  const vdot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const vnorm = (a) => {
+    const l = Math.hypot(...a) || 1;
+    return [a[0] / l, a[1] / l, a[2] / l];
+  };
+  function rotAxis(v, ax, ang) {
+    // Rodrigues
+    const c = Math.cos(ang),
+      s = Math.sin(ang);
+    const d = vdot(ax, v);
+    const cr = vcross(ax, v);
+    return [
+      v[0] * c + cr[0] * s + ax[0] * d * (1 - c),
+      v[1] * c + cr[1] * s + ax[1] * d * (1 - c),
+      v[2] * c + cr[2] * s + ax[2] * d * (1 - c),
+    ];
+  }
+
+  // orbit deltas ride on top of the scene's declared camera
+  let orbitX = 0,
+    orbitY = 0,
+    zoom = 0;
+  const camChip = document.getElementById('camChip');
+  function orbitActive() {
+    return orbitX !== 0 || orbitY !== 0 || zoom !== 0;
+  }
+  function resetCam() {
+    orbitX = 0;
+    orbitY = 0;
+    zoom = 0;
+    camChip.classList.remove('show');
+  }
+
+  let cur = null; // the live build: {program, build, data, ...}
+  let pending = null; // a program still linking in the background
+  let buildGen = 0;
+
+  function buildScene(src) {
+    const env = {
+      clock: transport.value,
+      width: canvas.clientWidth || 800,
+      height: canvas.clientHeight || 450,
+    };
+    const parser = new Parser(src, env);
+    const scene = parser.parseScene();
+    const comp = compileScene(scene, parser);
+    return {
+      src,
+      parser,
+      scene,
+      comp,
+      glsl: shaderSource(comp),
+      usesClock: parser.usesClock,
+      structClock: parser.structClock,
+      warnings: parser.warnings,
+    };
+  }
+
+  function writeHeader(arr, clockV, timeS) {
+    const sc = cur.build.scene;
+    const cam = sc.camera || {
+      location: [0, 2.2, -5.5],
+      look_at: [0, 0.6, 0],
+      angle: 58,
+      right: null,
+      up: null,
+      sky: [0, 1, 0],
+      direction: null,
+    };
+    const E = (v, d) => (v == null ? d : evC(v, clockV));
+    let loc = asVec3(E(cam.location, [0, 2, -5]));
+    const look = asVec3(E(cam.look_at, [0, 0, 0]));
+    const sky = vnorm(asVec3(E(cam.sky, [0, 1, 0])));
+    if (orbitActive()) {
+      let v = vsub(loc, look);
+      // drag follows the finger (grab/trackball feel): drag right swings the
+      // scene right, drag down brings the pixels down (both axes, like touch)
+      v = rotAxis(v, sky, orbitX * 0.008);
+      const rtN = vcross(sky, vnorm(v));
+      const rl = Math.hypot(...rtN);
+      if (rl > 1e-5) {
+        const nv = rotAxis(v, vmul(rtN, 1 / rl), -orbitY * 0.008);
+        if (Math.abs(vdot(vnorm(nv), sky)) < 0.985) v = nv;
+      }
+      v = vmul(v, Math.exp(zoom * 0.09));
+      loc = vadd(look, v);
+    }
+    // POV basis: dir = look-loc, right = cross(sky, dir): left-handed and proud
+    const fw = vnorm(vsub(look, loc));
+    let rt = vcross(sky, fw);
+    const rtl = Math.hypot(...rt);
+    rt = rtl > 1e-6 ? vmul(rt, 1 / rtl) : [1, 0, 0];
+    const up = vcross(fw, rt);
+    const aspect = (canvas.clientWidth || 1) / (canvas.clientHeight || 1);
+    const rlen = cam.right != null ? Math.hypot(...asVec3(E(cam.right, [aspect, 0, 0]))) : aspect;
+    const ulen = cam.up != null ? Math.hypot(...asVec3(E(cam.up, [0, 1, 0]))) : 1;
+    let dirLen = 1;
+    if (cam.angle != null)
+      dirLen = (0.5 * rlen) / Math.tan((asNum(E(cam.angle, 60)) * Math.PI) / 360);
+    else if (cam.direction != null) dirLen = Math.hypot(...asVec3(E(cam.direction, [0, 0, 1])));
+    const pixK = ulen / dirLen / Math.max(canvas.height, 1);
+    const put = (slot, x, y, z, w) => {
+      const o = slot * 4;
+      arr[o] = x;
+      arr[o + 1] = y;
+      arr[o + 2] = z;
+      arr[o + 3] = w;
+    };
+    put(0, loc[0], loc[1], loc[2], clockV);
+    put(1, rt[0] * rlen, rt[1] * rlen, rt[2] * rlen, pixK);
+    put(2, up[0] * ulen, up[1] * ulen, up[2] * ulen, 0);
+    put(3, fw[0] * dirLen, fw[1] * dirLen, fw[2] * dirLen, 0);
+    const bg = sc.background ? asVec5(evC(sc.background, clockV)) : [0, 0, 0, 0, 0];
+    const fog = sc.fog;
+    const fogC = fog ? asVec5(evC(fog.color, clockV)) : [0, 0, 0, 0, 0];
+    put(4, bg[0], bg[1], bg[2], fog ? Math.max(asNum(evC(fog.dist, clockV)), 1e-3) : 0);
+    put(5, fogC[0], fogC[1], fogC[2], Math.min(1, (fogC[4] ?? 0) + (fogC[3] ?? 0) * 0.5));
+    const amb = asVec3(evC(sc.ambient, clockV));
+    put(6, amb[0], amb[1], amb[2], 0);
+    put(7, canvas.width, canvas.height, timeS, 0);
+  }
+
+  function finishSwap(p, b) {
+    if (cur && cur.program) gl.deleteProgram(cur.program);
+    gl.useProgram(p);
+    gl.uniform1i(gl.getUniformLocation(p, 'uP'), 0);
+    // huge scenes must NOT take their first frame at full res: a multi-second
+    // command buffer trips the macOS GPU watchdog and zombies the GPU process.
+    // Clamp up front; the governor can climb back within scaleCap if it's fast.
+    const lv = b.comp.leaves.length;
+    const scaleCap = lv > 250 ? 0.8 : dprCap;
+    // resolution floor: with FXAA smoothing the edges, normal scenes can hold a
+    // much higher minimum than the old 0.2 and still read as crisp. Only the
+    // genuinely huge (watchdog-risk) scenes are allowed to drop all the way.
+    // Desktop holds a high floor (FXAA keeps it crisp even there); weak mobile
+    // GPUs need to drop low to stay smooth, so coarse pointers keep the old ~0.2.
+    const floor = coarseDpr ? 0.2 : lv > 250 ? 0.4 : 0.65;
+    renderScale = Math.min(renderScale, lv > 250 ? 0.4 : renderScale);
+    cur = {
+      program: p,
+      build: b,
+      scaleCap,
+      floor,
+      data: new Float32Array(Math.ceil(b.comp.total / 1024) * 4096),
+    };
+    setGLSLView(b.glsl);
+    afterApply(b, 'build');
+  }
+  hooks.__scanNaN = () => {
+    if (!cur) return null;
+    const bad = [];
+    cur.data.forEach((v, i) => {
+      if (!Number.isFinite(v)) bad.push(i);
+    });
+    return {
+      badSlots: bad.slice(0, 24).map((i) => (i / 4) | 0),
+      total: bad.length,
+      slots: cur.build.comp.total,
+    };
+  };
+  // headless harness hooks (gallery compatibility sweeps); inert in normal use
+  hooks.__buildScene = (src) => buildScene(src);
+  hooks.__curSrc = () => (cur ? cur.build.src : null);
+  hooks.__setScale = (s) => {
+    renderScale = s;
+  };
+  hooks.__checkGLSL = (glsl) => {
+    const sh = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(sh, glsl);
+    gl.compileShader(sh);
+    const ok = gl.getShaderParameter(sh, gl.COMPILE_STATUS);
+    const log = ok ? null : gl.getShaderInfoLog(sh);
+    gl.deleteShader(sh);
+    return log;
+  };
+  hooks.__probe = () => {
+    if (!cur || !cur.program) return null;
+    const now = performance.now();
+    resize();
+    const clockV = transport.tick(now);
+    writeHeader(cur.data, clockV, (now - startT) / 1000);
+    for (const w of cur.build.comp.writers) w(clockV, cur.data);
+    // the headless probe always reads the raw raymarch (no post fx) so the
+    // gallery sweep's luminance numbers stay comparable regardless of glow
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    drawScene();
+    const W = canvas.width,
+      H = canvas.height;
+    const px = new Uint8Array(W * H * 4);
+    gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    let sum = 0,
+      mx = 0,
+      lit = 0;
+    const n = W * H;
+    for (let i = 0; i < n; i++) {
+      const l = (px[i * 4] + px[i * 4 + 1] + px[i * 4 + 2]) / (3 * 255);
+      sum += l;
+      if (l > mx) mx = l;
+      if (l > 0.03) lit++;
+    }
+    return {
+      mean: Math.round((sum / n) * 1000) / 1000,
+      max: Math.round(mx * 1000) / 1000,
+      lit: Math.round((lit / n) * 1000) / 1000,
+    };
+  };
+  function internalError(log, b) {
+    setPill('err', '✗ internal');
+    showToast('internal hiccup in the GPU compiler, kept your last scene');
+    setGLSLView(
+      `// SHADER COMPILE FAILED (turbo bug, not yours):\n// ${(log || '').split('\n').join('\n// ')}\n\n${b.glsl}`
+    );
+    console.error('povrayer turbo internal:', log);
+  }
+  function startProgramBuild(b) {
+    if (pending) {
+      // discard an overtaken in-flight build, or it leaks GPU pipelines
+      gl.deleteProgram(pending.p);
+      gl.deleteShader(pending.fs);
+      pending = null;
+    }
+    const gen = ++buildGen;
+    const fs = glCompile(gl.FRAGMENT_SHADER, b.glsl);
+    const p = gl.createProgram();
+    gl.attachShader(p, vertShader);
+    gl.attachShader(p, fs);
+    gl.linkProgram(p);
+    pending = { p, fs, b, gen };
+    if (!parallelExt) pollPending(true);
+  }
+  function pollPending(force) {
+    if (!pending) return;
+    if (
+      !force &&
+      parallelExt &&
+      !gl.getProgramParameter(pending.p, parallelExt.COMPLETION_STATUS_KHR)
+    )
+      return;
+    const { p, fs, b, gen } = pending;
+    pending = null;
+    if (gen !== buildGen) {
+      gl.deleteProgram(p);
+      gl.deleteShader(fs);
+      return;
+    }
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+      const log = gl.getShaderInfoLog(fs) || gl.getProgramInfoLog(p);
+      gl.deleteProgram(p);
+      gl.deleteShader(fs);
+      internalError(log, b);
+      return;
+    }
+    gl.deleteShader(fs);
+    finishSwap(p, b);
+  }
+
+  // ---- post fx: a real second pass (bloom + vignette + grain + CA) -----------
+  // The raymarcher renders into an offscreen buffer; this composites it back with
+  // a soft bloom (bright pass, then a half-res separable blur), a gentle vignette,
+  // edge chromatic aberration and a whisper of film grain. Glow off => the scene
+  // draws straight to the screen exactly as before, so it costs nothing disabled.
+  function drawScene() {
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, paramTex);
+    gl.useProgram(cur.program);
+    uploadParams(cur.data);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+  const post = gl
+    ? (() => {
+        const linkPost = (frag) => {
+          const p = gl.createProgram();
+          const fs = glCompile(gl.FRAGMENT_SHADER, frag);
+          gl.attachShader(p, vertShader);
+          gl.attachShader(p, fs);
+          gl.linkProgram(p);
+          if (!gl.getProgramParameter(p, gl.LINK_STATUS))
+            console.error('post link:', gl.getShaderInfoLog(fs), gl.getProgramInfoLog(p));
+          return p;
+        };
+        // bright pass: de-gamma so only true highlights bloom, threshold, halve res
+        const PRE = linkPost(`#version 300 es
+precision highp float; out vec4 o; uniform sampler2D src; uniform vec2 res;
+void main(){
+  vec3 c = texture(src, gl_FragCoord.xy / res).rgb;
+  vec3 lin = c * c;
+  float l = max(lin.r, max(lin.g, lin.b));
+  o = vec4(lin * smoothstep(0.5, 0.9, l), 1.0);
+}`);
+        // 9-tap gaussian via linear sampling, one axis per draw
+        const BLUR = linkPost(`#version 300 es
+precision highp float; out vec4 o; uniform sampler2D src; uniform vec2 res; uniform vec2 dir;
+void main(){
+  vec2 uv = gl_FragCoord.xy / res;
+  vec2 d = dir / res;
+  vec3 s = texture(src, uv).rgb * 0.2270270;
+  s += (texture(src, uv + d * 1.3846).rgb + texture(src, uv - d * 1.3846).rgb) * 0.3162162;
+  s += (texture(src, uv + d * 3.2308).rgb + texture(src, uv - d * 3.2308).rgb) * 0.0702703;
+  o = vec4(s, 1.0);
+}`);
+        const COMP = linkPost(`#version 300 es
+precision highp float; out vec4 o;
+uniform sampler2D scene; uniform sampler2D bloom; uniform vec2 res; uniform float time;
+// FXAA (Lottes, compact form): smooths the edge jaggies the resolution governor
+// leaves behind, so a low-res raymarch still reads as a crisp, high-res image.
+const vec3 LUMA = vec3(0.299, 0.587, 0.114);
+vec3 fxaa(vec2 uv, vec2 inv){
+  float lNW = dot(texture(scene, uv + vec2(-1.0, -1.0) * inv).rgb, LUMA);
+  float lNE = dot(texture(scene, uv + vec2( 1.0, -1.0) * inv).rgb, LUMA);
+  float lSW = dot(texture(scene, uv + vec2(-1.0,  1.0) * inv).rgb, LUMA);
+  float lSE = dot(texture(scene, uv + vec2( 1.0,  1.0) * inv).rgb, LUMA);
+  vec3 mC = texture(scene, uv).rgb;
+  float lM = dot(mC, LUMA);
+  float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE)));
+  float lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));
+  if (lMax - lMin < 0.06) return mC;            // flat area: leave it alone
+  vec2 dir = vec2(-((lNW + lNE) - (lSW + lSE)), (lNW + lSW) - (lNE + lSE));
+  float red = max((lNW + lNE + lSW + lSE) * 0.03125, 1.0 / 128.0);
+  float rcp = 1.0 / (min(abs(dir.x), abs(dir.y)) + red);
+  dir = clamp(dir * rcp, -8.0, 8.0) * inv;
+  vec3 rA = 0.5 * (texture(scene, uv + dir * -0.1667).rgb + texture(scene, uv + dir * 0.1667).rgb);
+  vec3 rB = rA * 0.5 + 0.25 * (texture(scene, uv + dir * -0.5).rgb + texture(scene, uv + dir * 0.5).rgb);
+  float lB = dot(rB, LUMA);
+  return (lB < lMin || lB > lMax) ? rA : rB;
+}
+void main(){
+  vec2 uv = gl_FragCoord.xy / res;
+  vec2 dc = uv - 0.5;
+  vec3 col = fxaa(uv, 1.0 / res);
+  // chromatic aberration rides on the (already soft) bloom, so it can't undo the AA
+  float ca = 0.004 * dot(dc, dc);
+  vec3 bl = vec3(
+    texture(bloom, uv - dc * ca).r,
+    texture(bloom, uv).g,
+    texture(bloom, uv + dc * ca).b);
+  col += sqrt(max(bl, 0.0)) * 0.85;
+  col *= 1.0 - smoothstep(0.35, 1.45, length(dc)) * 0.5;
+  float g = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233)) + time) * 43758.5453);
+  o = vec4(col + (g - 0.5) * 0.03, 1.0);
+}`);
+        // sampler bindings are constant: scene on unit 1, bloom on unit 2
+        gl.useProgram(PRE);
+        gl.uniform1i(gl.getUniformLocation(PRE, 'src'), 1);
+        gl.useProgram(BLUR);
+        gl.uniform1i(gl.getUniformLocation(BLUR, 'src'), 1);
+        gl.useProgram(COMP);
+        gl.uniform1i(gl.getUniformLocation(COMP, 'scene'), 1);
+        gl.uniform1i(gl.getUniformLocation(COMP, 'bloom'), 2);
+        const uPreRes = gl.getUniformLocation(PRE, 'res');
+        const uBlurRes = gl.getUniformLocation(BLUR, 'res');
+        const uBlurDir = gl.getUniformLocation(BLUR, 'dir');
+        const uCompRes = gl.getUniformLocation(COMP, 'res');
+        const uCompTime = gl.getUniformLocation(COMP, 'time');
+
+        let fbW = 0,
+          fbH = 0,
+          sceneTex,
+          sceneFBO,
+          bA,
+          bAF,
+          bB,
+          bBF;
+        const mkTex = (w, h) => {
+          const t = gl.createTexture();
+          gl.bindTexture(gl.TEXTURE_2D, t);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+          return t;
+        };
+        const mkFBO = (t) => {
+          const f = gl.createFramebuffer();
+          gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+          gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+          return f;
+        };
+        const ensure = (w, h) => {
+          if (w === fbW && h === fbH) return;
+          fbW = w;
+          fbH = h;
+          [sceneFBO, bAF, bBF].forEach((f) => f && gl.deleteFramebuffer(f));
+          [sceneTex, bA, bB].forEach((t) => t && gl.deleteTexture(t));
+          const w2 = Math.max(1, w >> 1),
+            h2 = Math.max(1, h >> 1);
+          sceneTex = mkTex(w, h);
+          sceneFBO = mkFBO(sceneTex);
+          bA = mkTex(w2, h2);
+          bAF = mkFBO(bA);
+          bB = mkTex(w2, h2);
+          bBF = mkFBO(bB);
+        };
+        return {
+          on: localStorage.getItem('turbo-glow') === '1', // off until you ask for it
+          render(w, h, timeS) {
+            ensure(w, h);
+            const w2 = Math.max(1, w >> 1),
+              h2 = Math.max(1, h >> 1);
+            // 1) scene -> offscreen
+            gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO);
+            gl.viewport(0, 0, w, h);
+            drawScene();
+            // 2) bright pass -> half res
+            gl.activeTexture(gl.TEXTURE1);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, bAF);
+            gl.viewport(0, 0, w2, h2);
+            gl.useProgram(PRE);
+            gl.bindTexture(gl.TEXTURE_2D, sceneTex);
+            gl.uniform2f(uPreRes, w2, h2);
+            gl.drawArrays(gl.TRIANGLES, 0, 3);
+            // 3) separable blur, twice, for a wider glow
+            gl.useProgram(BLUR);
+            gl.uniform2f(uBlurRes, w2, h2);
+            for (let i = 0; i < 2; i++) {
+              gl.bindFramebuffer(gl.FRAMEBUFFER, bBF);
+              gl.bindTexture(gl.TEXTURE_2D, bA);
+              gl.uniform2f(uBlurDir, 1, 0);
+              gl.drawArrays(gl.TRIANGLES, 0, 3);
+              gl.bindFramebuffer(gl.FRAMEBUFFER, bAF);
+              gl.bindTexture(gl.TEXTURE_2D, bB);
+              gl.uniform2f(uBlurDir, 0, 1);
+              gl.drawArrays(gl.TRIANGLES, 0, 3);
+            }
+            // 4) composite -> screen
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.viewport(0, 0, w, h);
+            gl.useProgram(COMP);
+            gl.activeTexture(gl.TEXTURE1);
+            gl.bindTexture(gl.TEXTURE_2D, sceneTex);
+            gl.activeTexture(gl.TEXTURE2);
+            gl.bindTexture(gl.TEXTURE_2D, bA);
+            gl.uniform2f(uCompRes, w, h);
+            gl.uniform1f(uCompTime, timeS);
+            gl.drawArrays(gl.TRIANGLES, 0, 3);
+          },
+        };
+      })()
+    : null;
+  function renderToScreen(now) {
+    const w = canvas.width,
+      h = canvas.height;
+    if (post && post.on) {
+      post.render(w, h, (now - startT) / 1000);
+    } else {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, w, h);
+      drawScene();
+    }
+  }
+
+  // ---- frame loop with a quiet resolution governor ---------------------------
+  // phone GPUs get a lower ceiling AND a lower floor; the governor adapts between
+  const coarseDpr = matchMedia('(pointer: coarse)').matches;
+  const dprCap = Math.min(window.devicePixelRatio || 1, coarseDpr ? 1.5 : 2);
+  let renderScale = dprCap;
+  let frameAvg = 16,
+    lastNow = 0,
+    govT = 0;
+  function resize() {
+    const w = Math.max(1, Math.floor(canvas.clientWidth * renderScale));
+    const h = Math.max(1, Math.floor(canvas.clientHeight * renderScale));
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+  }
+  let frames = 0,
+    fpsT = 0,
+    startT = performance.now(),
+    lastReparse = 0;
+  const fpsEl = document.getElementById('fps');
+  hooks.__fps = 0;
+
+  function frame(now) {
+    requestAnimationFrame(frame);
+    resize();
+    pollPending(false);
+    const dt = lastNow ? now - lastNow : 16;
+    lastNow = now;
+    frameAvg += (Math.min(dt, 100) - frameAvg) * 0.08;
+    const scaleCap = cur ? cur.scaleCap : dprCap;
+    const floor = cur ? cur.floor : coarseDpr ? 0.2 : 0.65;
+    if (now - govT > 500) {
+      // favour resolution: tolerate ~38fps before shedding pixels, and never go
+      // below the scene's floor (heavy scenes trade fps for sharpness, not mush)
+      if (frameAvg > 26 && renderScale > floor) {
+        renderScale = Math.max(floor, renderScale * 0.85);
+        govT = now;
+      } else if (frameAvg < 12 && renderScale < scaleCap) {
+        renderScale = Math.min(scaleCap, renderScale * 1.07);
+        govT = now;
+      }
+    }
+    if (cur && cur.program) {
+      const clockV = transport.tick(now);
+      // structure-from-clock scenes (clock in #while/#if bounds) re-parse cheaply
+      if (
+        cur.build.structClock &&
+        (transport.playing || transport.dirty) &&
+        now - lastReparse > 120
+      ) {
+        lastReparse = now;
+        transport.dirty = false;
+        try {
+          const b = buildScene(cur.build.src);
+          if (b.glsl === cur.build.glsl) cur.build = b;
+          else scheduleStructural(b);
+        } catch {
+          /* keep last good during a clock-edge */
+        }
+      }
+      try {
+        writeHeader(cur.data, clockV, (now - startT) / 1000);
+        for (const w of cur.build.comp.writers) w(clockV, cur.data);
+      } catch (e) {
+        console.error('writer error', e);
+      }
+      renderToScreen(now);
+    }
+    frames++;
+    if (now - fpsT >= 500) {
+      hooks.__fps = Math.round((frames * 1000) / (now - fpsT));
+      fpsEl.textContent = hooks.__fps + ' fps';
+      frames = 0;
+      fpsT = now;
+    }
+  }
+
+  // ---- transport: POV's clock as a live control -------------------------------
+  const scrubEl = /** @type {HTMLInputElement} */ (document.getElementById('scrub'));
+  const clockOut = document.getElementById('clockOut');
+  const playBtn = document.getElementById('play');
+  const playGlyph = document.getElementById('playGlyph');
+  const transport = {
+    playing: true,
+    value: 0,
+    anchor: 0,
+    anchorT: performance.now(),
+    periodMs: 8000,
+    dirty: false,
+    tick(now) {
+      if (this.playing) {
+        this.value = (this.anchor + (now - this.anchorT) / this.periodMs) % 1;
+        scrubEl.value = String(this.value);
+      }
+      const read = 'clock = ' + this.value.toFixed(3);
+      // Guarded so the range's accessible value isn't rewritten on frames
+      // where the rounded readout hasn't actually moved. Without the
+      // valuetext the slider announces a bare "0.557" with no units.
+      if (read !== clockOut.textContent) {
+        clockOut.textContent = read;
+        scrubEl.setAttribute('aria-valuetext', read);
+      }
+      return this.value;
+    },
+    setPlaying(p) {
+      if (p === this.playing) return;
+      if (p) {
+        this.anchor = this.value;
+        this.anchorT = performance.now();
+      }
+      this.playing = p;
+      syncPlayGlyph();
+    },
+  };
+  // The button's face is DERIVED from transport.playing, never set alongside
+  // it. The clock runs from the first frame (playing starts true) while the
+  // markup used to ship ▶, and setPlaying early-returns on a no-op, so that
+  // first wrong glyph was never corrected: the button read "Play" while the
+  // scrub bar visibly advanced.
+  function syncPlayGlyph() {
+    const p = transport.playing;
+    playGlyph.innerHTML = p ? '&#10074;&#10074;' : '&#9654;';
+    playBtn.setAttribute('aria-label', p ? 'Pause the clock' : 'Play the clock');
+  }
+  syncPlayGlyph();
+  playBtn.addEventListener('click', () => transport.setPlaying(!transport.playing));
+  scrubEl.addEventListener('input', () => {
+    transport.setPlaying(false);
+    transport.value = parseFloat(scrubEl.value);
+    transport.dirty = true;
+  });
+  document.getElementById('period').addEventListener('change', (e) => {
+    const v = parseFloat(/** @type {HTMLSelectElement} */ (e.target).value) * 1000;
+    transport.anchor = transport.value;
+    transport.anchorT = performance.now();
+    transport.periodMs = v;
+  });
+  // Space is play/pause, but ONLY when focus is somewhere inert. Space is also
+  // the activation key for every focused control, so the old "anything but
+  // #editor" test cancelled the synthetic click on all 16 toolbar buttons:
+  // focus ✨ glow, press Space, and nothing happened except a silently paused
+  // clock, which reads as a dead button with no visible cause. The canvas is
+  // tabbable (keyboard orbit, below) but has no activation of its own, so
+  // play/pause still belongs to it.
+  const ACTIVATES_ON_SPACE = 'button,a,input,select,textarea,[tabindex],[contenteditable]';
+  document.addEventListener('keydown', (e) => {
+    if (e.code !== 'Space') return;
+    const el = e.target instanceof Element ? e.target : null;
+    if (el && el !== canvas && el.closest(ACTIVATES_ON_SPACE)) return;
+    e.preventDefault();
+    transport.setPlaying(!transport.playing);
+  });
+
+  // ---- editor pipeline --------------------------------------------------------
+  const editor = /** @type {HTMLTextAreaElement} */ (document.getElementById('editor'));
+  const pill = document.getElementById('pill');
+  const errDetail = document.getElementById('errDetail');
+  const warnChip = document.getElementById('warnChip');
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let pillT;
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let errT;
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let structT;
+  let latestStructural = null,
+    lastError = null;
+
+  function setPill(cls, text) {
+    pill.className = cls;
+    pill.innerHTML = text;
+  }
+  function flashPill(cls, text, after) {
+    clearTimeout(pillT);
+    setPill(cls, text);
+    pillT = setTimeout(() => setPill('live', '&#9679; live'), after || 700);
+  }
+  function afterApply(b, how) {
+    lastError = null;
+    clearTimeout(errT);
+    errDetail.classList.remove('show');
+    if (how === 'tweak') flashPill('tweak', 'tweak');
+    else flashPill('build', 'rebuilt', 900);
+    const n = b.warnings.length;
+    if (n) {
+      warnChip.textContent = `${n} thing${n > 1 ? 's' : ''} only the real tracer can do →`;
+      warnChip.title = b.warnings.join('\n');
+      warnChip.classList.add('show');
+    } else warnChip.classList.remove('show');
+    // Describe the SHAPE of the scene, mirroring web/player.js. Deliberately
+    // not the clock: the canvas is a live view and a per-frame label change
+    // would re-announce forever.
+    canvas.setAttribute(
+      'aria-label',
+      `live raymarched preview, ${b.comp.leaves.length} object${
+        b.comp.leaves.length === 1 ? '' : 's'
+      }, ${b.comp.materials.length} material${b.comp.materials.length === 1 ? '' : 's'}`
+    );
+    document.getElementById('transport').classList.toggle('live', b.usesClock);
+    hooks.__povgl = {
+      leaves: b.comp.leaves.length,
+      materials: b.comp.materials.length,
+      slots: b.comp.total,
+      warnings: b.warnings,
+      usesClock: b.usesClock,
+      error: null,
+    };
+  }
+  function scheduleStructural(b) {
+    latestStructural = b;
+    setPill('build', 'compiling…');
+    clearTimeout(structT);
+    structT = setTimeout(() => {
+      if (latestStructural) {
+        startProgramBuild(latestStructural);
+        latestStructural = null;
+      }
+    }, 120);
+  }
+  function onSource() {
+    paintHL(); // repaint the syntax overlay for every text change (even parse errors)
+    let b;
+    try {
+      b = buildScene(editor.value);
+    } catch (e) {
+      if (!(e instanceof ParseError)) {
+        console.error(e);
+      }
+      lastError = e;
+      clearTimeout(errT);
+      errT = setTimeout(() => showParseError(e), 550); // bad news can wait; good news can't
+      if (hooks.__povgl) hooks.__povgl.error = `${e.ln}: ${e.message}`;
+      return;
+    }
+    if (cur && b.glsl === cur.build.glsl) {
+      cur.build = b;
+      afterApply(b, 'tweak');
+    } else scheduleStructural(b);
+  }
+  function showParseError(e) {
+    if (!lastError) return;
+    clearTimeout(pillT);
+    const ln = e.ln || 1;
+    setPill('err', `✗ line ${ln}`);
+    const lines = editor.value.split('\n');
+    const srcLine = lines[ln - 1] || '';
+    // Reveal BEFORE filling: while display:none the region is out of the a11y
+    // tree, so a fill-then-show would land its first message unannounced.
+    errDetail.classList.add('show');
+    errDetail.textContent = `Parse Error: ${e.message}\n  line ${ln}: ${srcLine.trim()}\n(kept your last good scene running)`;
+  }
+  pill.addEventListener('click', () => {
+    if (lastError) errDetail.classList.toggle('show');
+  });
+
+  // ---- syntax overlay + autocomplete -----------------------------------------
+  // Same shared logic as the web editor: highlight() paints a <code> layer behind
+  // the transparent-text textarea, and complete()/applyCompletion() drive a
+  // caret-anchored popup. The DOM glue here mirrors web/ui.js so the two editors
+  // behave the same.
+  //
+  // The gen:lang bundle that precedes this script in turbo.html sets these two
+  // globals. Binding them to locals once, typed off the very modules that bundle
+  // is built from, is what lets checkJs verify the call sites below against the
+  // real signatures the web app compiles against. JSDoc import() types are erased,
+  // so this adds no runtime import (which file:// could not load anyway).
+  const POVLang =
+    /** @type {typeof import('./highlight.js') & typeof import('./context.js') & typeof import('./complete.js')} */ (
+      /** @type {any} */ (window).POVLang
+    );
+  const GLSLLang = /** @type {typeof import('./glsl-highlight.js')} */ (
+    /** @type {any} */ (window).GLSLLang
+  );
+
+  const editorStack = document.getElementById('editorStack');
+  const editorCode = document.getElementById('editorCode');
+  const completeBox = document.getElementById('complete');
+  const glslCode = document.getElementById('glslCode');
+  const completePool = POVLang.buildPool(); // keywords + builtins; scene #declares scan live
+
+  function paintHL() {
+    editorCode.innerHTML = POVLang.highlight(editor.value);
+  }
+  function setGLSLView(text) {
+    glslCode.innerHTML = GLSLLang.highlight(text);
+  }
+  // The overlay never scrolls itself; translate #editorCode to match (a GPU
+  // transform, so big shaders scroll without repainting the whole layer).
+  function syncEditorScroll() {
+    editorCode.style.transform = `translate(${-editor.scrollLeft}px, ${-editor.scrollTop}px)`;
+    if (completeState) positionComplete();
+  }
+
+  /** @type {{ from: number, to: number, query: string, items: any[] } | null} */
+  let completeState = null;
+  let completeActive = 0;
+  // The token start dismissed with Escape, so typing more of the SAME token
+  // stays quiet; moving to a new token reopens. -1 means nothing suppressed.
+  let suppressedFrom = -1;
+  const ACCEPT_KEYS = new Set(['Enter', 'Tab']);
+  const CARET_MOVE_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'Home', 'End']);
+
+  // Off-screen mirror of the textarea to measure the caret's pixel position
+  // (textareas expose no caret coords); every metric that affects glyph advance
+  // is copied so the measured x/y match the real text.
+  let caretMirror;
+  function measureCaret(index) {
+    if (!caretMirror) {
+      caretMirror = document.createElement('div');
+      caretMirror.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(caretMirror);
+    }
+    const cs = getComputedStyle(editor);
+    const s = caretMirror.style;
+    s.position = 'absolute';
+    s.visibility = 'hidden';
+    s.top = '0';
+    s.left = '-9999px';
+    s.whiteSpace = 'pre';
+    s.overflow = 'hidden';
+    s.margin = '0';
+    s.border = '0';
+    for (const p of [
+      'fontFamily',
+      'fontSize',
+      'fontWeight',
+      'fontStyle',
+      'letterSpacing',
+      'lineHeight',
+      'tabSize',
+      'paddingTop',
+      'paddingRight',
+      'paddingBottom',
+      'paddingLeft',
+    ]) {
+      s[p] = cs[p];
+    }
+    caretMirror.textContent = editor.value.slice(0, index);
+    const marker = document.createElement('span');
+    marker.textContent = editor.value.slice(index) || '.';
+    caretMirror.appendChild(marker);
+    const coords = {
+      left: marker.offsetLeft,
+      top: marker.offsetTop,
+      lineHeight: parseFloat(cs.lineHeight),
+    };
+    caretMirror.textContent = '';
+    return coords;
+  }
+  // Place the popup at the caret: below the line, flipped above when it wouldn't
+  // fit, clamped horizontally so it's always fully visible inside the stack.
+  function positionComplete() {
+    const caret = measureCaret(completeState.to);
+    const stackW = editorStack.clientWidth;
+    const stackH = editorStack.clientHeight;
+    const boxW = completeBox.offsetWidth;
+    const boxH = completeBox.offsetHeight;
+    const left = Math.max(0, Math.min(caret.left - editor.scrollLeft, stackW - boxW));
+    const lineTop = caret.top - editor.scrollTop;
+    const below = lineTop + caret.lineHeight;
+    const top = below + boxH <= stackH ? below : Math.max(0, lineTop - boxH);
+    completeBox.style.left = `${left}px`;
+    completeBox.style.top = `${top}px`;
+  }
+  function renderComplete() {
+    const frag = document.createDocumentFragment();
+    completeState.items.forEach((c, i) => {
+      const li = document.createElement('li');
+      li.className = i === completeActive ? 'cmp-item is-active' : 'cmp-item';
+      li.setAttribute('role', 'option');
+      li.dataset.index = String(i);
+      const name = document.createElement('span');
+      name.className = 'cmp-name';
+      name.textContent = c.name;
+      const sig = POVLang.signatureText(c);
+      if (sig) {
+        const sigEl = document.createElement('span');
+        sigEl.className = 'cmp-sig';
+        sigEl.textContent = sig;
+        name.appendChild(sigEl);
+      }
+      li.appendChild(name);
+      const meta = document.createElement('span');
+      meta.className = 'cmp-meta';
+      meta.textContent = c.kind;
+      li.appendChild(meta);
+      // mousedown keeps the textarea focused; click accepts.
+      li.addEventListener('mousedown', (e) => e.preventDefault());
+      li.addEventListener('click', () => {
+        completeActive = i;
+        acceptActive();
+      });
+      frag.appendChild(li);
+    });
+    completeBox.replaceChildren(frag);
+  }
+  function isCompleteOpen() {
+    return completeState !== null;
+  }
+  function showComplete(res) {
+    completeState = res;
+    completeActive = 0;
+    renderComplete();
+    completeBox.hidden = false;
+    positionComplete();
+  }
+  function closeComplete() {
+    if (!completeState) return;
+    completeState = null;
+    completeBox.hidden = true;
+    completeBox.replaceChildren();
+  }
+  // Recompute completions for the caret. `force` (Ctrl+Space) opens even on an
+  // empty token and ignores a prior Escape; auto-open waits for 3 chars so it
+  // stays quiet while typing.
+  function refreshComplete(force) {
+    const res = POVLang.complete(editor.value, editor.selectionStart, completePool, {
+      minLength: force ? 0 : 3,
+    });
+    if (!res) {
+      closeComplete();
+      suppressedFrom = -1;
+      return;
+    }
+    if (!force && suppressedFrom === res.from) {
+      closeComplete();
+      return;
+    }
+    suppressedFrom = -1;
+    showComplete(res);
+  }
+  function moveActive(delta) {
+    const n = completeState.items.length;
+    completeActive = (completeActive + delta + n) % n;
+    for (const child of completeBox.children) {
+      const el = /** @type {HTMLElement} */ (child);
+      el.classList.toggle('is-active', Number(el.dataset.index) === completeActive);
+    }
+    completeBox.children[completeActive].scrollIntoView({ block: 'nearest' });
+  }
+  // Insert via setRangeText so the native undo stack stays intact, then place
+  // the caret where complete.js wants it (inside a macro's parens, or after).
+  function acceptActive() {
+    const item = completeState.items[completeActive];
+    const { from, to } = completeState;
+    const out = POVLang.applyCompletion(editor.value, { from, to }, item);
+    const afterLen = editor.value.length - to;
+    const insert = out.text.slice(from, out.text.length - afterLen);
+    editor.setRangeText(insert, from, to, 'preserve');
+    editor.selectionStart = editor.selectionEnd = out.caret;
+    closeComplete();
+    suppressedFrom = -1;
+    onSource(); // re-parse + repaint for the inserted text
+  }
+  // Completion gets first crack at the keys (registered before the indent /
+  // number-nudge handlers below); consumed keys call preventDefault so those
+  // bail via their defaultPrevented guard.
+  function handleCompleteKeydown(e) {
+    if (e.ctrlKey && e.code === 'Space') {
+      refreshComplete(true);
+      e.preventDefault();
+      return;
+    }
+    if (!isCompleteOpen()) return;
+    if (e.key === 'ArrowDown') {
+      moveActive(1);
+      e.preventDefault();
+    } else if (e.key === 'ArrowUp') {
+      moveActive(-1);
+      e.preventDefault();
+    } else if (ACCEPT_KEYS.has(e.key)) {
+      acceptActive();
+      e.preventDefault();
+    } else if (e.key === 'Escape') {
+      suppressedFrom = completeState.from;
+      closeComplete();
+      e.preventDefault();
+      e.stopPropagation();
+    } else if (CARET_MOVE_KEYS.has(e.key)) {
+      closeComplete();
+    }
+  }
+  editor.addEventListener('keydown', handleCompleteKeydown);
+  editor.addEventListener('blur', () => closeComplete());
+  editor.addEventListener('scroll', syncEditorScroll);
+
+  editor.addEventListener('input', () => {
+    onSource();
+    refreshComplete(false);
+  });
+
+  // alt+arrow nudges the number under the caret; the scene answers in the same frame
+  editor.addEventListener('keydown', (e) => {
+    if (e.defaultPrevented) return; // completion popup already handled this key
+    if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+    const pos = editor.selectionStart;
+    const text = editor.value;
+    const re = /-?\d*\.?\d+(?:[eE][+-]?\d+)?/g;
+    let m,
+      found = null;
+    while ((m = re.exec(text))) {
+      if (m.index <= pos && pos <= m.index + m[0].length) {
+        found = m;
+        break;
+      }
+      if (m.index > pos) break;
+    }
+    if (!found) return;
+    e.preventDefault();
+    const old = found[0];
+    const decimals = old.includes('.') ? old.split('.')[1].replace(/[eE].*/, '').length : 0;
+    let step = decimals > 0 ? Math.pow(10, -decimals) : 1;
+    if (e.shiftKey) step *= 10;
+    if (e.ctrlKey || e.metaKey) step /= 10;
+    const next = (parseFloat(old) + (e.key === 'ArrowUp' ? step : -step)).toFixed(
+      Math.max(decimals, e.ctrlKey || e.metaKey ? decimals + 1 : 0)
+    );
+    editor.value = text.slice(0, found.index) + next + text.slice(found.index + old.length);
+    editor.setSelectionRange(found.index, found.index + next.length);
+    onSource();
+  });
+  // tab inserts two spaces, like civilised people
+  editor.addEventListener('keydown', (e) => {
+    if (e.defaultPrevented) return; // completion popup accepted with Tab
+    if (e.key !== 'Tab') return;
+    e.preventDefault();
+    const s = editor.selectionStart,
+      t = editor.selectionEnd;
+    editor.value = editor.value.slice(0, s) + '  ' + editor.value.slice(t);
+    editor.setSelectionRange(s + 2, s + 2);
+    onSource();
+  });
+
+  // ---- pointer: orbit/pinch/double-tap on top of the declared camera ---------
+  // One finger orbits, two fingers pinch-zoom, double-tap resets the camera.
+  // The pointer map keeps a second finger landing from teleporting the orbit.
+  const pointers = new Map();
+  let lastX = 0,
+    lastY = 0,
+    pinchDist = 0,
+    lastTap = 0,
+    tapMoved = false;
+  const clampZoom = (z) => Math.max(-18, Math.min(24, z));
+  canvas.addEventListener('pointerdown', (e) => {
+    pointers.set(e.pointerId, [e.clientX, e.clientY]);
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {
+      /* synthetic pointers can't be captured; everything else still works */
+    }
+    tapMoved = false;
+    if (pointers.size === 1) {
+      lastX = e.clientX;
+      lastY = e.clientY;
+    } else if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pinchDist = Math.hypot(a[0] - b[0], a[1] - b[1]);
+    }
+  });
+  function endPointer(e) {
+    pointers.delete(e.pointerId);
+    if (pointers.size === 1) {
+      const [p] = pointers.values();
+      lastX = p[0];
+      lastY = p[1];
+    }
+    if (pointers.size === 0 && !tapMoved && e.pointerType === 'touch') {
+      const now = performance.now();
+      if (now - lastTap < 320) {
+        resetCam();
+        showToast('camera back on script');
+        lastTap = 0;
+      } else lastTap = now;
+    }
+  }
+  canvas.addEventListener('pointerup', endPointer);
+  canvas.addEventListener('pointercancel', endPointer);
+  canvas.addEventListener('pointermove', (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, [e.clientX, e.clientY]);
+    if (pointers.size === 1) {
+      const dx = e.clientX - lastX,
+        dy = e.clientY - lastY;
+      if (Math.abs(dx) + Math.abs(dy) > 2) tapMoved = true;
+      orbitX += dx;
+      orbitY += dy;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      camChip.classList.add('show');
+    } else if (pointers.size === 2) {
+      tapMoved = true;
+      const [a, b] = [...pointers.values()];
+      const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+      if (pinchDist > 0) zoom = clampZoom(zoom - (d - pinchDist) * 0.045);
+      pinchDist = d;
+      camChip.classList.add('show');
+    }
+  });
+  canvas.addEventListener(
+    'wheel',
+    (e) => {
+      e.preventDefault();
+      zoom = clampZoom(zoom + e.deltaY * 0.01);
+      camChip.classList.add('show');
+    },
+    { passive: false }
+  );
+  document.getElementById('camReset').addEventListener('click', resetCam);
+
+  // Keyboard camera, on the same orbit/zoom state the pointer handlers write.
+  // Without it the only way back from an off-script camera was a mouse-only
+  // <b>, and boot() restores an off-script camera straight from a shared #t=
+  // link, so a keyboard-only visitor could arrive stuck with no recovery.
+  canvas.addEventListener('keydown', (e) => {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    const step = e.shiftKey ? 40 : 12; // ~1 slow drag vs ~1 fast flick
+    switch (e.key) {
+      case 'ArrowLeft':
+        orbitX -= step;
+        break;
+      case 'ArrowRight':
+        orbitX += step;
+        break;
+      case 'ArrowUp':
+        orbitY -= step;
+        break;
+      case 'ArrowDown':
+        orbitY += step;
+        break;
+      case '+':
+      case '=':
+        zoom = clampZoom(zoom - 1.5);
+        break;
+      case '-':
+      case '_':
+        zoom = clampZoom(zoom + 1.5);
+        break;
+      case 'Home':
+      case '0':
+        e.preventDefault();
+        resetCam();
+        return;
+      default:
+        return;
+    }
+    e.preventDefault();
+    camChip.classList.add('show');
+  });
+
+  // ---------------------------------------------------------------------------
+  // presets: real POV-Ray SDL, valid in BOTH renderers. The comments are the
+  // onboarding.
+  // ---------------------------------------------------------------------------
+  const PRESETS = {
+    hello: `// hello, 1994: this is real POV-Ray code, and it's ALIVE.
+// alt+up/down nudges the number under the caret. drag the view. press space.
+// the same text ray-traces for real: hit "Ray-trace it"
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+#include "colors.inc"
+
+camera {
+  location <0, 1.8, -6.5>
+  look_at  <0, 1.0, 0>
+  angle 52
+  right x*image_width/image_height
+}
+
+light_source { <8, 9, -7> color rgb 1.05 }
+light_source { <-5, 3, -4> color rgb <0.20, 0.24, 0.38> shadowless }
+
+sky_sphere {
+  pigment {
+    gradient y
+    color_map {
+      [0.00 color rgb <1.00, 0.56, 0.28>]
+      [0.30 color rgb <0.42, 0.56, 0.92>]
+      [1.00 color rgb <0.05, 0.09, 0.32>]
+    }
+  }
+}
+
+plane { y, 0
+  pigment { checker color White color rgb 0.05 }
+  finish { reflection { 0.04, 0.35 } diffuse 0.75 }
+}
+
+#declare Orbit = 2*pi*clock;
+
+// chrome, doing slow laps since 1994
+sphere { <2.4*sin(Orbit), 1, 2.4*cos(Orbit)>, 1
+  pigment { color rgb 0.95 }
+  finish { reflection 0.85 specular 1 roughness 0.001 metallic ambient 0.03 }
+}
+// glass. both tracers bend the checkerboard now.
+sphere { <-2.6, 1, 1.6>, 1
+  pigment { color rgbt <0.85, 0.95, 1.0, 0.9> }
+  finish { reflection { 0.04, 0.9 fresnel } specular 1 roughness 0.001 }
+  interior { ior 1.5 }
+}
+// signal red, bobbing.
+#declare Bob = 3; // make me 9, I dare you
+sphere { <0, 1.05 + 0.18*sin(Bob*Orbit), 0>, 1
+  pigment { color Red }
+  finish { specular 0.65 roughness 0.02 phong 0.3 }
+}
+
+fog { distance 60 color rgb <0.98, 0.62, 0.40> }
+`,
+
+    farm: `// render farm: a 49-sphere shift, clocking in at 60fps.
+// the #for loops unroll straight into the GPU shader.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+#include "colors.inc"
+
+camera {
+  location <7, 6.5, -9>
+  look_at  <0, 0.4, 0>
+  angle 42
+  right x*image_width/image_height
+}
+
+light_source { <-12, 8, -6> color rgb <1.0, 0.25, 0.85>*1.2 }    // magenta key
+light_source { < 12, 7, -8> color rgb <0.25, 0.90, 1.0>*1.1 }    // cyan fill
+light_source { <0, 20, 0> color rgb 0.25 shadowless }
+
+background { color rgb <0.02, 0.02, 0.05> }
+
+plane { y, -0.55
+  pigment { checker color rgb 0.02 color rgb 0.07 }
+  finish { reflection 0.18 specular 0.4 roughness 0.01 }
+}
+
+#declare Phase = 2*pi*clock;
+#for (I, -3, 3)
+  #for (J, -3, 3)
+    #declare H = 0.55 + 0.45*sin(Phase + sqrt(I*I + J*J)*0.9);
+    sphere { <I*1.15, H, J*1.15>, 0.42
+      pigment { color rgb 0.9 }
+      finish { reflection 0.45 specular 0.9 roughness 0.003 metallic }
+    }
+  #end
+#end
+`,
+
+    carousel: `// the carousel: CSG monoliths with holes, orbiting a blob.
+// difference{} carves; the blob breathes. scrub the clock bar.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+#include "colors.inc"
+
+camera {
+  location <0, 3.4, -10>
+  look_at  <0, 1.1, 0>
+  angle 44
+  right x*image_width/image_height
+}
+
+light_source { <6, 8, -6> color rgb <1.0, 0.75, 0.45>*1.15 }             // amber key
+light_source { <-7, 4, -3> color rgb <0.45, 0.30, 0.75>*0.8 shadowless } // purple fill
+
+background { color rgb <0.03, 0.02, 0.06> }
+
+plane { y, 0
+  pigment { color rgb <0.06, 0.05, 0.09> }
+  finish { reflection { 0.05, 0.45 } specular 0.3 roughness 0.01 }
+}
+
+#declare Spin = 360*clock;
+
+#for (I, 0, 5)
+  difference {
+    box { <-0.6, 0, -0.18>, <0.6, 2.6, 0.18> }
+    cylinder { <0, 1.55, -0.4>, <0, 1.55, 0.4>, 0.42 }
+    pigment { color rgb <0.85, 0.82, 0.78> }
+    finish { specular 0.4 roughness 0.015 reflection 0.06 }
+    translate <3.4, 0, 0>
+    rotate y*(I*60 + Spin)
+  }
+#end
+
+blob {
+  threshold 0.6
+  sphere { <0, 1.2, 0>, 1.6, 1.0 }
+  sphere { <0, 1.2 + 0.8*sin(2*pi*clock), 0>, 1.1, 0.8 }
+  sphere { <0.9*sin(4*pi*clock), 0.9, 0.9*cos(4*pi*clock)>, 0.9, 0.7 }
+  pigment { color rgb <1.0, 0.55, 0.2> }
+  finish { emission <0.6, 0.25, 0.05> specular 0.8 roughness 0.005 reflection 0.1 }
+}
+
+fog { distance 38 color rgb <0.05, 0.03, 0.09> }
+`,
+
+    csg: `// csg lab: intersection & difference, the old magic tricks.
+// the cut faces take the cutter's pigment, exactly like the real thing.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+#include "colors.inc"
+
+camera {
+  location <3.2, 3.6, -5.4>
+  look_at  <0, 0.85, 0>
+  angle 42
+  right x*image_width/image_height
+}
+
+light_source { <6, 9, -6> color rgb 1.0 }
+light_source { <-4, 3, -6> color rgb 0.22 shadowless }
+
+sky_sphere {
+  pigment { gradient y color_map { [0 color rgb <0.70, 0.78, 0.90>] [1 color rgb <0.15, 0.25, 0.50>] } }
+}
+
+plane { y, 0
+  pigment { checker color rgb 0.92 color rgb 0.10 }
+  finish { reflection 0.12 diffuse 0.7 }
+}
+
+#declare Spin = 360*clock;
+
+// Steinmetz solid: three fat cylinders, one shared heart
+intersection {
+  cylinder { <-1.2, 0, 0>, <1.2, 0, 0>, 0.78 }
+  cylinder { <0, -1.2, 0>, <0, 1.2, 0>, 0.78 }
+  cylinder { <0, 0, -1.2>, <0, 0, 1.2>, 0.78 }
+  pigment { color rgb <0.9, 0.25, 0.2> }
+  finish { specular 0.8 roughness 0.004 reflection 0.08 }
+  rotate y*Spin
+  translate <-1.5, 0.95, 0.6>
+}
+
+// a die: rounded cube minus pips (the pips bring their own pigment)
+difference {
+  superellipsoid { <0.25, 0.25> }
+  sphere { <0, 1.05, 0>, 0.24 pigment { color rgb 0.95 } }
+  sphere { <-0.45, 0.5, -1.04>, 0.22 pigment { color rgb 0.95 } }
+  sphere { < 0.45, 1.5, -1.04>, 0.22 pigment { color rgb 0.95 } }
+  pigment { color rgb <0.12, 0.30, 0.70> }
+  finish { specular 0.7 roughness 0.01 reflection 0.05 }
+  rotate y*(-0.5*Spin)
+  translate <1.6, 1.0, 0>
+}
+`,
+
+    skyvase: `// skyvase.pov: homage to the POVBENCH benchmark, 1993.
+// a 486DX2 needed minutes per frame. this one does 60 a second.
+#version 3.8;
+global_settings { assumed_gamma 1.0 }
+#include "colors.inc"
+
+camera {
+  location <11*sin(2*pi*clock), 4.6, -11*cos(2*pi*clock)>
+  look_at  <0, 2.4, 0>
+  angle 42
+  right x*image_width/image_height
+}
+
+light_source { <10, 14, -12> color rgb 1.0 }
+light_source { <-8, 6, -10> color rgb 0.18 shadowless }
+
+sky_sphere {
+  pigment {
+    gradient y
+    color_map {
+      [0.0 color rgb <0.85, 0.55, 0.35>]
+      [0.5 color rgb <0.25, 0.40, 0.80>]
+      [1.0 color rgb <0.05, 0.10, 0.45>]
+    }
+  }
+}
+
+plane { y, 0
+  pigment { checker color rgb 0.9 color rgb 0.12 }
+  finish { reflection 0.15 }
+}
+
+// the vase: stacked blob spheres, mirror-finished like the original
+blob {
+  threshold 0.55
+  sphere { <0, 0.8, 0>, 1.6, 1.0 }
+  sphere { <0, 2.1, 0>, 1.25, 0.9 }
+  sphere { <0, 3.2, 0>, 1.0, 0.85 }
+  sphere { <0, 4.1, 0>, 0.8, 0.9 }
+  sphere { <0, 4.9, 0>, 0.75, 0.9 }
+  pigment { color rgb <0.55, 0.60, 0.65> }
+  finish { reflection 0.55 specular 1 roughness 0.001 metallic ambient 0.04 }
+}
+`,
+  };
+
+  // ---------------------------------------------------------------------------
+  // remaining UI: presets, share, the povrayer handoff, intro gag, boot.
+  // ---------------------------------------------------------------------------
+  const toast = document.getElementById('toast');
+  let toastT;
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(toastT);
+    toastT = setTimeout(() => toast.classList.remove('show'), 2400);
+  }
+
+  function loadSource(src, opts) {
+    editor.value = src;
+    if (opts && opts.resetCam) resetCam();
+    onSource();
+  }
+  // .on and aria-pressed are ONE piece of state, so one statement writes both.
+  // Splitting them is how the toolbar ended up looking toggled to sighted
+  // users and permanently unpressed to a screen reader.
+  function setPressed(el, on) {
+    el.classList.toggle('on', on);
+    el.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+  document.querySelectorAll('[data-preset]').forEach((el) => {
+    const b = /** @type {HTMLElement} */ (el);
+    b.addEventListener('click', () => {
+      document.querySelectorAll('.preset').forEach((x) => setPressed(x, x === b));
+      loadSource(PRESETS[b.dataset.preset], { resetCam: true });
+    });
+  });
+
+  // The joke filenames are a gag about 1994 scene-file hygiene and they earn
+  // their place in the editor's title bar, where they read as this scene's
+  // name. They do NOT belong anywhere a machine or a stranger reads them: the
+  // <title> is identity (a random one per load meant crawlers indexed turbo
+  // as untitled_render_final_FINAL2.pov), and a saved file lands in someone's
+  // Downloads folder, where povrayer's own editor already agrees on scene.pov
+  // (web/ui.js). So the gag stays cosmetic and the exports are stable.
+  const FILENAMES = [
+    'untitled_render_final_FINAL2.pov',
+    'chrome_dreams_03.pov',
+    'newscene7_fixed.pov',
+    'test2_realone.pov',
+    'vase_backup_USE_THIS.pov',
+  ];
+  document.getElementById('fileName').textContent =
+    FILENAMES[(Math.random() * FILENAMES.length) | 0];
+  const saveName = (ext) => 'scene.' + ext;
+
+  function currentPovSource() {
+    const src = editor.value;
+    return src.endsWith('\n') ? src : src + '\n';
+  }
+
+  // The state the Ray-trace handoff hands to the editor. 800x450 at antialias
+  // 0.3 is a deliberate framing choice (the button's tooltip warns about the
+  // cost), but `threads` is NOT ours to pick: it used to say '4', which pinned
+  // a 15-core machine to four workers forever, on a page that has no idea what
+  // hardware the recipient has. Empty string means "unset, use hardware
+  // concurrency", the same convention web/repl.js emits. It cannot simply be
+  // omitted: isPermalinkState() in web/permalink.js requires the key to be a
+  // string, and a missing one makes the whole payload decode to null.
+  function currentPovrayerState() {
+    const usesClock = cur ? cur.build.usesClock : /\bclock\b/.test(editor.value);
+    return {
+      source: currentPovSource(),
+      width: '800',
+      height: '450',
+      quality: '9',
+      antialias: '0.3',
+      threads: '',
+      flags: '',
+      mode: usesClock ? 'animate' : 'still',
+      frames: '24',
+      fps: '12',
+      // Stamp where this scene came from. The editor reads it to label the
+      // handoff "from turbo" instead of inheriting whatever example the
+      // RECIPIENT last had selected, which is what used to hand them an armed
+      // Reset pointed at a different scene. web/permalink.js drops an origin
+      // it does not recognize, so an older editor just sees a shared scene.
+      origin: 'turbo',
+    };
+  }
+
+  async function encodePovrayerState() {
+    const { encodeState } = await loadPovrayerCodec();
+    return encodeState(currentPovrayerState());
+  }
+
+  function downloadPov() {
+    const url = URL.createObjectURL(
+      new Blob([currentPovSource()], { type: 'text/x-povray;charset=utf-8' })
+    );
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = saveName('pov');
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    showToast(`${saveName('pov')} downloaded`);
+  }
+
+  document.getElementById('copyPov').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(currentPovSource());
+      showToast('.pov source copied');
+    } catch {
+      showToast('clipboard blocked; use Download .pov');
+    }
+  });
+
+  document.getElementById('downloadPov').addEventListener('click', downloadPov);
+  document.addEventListener('keydown', (e) => {
+    if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 's') return;
+    e.preventDefault();
+    downloadPov();
+  });
+
+  document.getElementById('share').addEventListener('click', async () => {
+    const payload = await packB64({
+      v: 1,
+      s: editor.value,
+      c: transport.playing ? null : transport.value,
+      o: orbitActive() ? [orbitX, orbitY, zoom] : null,
+    });
+    history.replaceState(null, '', '#t=' + payload);
+    try {
+      await navigator.clipboard.writeText(location.href);
+      showToast('link copied. scenes travel well.');
+    } catch {
+      showToast("link's in the address bar");
+    }
+  });
+
+  // the handoff: same source, real POV-Ray 3.8, traced on the CPU at povrayer.com
+  document.getElementById('raytrace').addEventListener('click', async () => {
+    const state = currentPovrayerState();
+    const payload = await encodePovrayerState();
+    // deployed at povrayer.com/turbo the editor is a sibling; anywhere else
+    // (the experiments dir, a saved copy) fall back to the public site
+    const base =
+      new URLSearchParams(location.search).get('pov') ||
+      (location.pathname.startsWith('/turbo') ? '/' : 'https://povrayer.com/');
+    window.open(base + '#' + payload, '_blank');
+    showToast(
+      state.mode === 'animate'
+        ? 'opening the real tracer in animate mode. bring a coffee.'
+        : 'opening the real tracer. same code, every pixel honest.'
+    );
+  });
+
+  warnChip.addEventListener('click', () => {
+    showToast(
+      (cur ? cur.build.warnings.slice(0, 3).join(' · ') : '') +
+        ' · hit Ray-trace it for the full treatment'
+    );
+  });
+
+  // ---- panel visibility: ONE owner per panel ----------------------------------
+  // "Hide UI" and the phone { } button used to own DIFFERENT classes (.hidden
+  // vs .collapsed) and only one of them touched the label, so the pair could
+  // deadlock: "" -> hidden ("Show UI") -> collapsed (label still "Show UI",
+  // and the sheet parked below the viewport so { } visibly did nothing) ->
+  // "collapsed hidden", where pressing "Show UI" made it MORE hidden. Both
+  // controls call setEditorVisible() now, and it owns the class, the label
+  // and aria-expanded together.
+  const wrap = document.getElementById('editorWrap');
+  const toggleBtn = document.getElementById('toggle');
+  const codeBtn = document.getElementById('codeBtn');
+  const glslWrap = document.getElementById('glslWrap');
+  const glslBtn = document.getElementById('glslBtn');
+  const editorVisible = () => !wrap.classList.contains('closed');
+  function setEditorVisible(on) {
+    wrap.classList.toggle('closed', !on);
+    toggleBtn.textContent = on ? 'Hide UI' : 'Show UI';
+    toggleBtn.setAttribute('aria-expanded', on ? 'true' : 'false');
+    codeBtn.setAttribute('aria-expanded', on ? 'true' : 'false');
+  }
+  function setGLSLVisible(on) {
+    glslWrap.classList.toggle('show', on);
+    glslBtn.setAttribute('aria-expanded', on ? 'true' : 'false');
+  }
+  glslBtn.addEventListener('click', () => setGLSLVisible(!glslWrap.classList.contains('show')));
+
+  const buzz = (ms) => {
+    if (navigator.vibrate) navigator.vibrate(ms);
+  };
+  // Live, not the boot-time snapshot it replaces: rotating a phone or dragging
+  // a desktop window across 760px moves the editor between "panel" and "bottom
+  // sheet", each with its own default (canvas-first on a phone, open on
+  // desktop). Re-apply that default on a crossing, but never over a choice the
+  // visitor already made.
+  const phoneMQ = matchMedia('(max-width: 760px)');
+  let editorChosen = false;
+  phoneMQ.addEventListener('change', (e) => {
+    if (!editorChosen) setEditorVisible(!e.matches);
+  });
+  toggleBtn.addEventListener('click', () => {
+    editorChosen = true;
+    setEditorVisible(!editorVisible());
+    setGLSLVisible(false);
+  });
+  codeBtn.addEventListener('click', () => {
+    editorChosen = true;
+    const on = !editorVisible();
+    setEditorVisible(on);
+    buzz(8);
+    if (on) editor.blur(); // sheet opens showing code, keyboard on demand
+  });
+
+  // Publish the toolbar's real bottom edge for #camChip to hang from. A
+  // ResizeObserver catches height changes (a longer warn chip, a bigger
+  // browser font); the window listener catches the bar moving without
+  // resizing, which is what an orientation change does to the safe-area
+  // inset in its `top`.
+  const barEl = document.querySelector('.bar');
+  function publishBarBottom() {
+    document.documentElement.style.setProperty(
+      '--bar-b',
+      barEl.getBoundingClientRect().bottom.toFixed(1) + 'px'
+    );
+  }
+  new ResizeObserver(publishBarBottom).observe(barEl);
+  addEventListener('resize', publishBarBottom);
+  publishBarBottom();
+
+  document
+    .querySelectorAll('.preset, #share')
+    .forEach((b) => b.addEventListener('click', () => buzz(10)));
+
+  // ---- the glow toggle --------------------------------------------------------
+  const glowBtn = document.getElementById('glow');
+  if (post && post.on) setPressed(glowBtn, true);
+  glowBtn.addEventListener('click', () => {
+    if (!post) return;
+    post.on = !post.on;
+    localStorage.setItem('turbo-glow', post.on ? '1' : '0');
+    setPressed(glowBtn, post.on);
+    buzz(8);
+    showToast(post.on ? 'glow on. bloom, grain, the works ✨' : 'glow off. raw raymarcher');
+  });
+
+  // ---- one-tap export: a PNG of this frame, or one clock loop as a video ------
+  const saveBlob = (blob, name) => {
+    const u = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = u;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(u), 30000);
+  };
+  function snapPNG() {
+    if (!cur || !cur.program) return showToast('nothing to snap yet');
+    const saved = renderScale;
+    renderScale = cur.scaleCap; // snap at full quality regardless of the governor
+    resize();
+    const w = canvas.width,
+      h = canvas.height,
+      now = performance.now();
+    try {
+      writeHeader(cur.data, transport.value, (now - startT) / 1000);
+      for (const fn of cur.build.comp.writers) fn(transport.value, cur.data);
+    } catch {
+      /* keep last good */
+    }
+    renderToScreen(now);
+    const px = new Uint8Array(w * h * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    renderScale = saved;
+    resize();
+    const c2 = document.createElement('canvas');
+    c2.width = w;
+    c2.height = h;
+    const ctx = c2.getContext('2d');
+    const img = ctx.createImageData(w, h);
+    for (let y = 0; y < h; y++) {
+      const s = (h - 1 - y) * w * 4; // GL reads bottom-up; flip into the 2D canvas
+      img.data.set(px.subarray(s, s + w * 4), y * w * 4);
+    }
+    ctx.putImageData(img, 0, 0);
+    c2.toBlob((blob) => {
+      saveBlob(blob, saveName('png'));
+      showToast(saveName('png') + ' saved · ' + w + '×' + h);
+    }, 'image/png');
+    buzz(12);
+  }
+  document.getElementById('snap').addEventListener('click', snapPNG);
+
+  const recBtn = document.getElementById('rec');
+  let recorder = null;
+  function recordLoop() {
+    if (recorder) return recorder.stop(); // click again to cut it short
+    if (typeof MediaRecorder === 'undefined' || !canvas.captureStream)
+      return showToast('recording needs Chrome/Firefox. 📸 works everywhere');
+    const mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find((m) =>
+      MediaRecorder.isTypeSupported(m)
+    );
+    if (!mime) return showToast('no webm encoder here. try 📸 instead');
+    // restart the loop at clock 0 so the capture is one clean cycle
+    const wasPlaying = transport.playing;
+    transport.value = 0;
+    transport.anchor = 0;
+    transport.anchorT = performance.now();
+    transport.setPlaying(true);
+    const chunks = [];
+    recorder = new MediaRecorder(canvas.captureStream(60), {
+      mimeType: mime,
+      videoBitsPerSecond: 12e6,
+    });
+    recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    recorder.onstop = () => {
+      saveBlob(new Blob(chunks, { type: 'video/webm' }), saveName('webm'));
+      recorder = null;
+      setPressed(recBtn, false);
+      recBtn.textContent = '🎬 rec';
+      transport.setPlaying(wasPlaying);
+      showToast(saveName('webm') + ' saved · one perfect loop');
+    };
+    recorder.start();
+    setPressed(recBtn, true);
+    recBtn.textContent = '● rec';
+    buzz(20);
+    showToast('recording one ' + transport.periodMs / 1000 + 's loop…');
+    setTimeout(() => recorder && recorder.stop(), transport.periodMs + 150);
+  }
+  recBtn.addEventListener('click', recordLoop);
+
+  // ---- "make it weirder": nudge every number toward a happy accident ----------
+  // Only floats (positions, colors, angles, scales) move, so the scene STRUCTURE
+  // is untouched and most rolls stream through as a same-frame tweak.
+  function weirder() {
+    let rolled = 0;
+    const out = editor.value.replace(/-?\d*\.\d+(?:[eE][+-]?\d+)?/g, (m, offset, src) => {
+      // #version is a parser directive, not scene data. Jittering it makes the
+      // real renderer reject the whole file ("requires POV-Ray version 4.33 or
+      // later! ... Cannot parse input."), and because turbo itself ignores the
+      // value the damage only surfaces later, in Copy/Download/Ray-trace.
+      const lineStart = src.lastIndexOf('\n', offset - 1) + 1;
+      const nextBreak = src.indexOf('\n', offset);
+      const line = src.slice(lineStart, nextBreak === -1 ? src.length : nextBreak);
+      if (/^\s*#\s*version\b/.test(line)) return m;
+      if (Math.random() < 0.45) return m; // leave some be, so it stays recognisable
+      const decimals = (m.split('.')[1] || '').replace(/[eE].*/, '').length;
+      const v = parseFloat(m);
+      const jitter = 1 + (Math.random() - 0.5) * 0.5; // ±25%
+      const add = v === 0 ? (Math.random() - 0.5) * 0.4 : 0; // let zeros wander a little
+      rolled++;
+      return (v * jitter + add).toFixed(Math.max(decimals, 2));
+    });
+    if (!rolled) return showToast('no decimals to wiggle. try a scene with more numbers');
+    editor.value = out;
+    onSource();
+    buzz(14);
+    showToast('🎲 weirder · ' + rolled + ' numbers nudged · Share to keep it');
+  }
+  document.getElementById('weird').addEventListener('click', weirder);
+
+  // PWA: offline cache scoped to /turbo (no-op anywhere it can't register)
+  if ('serviceWorker' in navigator && location.pathname.startsWith('/turbo')) {
+    navigator.serviceWorker.register('turbo-sw.js', { scope: 'turbo' }).catch(() => {});
+  }
+
+  // the scanline gag: render like it's 1994 for one second, then betray it.
+  function introGag() {
+    if (sessionStorage.getItem('turbo-intro')) return;
+    sessionStorage.setItem('turbo-intro', '1');
+    const intro = document.getElementById('intro');
+    const shade = document.getElementById('introShade');
+    const status = document.getElementById('introStatus');
+    intro.hidden = false;
+    const totalLines = window.innerHeight | 0;
+    const T = 1150,
+      t0 = performance.now();
+    function step(now) {
+      const f = Math.min(1, (now - t0) / T);
+      shade.style.top = (f * 100).toFixed(2) + '%';
+      status.textContent = `Rendering... line ${Math.floor(f * totalLines)} of ${totalLines}`;
+      if (f < 1) requestAnimationFrame(step);
+      else {
+        status.textContent = 'Done. 0.016s/frame. The 486 wanted all night.';
+        setTimeout(() => {
+          intro.hidden = true;
+        }, 1500);
+      }
+    }
+    requestAnimationFrame(step);
+  }
+
+  // ---- boot -------------------------------------------------------------------
+  (async function boot() {
+    let src = null,
+      clockInit = null,
+      orbitInit = null;
+    const mt = location.hash.match(/t=([^&]+)/);
+    const ms = location.hash.match(/s=([^&]+)/);
+    if (mt) {
+      const st = await unpackB64(mt[1]);
+      if (st && st.v === 1 && typeof st.s === 'string') {
+        src = st.s;
+        clockInit = st.c;
+        orbitInit = st.o;
+      }
+    } else if (ms) {
+      try {
+        src = decodeURIComponent(escape(atob(ms[1])));
+      } catch {
+        /* junk hash, fall through */
+      }
+    }
+    if (!src) {
+      src = PRESETS.hello;
+      setPressed(document.querySelector('[data-preset="hello"]'), true);
+    }
+    editor.value = src;
+    if (Array.isArray(orbitInit) && orbitInit.length === 3) {
+      [orbitX, orbitY, zoom] = orbitInit;
+      camChip.classList.add('show');
+    }
+    if (typeof clockInit === 'number') {
+      transport.setPlaying(false);
+      transport.value = clockInit;
+      scrubEl.value = String(clockInit);
+    }
+    setEditorVisible(!phoneMQ.matches); // canvas-first on phones, editor open on desktop
+    onSource();
+    requestAnimationFrame(frame);
+    introGag();
+  })();
+})();
