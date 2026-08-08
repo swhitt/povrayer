@@ -1336,7 +1336,7 @@ export async function runEditorTools(ctx) {
       quality: document.getElementById('quality').value,
       antialias: document.getElementById('antialias').value,
     })),
-    { quality: '', antialias: 'off' },
+    { quality: '9', antialias: 'off' },
     'the one-shot override leaves the persisted controls untouched'
   );
 

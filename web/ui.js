@@ -139,6 +139,13 @@ const copyLinkBtn = /** @type {HTMLButtonElement} */ (document.getElementById('c
 const status = document.getElementById('status');
 const statusSpinner = document.getElementById('status-spinner');
 const stopBtn = /** @type {HTMLButtonElement} */ (document.getElementById('stop-btn'));
+// Whichever stop control the current viewport actually renders. Exactly one of
+// them is displayed at a time (styles.css hides #stop-btn at 900px and up, and
+// #cancel-btn below it), and .focus() on a display:none element is a silent
+// no-op, so the render focus handoff has to ask which one is live rather than
+// assuming Cancel. offsetParent is null precisely when an ancestor or the element
+// itself is display:none, which is the condition here.
+const liveStopBtn = () => (cancelBtn.offsetParent ? cancelBtn : stopBtn);
 const errorBox = document.getElementById('error');
 const errorLineEl = document.getElementById('error-line');
 const output = /** @type {HTMLImageElement} */ (document.getElementById('output'));
@@ -2511,6 +2518,14 @@ const renderOrchestrator = createRenderOrchestrator({
   // away, so a buffer the pre-check rejected left the last image and its stat
   // chips on screen with no status change at all.
   onPreviewParked: ({ reason, status }) => {
+    // live-draft.js consults the validate hook BEFORE its explicitInFlight and
+    // renderBusy checks (fire(), in that order), so this can fire while a full
+    // render is running. None of the work below is safe then: it would overwrite
+    // "rendering..." with a dim draft status, re-stale a log whose lines ARE
+    // currently landing, and for an emptied buffer dropStillImage() would clear
+    // the plate and dim Download out from under a render still in flight.
+    // Typing a dangling brace during a multi-second render reproduces it.
+    if (abortCtl !== null || isBusy()) return;
     // An empty buffer has no scene to describe, so the held image is of
     // something that no longer exists: fall back to the empty-state plate (the
     // same thing a fresh page shows) instead of narrating a ghost.
@@ -2627,7 +2642,7 @@ async function startRender() {
   const focusFromRender = document.activeElement === renderBtn;
   renderBtn.disabled = true;
   cancelBtn.hidden = false;
-  if (focusFromRender) cancelBtn.focus();
+  if (focusFromRender) liveStopBtn().focus();
 
   abortCtl = new AbortController();
   const ctl = abortCtl;
@@ -2723,7 +2738,7 @@ async function startRender() {
     renderBtn.disabled = false;
     // Return focus before hiding Cancel (hiding the focused element drops
     // focus to <body>).
-    if (document.activeElement === cancelBtn) renderBtn.focus();
+    if (document.activeElement === liveStopBtn()) renderBtn.focus();
     cancelBtn.hidden = true;
     // Mark this exact source as already attempted so the backstop draft no-ops
     // until the next edit. If the user typed during the render, editor.value
@@ -2768,7 +2783,7 @@ async function runAnimateRender() {
   const focusFromRender = document.activeElement === renderBtn;
   renderBtn.disabled = true;
   cancelBtn.hidden = false;
-  if (focusFromRender) cancelBtn.focus();
+  if (focusFromRender) liveStopBtn().focus();
 
   abortCtl = new AbortController();
   const ctl = abortCtl;
@@ -2841,7 +2856,7 @@ async function runAnimateRender() {
     abortCtl = null;
     progressStop();
     renderBtn.disabled = false;
-    if (document.activeElement === cancelBtn) renderBtn.focus();
+    if (document.activeElement === liveStopBtn()) renderBtn.focus();
     cancelBtn.hidden = true;
   }
 }

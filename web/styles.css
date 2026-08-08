@@ -2172,32 +2172,22 @@ body.source-open #repl-source {
     display: none;
   }
 
-  /* Keep the render controls reachable on a short laptop viewport. Measured at
-     1280x720 on the default scene (3 #declare params, so ui.js auto-opens
-     #scene-params): the mode toggle and the size fields ended at y=745 and
-     Render/Copy Link at y=781, so the ENTIRE row sat below a 720px fold on
-     first paint, with nothing on screen hinting that 148px of page scroll would
-     reveal it. The editor cap below (60vh) was supposed to prevent exactly this
-     and isn't enough once the params disclosure is open.
-     bottom, not top: top:0 only helps AFTER the row has been scrolled past,
-     while bottom:0 lifts the row to the viewport's bottom edge exactly while
-     its flow position is below the fold and hands it back to the flow the
-     moment scrolling brings that position into view (so on a tall viewport this
-     is inert). Opaque --bg because the row is transparent in flow and would
-     otherwise show the sliders through it while lifted. z-index 2 sits above the
-     transparent textarea layer (z-index 1) should the two ever meet, and below
-     the completion popup (5) and the example browser (20), which must keep
-     covering the row.
-     Two-column only: below the breakpoint the output pane sits BELOW this row,
-     where a permanently lifted 2-3 row toolbar would cover the rendered image
-     (that layout deliberately puts the mid-render control, #stop-btn, up next
-     to the status line instead). */
-  #controls {
-    position: sticky;
-    bottom: 0;
-    z-index: 2;
-    background: var(--bg);
-  }
+  /* NOT sticky, deliberately, though the control row does sit below the fold on a
+     short laptop viewport. Measured at 1280x720 on the default scene (3 #declare
+     params, so ui.js auto-opens #scene-params): the mode toggle and size fields
+     end at y=745 and Render/Copy Link at y=781, all below a 720px fold.
+     `position: sticky; bottom: 0` fixes that and was tried, but it trades the
+     problem rather than solving it: an opaque row pinned to the viewport bottom
+     covers whatever is there on first paint, which at exactly this viewport is
+     the whole slider panel (row spans 638-720, the three .slider-row rects sit
+     at 628-660/628-660/668-700, and elementFromPoint over each slider returns
+     #controls, so a real pointer hits the toolbar). Reserving space with
+     padding-bottom does not help either: that restores reachability by scrolling,
+     not the first paint, which is the actual complaint.
+     Fixing this properly means deciding what wins the bottom of a short viewport,
+     so it is a layout decision rather than a CSS tweak. Candidates: only stick
+     while #scene-params is closed, or don't auto-open the params disclosure when
+     the viewport is short. */
 }
 
 /* The other half of the "exactly one stop control per viewport" rule above:

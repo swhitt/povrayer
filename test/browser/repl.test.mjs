@@ -1427,7 +1427,7 @@ try {
       threads: handoff1.threads,
       flags: handoff1.flags,
     },
-    { width: '48', height: '32', quality: '', antialias: 'off', threads: '', flags: '' },
+    { width: '48', height: '32', quality: '9', antialias: 'off', threads: '', flags: '' },
     'default REPL settings map to the editor defaults'
   );
   await backToRepl();

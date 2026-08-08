@@ -41,10 +41,16 @@ export const DIFFICULTIES = [
   { key: 'advanced', label: 'Advanced' },
 ];
 
+// Cost buckets, used for the gallery/picker LABEL and the filter only. There is
+// deliberately no `quality` here any more: these used to carry '7'/'7'/'8' and
+// selecting an example wrote that over the quality control, which silently pinned
+// the whole "Glass, Refraction & Caustics" category below POV-Ray's +Q8 refraction
+// floor (the shipped wineglass rendered as an opaque solid). Drafts already cap
+// their own cost, so a scene record has no business preselecting a render setting.
 export const RENDER_TIERS = [
-  { key: 'instant', label: 'Instant', quality: '7' },
-  { key: 'fast', label: 'Fast', quality: '7' },
-  { key: 'heavy', label: 'Heavy', quality: '8' },
+  { key: 'instant', label: 'Instant' },
+  { key: 'fast', label: 'Fast' },
+  { key: 'heavy', label: 'Heavy' },
 ];
 
 export const FEATURED_EXAMPLE_NAMES = [

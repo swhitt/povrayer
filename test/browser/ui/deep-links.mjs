@@ -441,7 +441,7 @@ export async function runDeepLinks(ctx) {
   );
   assert.equal(
     await ctlValue('quality'),
-    '',
+    '9',
     'an out-of-range quality keeps the default option (guard false arm)'
   );
   assert.equal(
@@ -510,7 +510,7 @@ export async function runDeepLinks(ctx) {
   // Unknown select values are ignored (kept at default); mode=still covers the
   // other mode arm.
   await plBootGoto('?quality=999&antialias=bogus&mode=still');
-  assert.equal(await ctlValue('quality'), '', 'an unknown quality param keeps the default option');
+  assert.equal(await ctlValue('quality'), '9', 'an unknown quality param keeps the default option');
   assert.equal(
     await ctlValue('antialias'),
     '0.1',
