@@ -8,6 +8,7 @@
     { "source": "/x/:id", "destination": "/?x=:id", "permanent": false },
     { "source": "/e/:name", "destination": "/?example=:name", "permanent": false }
   ],
+  "rewrites": [{ "source": "/", "destination": "/index" }],
   "headers": [
     {
       "source": "/(.*)",
