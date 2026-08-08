@@ -251,7 +251,7 @@ try {
       return null;
     };
   });
-  await page.click('#raytrace');
+  await page.evaluate(() => document.getElementById('raytrace')?.click());
   await page.waitForFunction(() => !!(/** @type {TurboWindow} */ (window).__opened), null, {
     timeout: 5_000,
   });
@@ -384,7 +384,9 @@ try {
   );
 
   // aria-pressed tracks .on across the whole preset row, not just the clicked one.
-  await page.click('[data-preset="csg"]');
+  await page.evaluate(() =>
+    /** @type {HTMLElement} */ (document.querySelector('[data-preset="csg"]'))?.click()
+  );
   const presetState = await page.evaluate(() =>
     [...document.querySelectorAll('.preset')].map((b) => ({
       on: b.classList.contains('on'),
@@ -435,17 +437,23 @@ try {
     assert.equal(s.shown, s.label === 'Hide UI', 'the sheet is visible iff the label says Hide UI');
     assert.equal(s.expanded, s.label === 'Hide UI' ? 'true' : 'false');
   }
-  // Restore the sheet for the layout matrix below. Dispatched directly rather
-  // than via page.click: this line asserts nothing about clickability (the
-  // round-trip above already drove the toggle four times), and going through
-  // Playwright's actionability wait made it the single flakiest step in the
-  // suite on the CI runner.
-  await page.evaluate(() => document.getElementById('toggle')?.click());
-  await page.waitForFunction(
-    () => document.getElementById('toggle')?.textContent?.trim() === 'Hide UI',
-    null,
-    { timeout: 10_000 }
-  );
+  // Restore the sheet for the layout matrix below, clicking and reading back
+  // inside ONE evaluate so nothing here waits on requestAnimationFrame.
+  //
+  // turbo drives a continuous WebGL render loop, and on a software-GL CI runner
+  // that starves rAF (the job log shows "GPU stall due to ReadPixels"). Both of
+  // Playwright's waiting mechanisms poll via rAF: page.click's "visible, enabled
+  // and stable" actionability check, and waitForFunction's default polling. Each
+  // timed out here on the runner while passing locally on a real GPU. The state
+  // change itself is synchronous (setEditorVisible writes the class, the label
+  // and aria-expanded in one go), so reading it back in the same task is exact
+  // and needs no polling at all.
+  const restoredLabel = await page.evaluate(() => {
+    const t = /** @type {HTMLElement} */ (document.getElementById('toggle'));
+    t.click();
+    return t.textContent?.trim();
+  });
+  assert.equal(restoredLabel, 'Hide UI', 'the sheet is restored for the layout matrix');
 
   // ---- phone context: the floors the 640x360 suite never covered -------------
   phone = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -477,7 +485,12 @@ try {
   assert.equal(phoneBoot.codeExpanded, 'false', 'both controls read the same single state');
 
   // The { } button and "Show UI" drive the SAME state, in either order.
-  await phone.click('#codeBtn');
+  // Dispatched inside evaluate, not phone.click: see the rAF note above. turbo's
+  // render loop starves requestAnimationFrame on software GL, and page.click waits
+  // on an rAF-polled actionability check. Tap-target GEOMETRY is still asserted
+  // from real rects further down, so nothing is lost by not routing through the
+  // synthetic pointer here.
+  await phone.evaluate(() => document.getElementById('codeBtn')?.click());
   const afterCode = await phone.evaluate(() => {
     const ed = document.getElementById('editorWrap').getBoundingClientRect();
     const tp = document.getElementById('transport').getBoundingClientRect();
@@ -498,7 +511,7 @@ try {
     afterCode.transportBottom <= afterCode.sheetTop,
     `the transport (bottom ${afterCode.transportBottom}) must clear the open sheet (top ${afterCode.sheetTop})`
   );
-  await phone.click('#toggle');
+  await phone.evaluate(() => document.getElementById('toggle')?.click());
   assert.equal(
     await phone.evaluate(() => document.getElementById('editorWrap')?.classList.contains('closed')),
     true,
