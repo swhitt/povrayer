@@ -6,11 +6,39 @@
       name="viewport"
       content="width=device-width, initial-scale=1, interactive-widget=resizes-content"
     />
-    <title>povrayer REPL</title>
-    <!-- Inline-SVG orb favicon (zero assets): the same radial-gradient sphere as the wordmark. -->
+    <!-- Lowercase "repl", matching this page's own wordmark, and the middot
+         separator every povrayer title uses (web/render-feedback.js builds
+         "rendering… · povrayer repl" from the brand segment of this string). -->
+    <title>povrayer repl · a POV-Ray command line</title>
+    <meta
+      name="description"
+      content="A POV-Ray command line in the browser: build a scene one statement at a time, auto-render after every line, roll back on error. POV-Ray 3.8 in WebAssembly, no server."
+    />
+    <meta name="theme-color" content="#0b0d10" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="povrayer" />
+    <meta property="og:title" content="povrayer repl · a POV-Ray command line" />
+    <meta
+      property="og:description"
+      content="Build a POV-Ray scene one statement at a time and watch it re-render after every line."
+    />
+    <meta property="og:url" content="https://povrayer.com/repl.html" />
+    <meta
+      property="og:image"
+      content="https://raw.githubusercontent.com/swhitt/povrayer/main/docs/screenshots/repl.png"
+    />
+    <meta
+      property="og:image:alt"
+      content="the povrayer REPL with the assembled scene-source slide-out open"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <!-- Inline-SVG orb favicon (zero assets), byte-identical to the editor's and
+         to the .orb wordmark background: all three come from orbDataUri() in
+         web/orb.js and are compared against it by test/node/chrome.test.mjs. This
+         copy used to drift (r='.72' against the editor's r='.75'). -->
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2016%2016'%3E%3CradialGradient%20id='g'%20cx='.33'%20cy='.28'%20r='.72'%3E%3Cstop%20offset='0'%20stop-color='%23fff'/%3E%3Cstop%20offset='.38'%20stop-color='%23ffd23f'/%3E%3Cstop%20offset='.78'%20stop-color='%2315151a'/%3E%3C/radialGradient%3E%3Ccircle%20cx='8'%20cy='8'%20r='8'%20fill='url(%23g)'/%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3CradialGradient id='g' cx='.33' cy='.28' r='.75'%3E%3Cstop offset='0' stop-color='%23fff'/%3E%3Cstop offset='.38' stop-color='%23ffd23f'/%3E%3Cstop offset='.78' stop-color='%2315151a'/%3E%3C/radialGradient%3E%3Ccircle cx='8' cy='8' r='8' fill='url(%23g)'/%3E%3C/svg%3E"
     />
     <script src="./coi-serviceworker.js"></script>
     <link rel="stylesheet" href="./styles.css" />
@@ -21,7 +49,9 @@
         <span class="orb" aria-hidden="true"></span><span class="brand-accent">pov</span>rayer
         <span class="brand-page">repl</span>
       </h1>
-      <nav>
+      <!-- See index.html: the .html suffix is load-bearing across Vercel, the
+           Pages /povrayer/ subpath, python3 -m http.server and file://. -->
+      <nav aria-label="povrayer surfaces">
         <button id="source-toggle" type="button" aria-expanded="false" aria-controls="repl-source">
           source
         </button>
@@ -54,7 +84,23 @@
       <button id="run-btn" type="submit">run</button>
       <button id="cancel-render" type="button" hidden>cancel</button>
     </form>
-    <footer id="repl-status" role="status">idle · 320×240</footer>
+    <!-- The live settings readout and the page footer are two different jobs and
+         used to be one element: #repl-status WAS the <footer>, so the REPL was
+         the one surface with no way out to the source or the POV-Ray docs. They
+         share a bottom bar (this page is a 100dvh column and a second 26px strip
+         is real transcript), but the status is a status and the footer is the
+         footer. -->
+    <div id="repl-bottom">
+      <div id="repl-status" role="status">idle · 320×240</div>
+      <footer>
+        <a href="https://github.com/swhitt/povrayer">source</a> ·
+        <a href="https://www.povray.org/documentation/">scene docs</a> ·
+        <!-- Not a button: the REPL's help is `:help` in the transcript (19
+             commands, 6 key bindings, 6 notes, advertised in the boot banner), so
+             the footer points at it instead of pretending to own an overlay. -->
+        <span class="repl-help-hint"><kbd>:help</kbd> commands</span>
+      </footer>
+    </div>
     <aside
       id="repl-source"
       role="complementary"
@@ -65,7 +111,10 @@
         <span class="source-title">scene source</span>
         <!-- Graduation link: repl.js encodes the assembled scene + settings into
              the editor's #hash permalink on click; the bare href is only the
-             middle-click/copy fallback. Hidden while the scene is empty. -->
+             middle-click/copy fallback. Hidden while the scene is empty.
+             "editor" is the one name that destination gets, everywhere; this is
+             the verb form of the same link, because unlike the nav it carries the
+             assembled scene with it. -->
         <a id="open-in-editor" class="linkish" href="./index.html" hidden>open in editor</a>
         <button id="source-close" type="button" aria-label="close source panel">×</button>
       </div>

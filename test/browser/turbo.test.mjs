@@ -266,6 +266,75 @@ try {
   assert.equal(handoff?.source, STRUCTURAL);
   assert.equal(handoff?.mode, 'still');
   assert.equal(handoff?.width, '800');
+  // turbo has no idea what hardware the recipient has, so it must not pick their
+  // thread count. It used to send '4', which permanently pinned a 15-core machine
+  // to four workers. Empty means "unset, use hardware concurrency" (the same
+  // convention web/repl.js emits), and it has to be present-but-empty rather than
+  // absent: isPermalinkState() requires the key to be a string.
+  assert.equal(handoff?.threads, '', 'the handoff must not dictate a thread count');
+
+  // ---- the way out ------------------------------------------------------------
+  // turbo shipped with ZERO <a> elements: a one-way door escapable only with the
+  // browser back button. It links its two siblings (never itself) plus the source
+  // and the POV-Ray docs, with the labels the other two surfaces use.
+  const navOut = await page.evaluate(() => {
+    const links = [...document.querySelectorAll('.bar nav a')];
+    return {
+      labels: links.map((a) => a.textContent?.trim()),
+      hrefs: links.map((a) => a.getAttribute('href')),
+      hittable: links.every((a) => {
+        const b = a.getBoundingClientRect();
+        const hit = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
+        return hit === a;
+      }),
+      selfLinks: [...document.querySelectorAll('a[href*="turbo"]')].length,
+      accentCta: getComputedStyle(document.getElementById('raytrace')).backgroundColor,
+    };
+  });
+  assert.deepEqual(navOut.labels, ['editor', 'repl', 'source', 'scene docs']);
+  assert.deepEqual(navOut.hrefs, [
+    // The .html suffix is load-bearing: bare /repl 404s on the GitHub Pages
+    // /povrayer/ subpath and under python3 -m http.server.
+    './index.html',
+    './repl.html',
+    'https://github.com/swhitt/povrayer',
+    'https://www.povray.org/documentation/',
+  ]);
+  assert.equal(navOut.hittable, true, 'every nav link must actually take its own clicks');
+  assert.equal(navOut.selfLinks, 0, 'no surface links to itself');
+  // --accent means "this renders" (the editor's Render, the REPL's run). The
+  // handoff navigates, so it must not wear the same yellow.
+  assert.notEqual(
+    navOut.accentCta,
+    'rgb(255, 210, 63)',
+    'the Ray-trace handoff is navigation, not a render action: no --accent'
+  );
+
+  // Following the links has to actually work against the server, from the same
+  // relative base the page was loaded at. This is the whole point of keeping the
+  // .html: it is the one form that resolves in all four deploy contexts.
+  for (const { href, self, siblings } of [
+    { href: './index.html', self: 'editor', siblings: ['./repl.html', './turbo.html'] },
+    { href: './repl.html', self: 'repl', siblings: ['./index.html', './turbo.html'] },
+  ]) {
+    const url = new URL(href, new URL('turbo.html', server.url)).href;
+    const res = await page.request.get(url);
+    assert.equal(res.status(), 200, `${href} must resolve from turbo's own base`);
+    const html = await res.text();
+    assert.match(
+      html,
+      new RegExp(`<span class="brand-page">${self}</span>`),
+      `${href} must name itself in its wordmark`
+    );
+    for (const sibling of siblings) {
+      assert.ok(html.includes(`href="${sibling}"`), `${href} must link ${sibling}`);
+    }
+    assert.ok(html.includes('https://github.com/swhitt/povrayer'), `${href} must reach the source`);
+    assert.ok(
+      html.includes('https://www.povray.org/documentation/'),
+      `${href} must reach the POV-Ray docs`
+    );
+  }
 
   // ---- identity is stable, the gag is cosmetic --------------------------------
   // The title used to be `${random joke filename} - povrayer turbo`, so six loads

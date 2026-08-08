@@ -45,6 +45,7 @@ const FILES = [
   { path: 'web/examples-sourced.js', browser: true },
   { path: 'web/example-filters.js', browser: true },
   { path: 'web/gallery.js', browser: true },
+  { path: 'web/orb.js' },
   { path: 'web/highlight.js', browser: true },
   { path: 'web/glsl-highlight.js' },
   { path: 'web/sdl-strip.js', browser: true },

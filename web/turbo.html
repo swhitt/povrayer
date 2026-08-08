@@ -19,6 +19,30 @@
          identity: it is what history entries, tab lists and crawlers record, and
          a random one per load meant six visits produced four different titles. -->
     <title>povrayer turbo</title>
+    <!-- Same social/meta block as index.html and repl.html. og:image points at
+         the repo copy of the screenshot: tools/assemble-site.mjs deploys only
+         dist/ + web/, so docs/screenshots is not reachable from povrayer.com. -->
+    <meta
+      name="description"
+      content="POV-Ray scene description language compiled to a GLSL raymarcher in your browser, recompiling as you type at 60fps. One click hands the same source to real POV-Ray 3.8 for an honest CPU trace."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="povrayer" />
+    <meta property="og:title" content="povrayer turbo" />
+    <meta
+      property="og:description"
+      content="Real-time POV-Ray SDL on the GPU: type a scene, watch it raymarch at 60fps, then hand it to the real tracer."
+    />
+    <meta property="og:url" content="https://povrayer.com/turbo" />
+    <meta
+      property="og:image"
+      content="https://raw.githubusercontent.com/swhitt/povrayer/main/docs/screenshots/turbo-hero.png"
+    />
+    <meta
+      property="og:image:alt"
+      content="povrayer turbo: POV-Ray SDL raymarched live on the GPU, with the clock scrubber and the Ray-trace handoff"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
     <style>
       :root {
         color-scheme: dark;
@@ -163,6 +187,19 @@
         display: block;
         margin-top: 1px;
       }
+      /* The shared brand mark. Byte-identical to the two favicons and to .orb in
+         web/styles.css: all four are orbDataUri(ORB_CORE) from web/orb.js, and
+         test/node/chrome.test.mjs compares them. turbo cannot import ESM (see
+         tools/gen-turbo.mjs), so this copy is guarded, not imported. */
+      .orb {
+        display: inline-block;
+        width: 0.8em;
+        height: 0.8em;
+        margin-right: 7px;
+        vertical-align: -0.08em;
+        background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3CradialGradient id='g' cx='.33' cy='.28' r='.75'%3E%3Cstop offset='0' stop-color='%23fff'/%3E%3Cstop offset='.38' stop-color='%23ffd23f'/%3E%3Cstop offset='.78' stop-color='%2315151a'/%3E%3C/radialGradient%3E%3Ccircle cx='8' cy='8' r='8' fill='url(%23g)'/%3E%3C/svg%3E")
+          center / 100% 100% no-repeat;
+      }
       button {
         font: inherit;
         font-size: 12px;
@@ -183,18 +220,51 @@
       button:active {
         transform: translateY(1px);
       }
+      /* Nav pills. turbo used to have ZERO <a> elements, so it was a one-way
+         door: the only way back to the editor or the repl was the browser's back
+         button. The links borrow the glass-pill idiom rather than reading as blue
+         underlined text, because they sit in a toolbar of buttons. They are their
+         own group; the wordmark next to them stays a plain heading, since a link
+         there would put a navigation target in the middle of the orbit surface. */
+      .bar a {
+        font: inherit;
+        font-size: 12px;
+        color: #dfe3ff;
+        text-decoration: none;
+        background: rgba(30, 33, 55, 0.4);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 6px 10px;
+        backdrop-filter: blur(8px);
+        white-space: nowrap;
+        transition: background 0.12s;
+      }
+      .bar a:hover {
+        background: rgba(60, 66, 110, 0.7);
+      }
+      .bar a:focus-visible,
+      .bar button:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
       button.preset.on {
         border-color: rgba(255, 210, 63, 0.6);
         color: #ffe9a0;
       }
+      /* Emphasised by contrast, NOT by --accent. The accent is supposed to mean
+         one thing across all three surfaces, "this renders": it is the editor's
+         Render button and the REPL's run button. This control renders nothing, it
+         hands the scene to another surface in a new tab, and painting it the same
+         yellow made three different jobs look like one. Weight and a bright
+         border keep it the loudest thing in the bar. */
       #raytrace {
-        background: var(--accent);
-        color: #1a1405;
-        border-color: rgba(255, 210, 63, 0.8);
+        background: rgba(70, 78, 130, 0.75);
+        color: #f2f5ff;
+        border-color: rgba(190, 205, 255, 0.6);
         font-weight: 700;
       }
       #raytrace:hover {
-        background: #ffe070;
+        background: rgba(96, 106, 170, 0.85);
       }
       button.tog.on {
         border-color: rgba(150, 240, 205, 0.65);
@@ -743,7 +813,25 @@
          rule for why. The last group is sticky so the primary CTA and the UI
          toggle stay on screen even when the row overflows. -->
     <div class="bar">
-      <h1 class="brand"><b>povrayer turbo</b><small>real-time POV-Ray SDL, on the GPU</small></h1>
+      <h1 class="brand">
+        <span class="orb" aria-hidden="true"></span><b>povrayer turbo</b>
+        <small>real-time POV-Ray SDL, on the GPU</small>
+      </h1>
+      <!-- The way out. This page had no <a> at all, so the editor, the repl, the
+           source and the POV-Ray docs were unreachable from it. The labels are the
+           same ones the other two surfaces use in their navs (editor / repl /
+           source / scene docs), and the .html suffix is load-bearing: it is the
+           only href form that works on Vercel, on the GitHub Pages /povrayer/
+           subpath, under python3 -m http.server AND from file://. turbo is a
+           fullscreen canvas with no document flow and every fixed corner already
+           claimed (#editorWrap, #transport, #codeBtn, #camChip), so these live in
+           the scrolling toolbar instead of in a footer. -->
+      <nav class="grp" aria-label="povrayer">
+        <a href="./index.html">editor</a>
+        <a href="./repl.html">repl</a>
+        <a href="https://github.com/swhitt/povrayer">source</a>
+        <a href="https://www.povray.org/documentation/">scene docs</a>
+      </nav>
       <div class="grp" role="group" aria-label="presets">
         <button type="button" class="preset" data-preset="hello" aria-pressed="false">
           hello, 1994
@@ -818,9 +906,9 @@
         <button
           type="button"
           id="raytrace"
-          title="Opens povrayer: real POV-Ray 3.8, traced on CPU. Same code, every pixel honest. Takes a minute."
+          title="Opens this scene in the editor in a new tab: real POV-Ray 3.8, traced on CPU. Same code, every pixel honest. Takes a minute."
         >
-          Ray-trace it &rarr;
+          Ray-trace it ↗
         </button>
         <button type="button" id="toggle" aria-expanded="true" aria-controls="editorWrap">
           Hide UI
@@ -7591,6 +7679,14 @@ blob {
         return src.endsWith('\n') ? src : src + '\n';
       }
 
+      // The state the Ray-trace handoff hands to the editor. 800x450 at antialias
+      // 0.3 is a deliberate framing choice (the button's tooltip warns about the
+      // cost), but `threads` is NOT ours to pick: it used to say '4', which pinned
+      // a 15-core machine to four workers forever, on a page that has no idea what
+      // hardware the recipient has. Empty string means "unset, use hardware
+      // concurrency", the same convention web/repl.js emits. It cannot simply be
+      // omitted: isPermalinkState() in web/permalink.js requires the key to be a
+      // string, and a missing one makes the whole payload decode to null.
       function currentPovrayerState() {
         const usesClock = cur ? cur.build.usesClock : /\bclock\b/.test(editor.value);
         return {
@@ -7599,7 +7695,7 @@ blob {
           height: '450',
           quality: '9',
           antialias: '0.3',
-          threads: '4',
+          threads: '',
           flags: '',
           mode: usesClock ? 'animate' : 'still',
           frames: '24',

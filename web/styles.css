@@ -4,7 +4,9 @@
    Identity rules this file enforces:
    - --accent appears ONLY on: the render/run action, the REPL prompt + the
      result figures' provenance edge, links, the focus ring + progress bar,
-     and the wordmark (orb + "pov" span). Everything else is grey.
+     and the wordmark ("pov" span, plus the orb's baked-in #ffd23f core stop,
+     which web/orb.js owns). Everything else is grey. This is why turbo's
+     handoff button is NOT accent: it navigates, it does not render.
    - Square corners everywhere; the .orb brand mark is the only circle.
    - The rendered image is the hero: the only shadow, the only textured
      (checker mat) background.
@@ -175,13 +177,20 @@ header nav {
   gap: 12px;
 }
 
-/* Brand mark: a ray-traced sphere. The only circle in the interface. */
+/* Brand mark: a ray-traced sphere. The only circle in the interface.
+   The drawing is NOT restated here: this is orbDataUri(ORB_CORE) from
+   web/orb.js, the same bytes the two favicons carry, compared against it by
+   test/node/chrome.test.mjs. It used to be a hand-written CSS gradient, and
+   `circle farthest-corner` from 33%/28% computes a falloff ~31% wider than the
+   SVG's, so the wordmark and the favicon 16px away from it were two different
+   marks (max channel delta 109, mean 36.9). The SVG carries its own circle, so
+   no border-radius is needed to round the box. */
 .orb {
   display: inline-block;
   width: 0.8em;
   height: 0.8em;
-  border-radius: 50%;
-  background: radial-gradient(circle at 33% 28%, #fff 0%, var(--accent) 38%, #15151a 78%);
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3CradialGradient id='g' cx='.33' cy='.28' r='.75'%3E%3Cstop offset='0' stop-color='%23fff'/%3E%3Cstop offset='.38' stop-color='%23ffd23f'/%3E%3Cstop offset='.78' stop-color='%2315151a'/%3E%3C/radialGradient%3E%3Ccircle cx='8' cy='8' r='8' fill='url(%23g)'/%3E%3C/svg%3E")
+    center / 100% 100% no-repeat;
 }
 
 h1 .orb {
@@ -2024,16 +2033,45 @@ figure.result.pending > div {
   resize: none; /* auto-grows via rows from JS */
 }
 
-#repl-status {
-  /* Same env() story as the page footer: free in browsers, load-bearing in
-     standalone/cover contexts where the home indicator overlaps. */
+/* The REPL's bottom bar: the live settings readout and the real page footer,
+   sharing ONE strip. They were the same element (#repl-status was the <footer>),
+   which is why the REPL had no link to the source or the POV-Ray docs. Splitting
+   them into two stacked rows would have cost ~26px of a 100dvh transcript, so
+   they sit side by side and wrap to two rows only when the readout runs long.
+   The env() bottom padding lives here now: it belongs to whatever element is
+   actually last on the page. */
+#repl-bottom {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
   padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--border);
+}
+
+#repl-status {
+  flex: 1;
+  min-width: 0;
   font-size: var(--fs-chrome);
   line-height: 1.4;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* The footer is a row member here, so it drops the standalone page footer's own
+   padding and top hairline (#repl-bottom owns both). */
+body.repl footer {
+  padding: 0;
+  border-top: 0;
+  white-space: nowrap;
+}
+
+/* Chrome, not a control: the REPL's help really is `:help` in the transcript, so
+   the hint names it without pretending to be clickable. Same dim voice as
+   #shortcuts-hint on the editor page. */
+.repl-help-hint {
+  color: var(--dim);
 }
 
 /* ---- REPL scene-source slide-out ----

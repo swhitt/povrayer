@@ -34,6 +34,7 @@
     "web/flags.js",
     "web/gif.js",
     "web/history.js",
+    "web/orb.js",
     "web/repl-scene.js",
     "web/sdl-strip.js",
     "web/settings.js",

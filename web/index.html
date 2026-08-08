@@ -7,6 +7,33 @@
       content="width=device-width, initial-scale=1, interactive-widget=resizes-content"
     />
     <title>povrayer, POV-Ray in the browser</title>
+    <!-- Social/meta block, same shape on all three surfaces (repl.html,
+         turbo.html). og:image points at the repo copy of the screenshot because
+         tools/assemble-site.mjs only deploys dist/ + web/, so docs/screenshots is
+         not reachable from povrayer.com; a scraper fetches it directly and never
+         sees our COEP headers. theme-color is the palette's --bg. -->
+    <meta
+      name="description"
+      content="Write POV-Ray scene description language in your browser and ray-trace it locally: POV-Ray 3.8 compiled to WebAssembly, with live draft previews, animation, a shareable link for every scene, and no server."
+    />
+    <meta name="theme-color" content="#0b0d10" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="povrayer" />
+    <meta property="og:title" content="povrayer, POV-Ray in the browser" />
+    <meta
+      property="og:description"
+      content="POV-Ray 3.8 in WebAssembly: type a scene, ray-trace it locally, share the link."
+    />
+    <meta property="og:url" content="https://povrayer.com/" />
+    <meta
+      property="og:image"
+      content="https://raw.githubusercontent.com/swhitt/povrayer/main/docs/screenshots/hero.png"
+    />
+    <meta
+      property="og:image:alt"
+      content="The povrayer editor: a sunset seascape ray-traced live in the browser"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3CradialGradient id='g' cx='.33' cy='.28' r='.75'%3E%3Cstop offset='0' stop-color='%23fff'/%3E%3Cstop offset='.38' stop-color='%23ffd23f'/%3E%3Cstop offset='.78' stop-color='%2315151a'/%3E%3C/radialGradient%3E%3Ccircle cx='8' cy='8' r='8' fill='url(%23g)'/%3E%3C/svg%3E"
@@ -16,10 +43,20 @@
   </head>
   <body class="ui" data-mode="still">
     <header>
+      <!-- Every surface names itself in the wordmark and links its two siblings,
+           never itself: editor (here) / repl / turbo, one label per destination,
+           used identically in all three navs and in turbo's toolbar. -->
       <h1>
         <span class="orb" aria-hidden="true"></span><span class="brand-accent">pov</span>rayer
+        <span class="brand-page">editor</span>
       </h1>
-      <nav>
+      <!-- The .html stays in these hrefs on purpose. It is the ONLY form that
+           works in all four contexts we ship into: Vercel (cleanUrls 308s to the
+           extensionless path and keeps the fragment), the GitHub Pages
+           /povrayer/ subpath (200, no redirect, where a bare /repl is a 404),
+           `python3 -m http.server`, and file://. See .github/workflows/pages.yml.
+           Do not "tidy" these to /repl and /turbo. -->
+      <nav aria-label="povrayer surfaces">
         <a href="./repl.html">repl</a>
         <a href="./turbo.html">turbo</a>
       </nav>

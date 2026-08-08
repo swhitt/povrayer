@@ -1,6 +1,52 @@
 // Render feedback controller: owns the status live region, busy spinner, browser
 // tab state, progress bar, and render-log text nodes. The caller still owns the
 // render lifecycle and only drives this module with state transitions/events.
+import { ORB_CORE, ORB_BUSY_CORE, orbDataUri } from './orb.js';
+
+/**
+ * Browser-tab feedback: the favicon tint and the document title.
+ *
+ * Deliberately standalone (module scope, no reference to the render-feedback
+ * closure, reads the status element only through the two accessors) because the
+ * REPL wants exactly this and does not have it: a 6.5s `:anim 16` there leaves
+ * the tab titled "povrayer repl" the whole time and never dims the orb. Lifting
+ * it out of createRenderFeedback is the seam for that; wiring it up is a
+ * three-line change in web/repl.js.
+ *
+ * @param {{
+ *   faviconLink: HTMLLinkElement,
+ *   getState: () => string | undefined,
+ *   getText: () => string | null,
+ * }} deps
+ * @returns {{ apply: () => void }}
+ */
+function createTabState({ faviconLink, getState, getText }) {
+  const ORB_READY = orbDataUri(ORB_CORE);
+  const ORB_BUSY = orbDataUri(ORB_BUSY_CORE);
+  const baseTitle = document.title;
+  // The brand segment of whatever this page is called, so the transient titles
+  // read "rendering… · povrayer" / "rendering… · povrayer repl" rather than
+  // dragging each page's tagline along behind the state. Splitting on the two
+  // separators the titles use (a comma or a middot) needs no per-page config and
+  // cannot fail: split always yields at least one segment.
+  const brand = baseTitle.split(/[,·]/)[0].trim();
+
+  function apply() {
+    const state = getState();
+    faviconLink.href = state === 'busy' ? ORB_BUSY : ORB_READY;
+    if (state === 'busy') {
+      document.title = `rendering… · ${brand}`;
+    } else if (document.hidden && (state === 'done' || state === 'error')) {
+      // The payoff (or the failure) belongs in the tab strip when nobody is
+      // looking at the page.
+      document.title = `${getText()} · ${brand}`;
+    } else {
+      document.title = baseTitle;
+    }
+  }
+  document.addEventListener('visibilitychange', apply);
+  return { apply };
+}
 
 /**
  * @typedef {Object} RenderFeedbackElements
@@ -50,7 +96,7 @@ export function createRenderFeedback(elements) {
     status.dataset.state = state;
     statusLastAt = performance.now();
     syncSpinner();
-    applyTabState();
+    tab.apply();
   }
 
   /** @param {string} text */
@@ -89,25 +135,11 @@ export function createRenderFeedback(elements) {
     stopBtn.hidden = !inFlight;
   }
 
-  /** @param {string} core hex (no #) for the orb's bright core stop */
-  const orbIcon = (core) =>
-    `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3CradialGradient id='g' cx='.33' cy='.28' r='.75'%3E%3Cstop offset='0' stop-color='%23fff'/%3E%3Cstop offset='.38' stop-color='%23${core}'/%3E%3Cstop offset='.78' stop-color='%2315151a'/%3E%3C/radialGradient%3E%3Ccircle cx='8' cy='8' r='8' fill='url(%23g)'/%3E%3C/svg%3E`;
-  const ORB_READY = orbIcon('ffd23f');
-  const ORB_BUSY = orbIcon('98a1ab');
-  const baseTitle = document.title;
-
-  function applyTabState() {
-    const state = status.dataset.state;
-    faviconLink.href = state === 'busy' ? ORB_BUSY : ORB_READY;
-    if (state === 'busy') {
-      document.title = 'rendering… · povrayer';
-    } else if (document.hidden && (state === 'done' || state === 'error')) {
-      document.title = `${status.textContent} · povrayer`;
-    } else {
-      document.title = baseTitle;
-    }
-  }
-  document.addEventListener('visibilitychange', applyTabState);
+  const tab = createTabState({
+    faviconLink,
+    getState: () => status.dataset.state,
+    getText: () => status.textContent,
+  });
 
   let progressPct = -1;
   let progressPrimed = false;
