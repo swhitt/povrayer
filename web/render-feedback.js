@@ -6,12 +6,12 @@ import { ORB_CORE, ORB_BUSY_CORE, orbDataUri } from './orb.js';
 /**
  * Browser-tab feedback: the favicon tint and the document title.
  *
- * Deliberately standalone (module scope, no reference to the render-feedback
- * closure, reads the status element only through the two accessors) because the
- * REPL wants exactly this and does not have it: a 6.5s `:anim 16` there leaves
- * the tab titled "povrayer repl" the whole time and never dims the orb. Lifting
- * it out of createRenderFeedback is the seam for that; wiring it up is a
- * three-line change in web/repl.js.
+ * Both surfaces use it, and only this part: web/ui.js through
+ * createRenderFeedback below, web/repl.js on its own (that page has its own
+ * status footer and progress bar, so the rest of this module would be dead
+ * weight there). Hence module scope with no reference to the render-feedback
+ * closure, reading the status element only through the two accessors: a page
+ * needs a favicon <link> and a state/text pair to adopt it, nothing else.
  *
  * @param {{
  *   faviconLink: HTMLLinkElement,
@@ -20,7 +20,7 @@ import { ORB_CORE, ORB_BUSY_CORE, orbDataUri } from './orb.js';
  * }} deps
  * @returns {{ apply: () => void }}
  */
-function createTabState({ faviconLink, getState, getText }) {
+export function createTabState({ faviconLink, getState, getText }) {
   const ORB_READY = orbDataUri(ORB_CORE);
   const ORB_BUSY = orbDataUri(ORB_BUSY_CORE);
   const baseTitle = document.title;

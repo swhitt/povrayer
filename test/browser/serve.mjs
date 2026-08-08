@@ -42,14 +42,6 @@ async function handle(req, res) {
     return;
   }
 
-  const shortLink = /^\/x\/([^/]+)$/.exec(pathname);
-  if (shortLink) {
-    url.pathname = '/';
-    url.searchParams.set('x', shortLink[1]);
-    res.writeHead(307, { Location: `${url.pathname}${url.search}` }).end();
-    return;
-  }
-
   // /e/<name> is the pretty example deep link (vercel.json mirrors this
   // redirect in production). Render params ride along as ordinary query
   // params: /e/cornell-mood?width=1024 -> /?example=cornell-mood&width=1024.

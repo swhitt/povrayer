@@ -22,6 +22,7 @@ import {
   recordCanvasWebm,
 } from './anim-export.js';
 import { ensureCrossOriginIsolation } from './coi.js';
+import { createTabState } from './render-feedback.js';
 
 const isoWarning = document.getElementById('iso-warning');
 ensureCrossOriginIsolation({ warningEl: isoWarning });
@@ -371,6 +372,18 @@ function markRolledBack(node) {
 
 // --- status footer -----------------------------------------------------------
 
+// The tab is the only render feedback a backgrounded REPL can give: a `:anim 16`
+// runs for seconds with the page hidden, so the favicon dims and the title reads
+// "rendering… · povrayer repl" for the duration (the brand segment comes from
+// this page's own <title>, no config). Same module the editor uses, so the two
+// surfaces cannot drift.
+const tab = createTabState({
+  faviconLink: /** @type {HTMLLinkElement} */ (document.querySelector('link[rel="icon"]')),
+  getState: () => statusEl.dataset.state,
+  /* c8 ignore next -- createTabState reads the status TEXT only to title a hidden tab in the 'done'/'error' states; this footer only ever holds 'busy' or 'idle' (a finished or failed entry is reported in the transcript, not here), so the accessor is unreachable on this page */
+  getText: () => statusEl.textContent,
+});
+
 // Prints only non-defaults: `idle · 320×240`, gaining `· q 9 · aa 0.3 ·
 // threads 4 · args +UA` only when set. Busy: `rendering… · 320×240`, with a
 // percent suffix only once a percent event has arrived (rare today; the TTY
@@ -389,6 +402,7 @@ function updateStatus() {
   if (settings.args !== undefined) parts.push(`args ${settings.args}`);
   statusEl.textContent = parts.join(' · ');
   statusEl.dataset.state = busy ? 'busy' : 'idle';
+  tab.apply();
 }
 
 // Transient footer hint (e.g. Enter while a render is in flight); restores
@@ -1562,6 +1576,20 @@ function recallStep(dir) {
   return i;
 }
 
+// The walk owns the input only for as long as the input still holds what the walk
+// put there. Type over a recalled entry and that text belongs to the user, so it
+// gets stashed at the newest end of the walk (index history.length) before the
+// walk moves on: ArrowDown back past the top hands it straight back, which is how
+// shells behave. The alternative, ending the walk the moment the buffer diverges,
+// would make that ArrowUp read as a dead key. Typed text is unrecoverable once
+// overwritten, so this runs before EVERY step, not just the first one.
+// recallFilter is deliberately not re-captured here; see the ArrowUp arm.
+function stashTypedInput() {
+  if (historyIndex === history.length || input.value !== history[historyIndex]) {
+    draft = input.value;
+  }
+}
+
 input.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (!e.shiftKey || e.ctrlKey || e.metaKey)) {
     // Enter and Ctrl/Cmd+Enter submit; Shift+Enter inserts a newline.
@@ -1574,8 +1602,9 @@ input.addEventListener('keydown', (e) => {
     return;
   }
   if (e.key === 'ArrowUp' && caretOnFirstLine() && historyIndex > 0) {
-    if (historyIndex === history.length) {
-      draft = input.value;
+    const leavingDraft = historyIndex === history.length;
+    stashTypedInput();
+    if (leavingDraft) {
       // Bash-style prefix recall: typed text limits the walk to entries that
       // start with it; an empty input recalls linearly. Captured once, when
       // the walk leaves the draft, so editing a recalled entry mid-walk
@@ -1589,6 +1618,7 @@ input.addEventListener('keydown', (e) => {
       e.preventDefault();
     }
   } else if (e.key === 'ArrowDown' && caretOnLastLine() && historyIndex < history.length) {
+    stashTypedInput();
     historyIndex = recallStep(1);
     setInputValue(historyIndex === history.length ? draft : history[historyIndex]);
     e.preventDefault();

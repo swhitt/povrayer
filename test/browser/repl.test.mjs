@@ -89,6 +89,28 @@ try {
     }
   );
 
+  // Record every tab title / favicon the page takes from here on, for the
+  // createTabState assertions after the first render. Observers, not a poll: the
+  // swaps are synchronous with the status write, so a poll could straddle them,
+  // and updateStatus reruns about once a second mid-render (each rewriting the
+  // same strings), which is why consecutive duplicates collapse.
+  await page.evaluate(() => {
+    const icon = document.querySelector('link[rel="icon"]');
+    globalThis.__tabTitles = [document.title];
+    globalThis.__tabIcons = [icon.href];
+    const push = (list, value) => {
+      if (value !== list[list.length - 1]) list.push(value);
+    };
+    new MutationObserver(() => push(globalThis.__tabTitles, document.title)).observe(
+      document.querySelector('title'),
+      { childList: true, characterData: true, subtree: true }
+    );
+    new MutationObserver(() => push(globalThis.__tabIcons, icon.href)).observe(icon, {
+      attributes: true,
+      attributeFilter: ['href'],
+    });
+  });
+
   // 1. An SDL entry auto-renders at the 320x240 default. The bare sphere also
   // proves scaffold injection: camera/light/background are all implicit.
   await submit(page, 'sphere { 0, 1 pigment { color rgb <1,0,0> } }');
@@ -128,6 +150,26 @@ try {
     /render #\d+ · 320×240 · \d+\.\ds/,
     `unexpected result figcaption: ${figcaption}`
   );
+
+  // The tab tracked that render (createTabState, the same module the editor
+  // uses): "rendering… · <brand>" plus the dimmed orb while it ran, the page
+  // title and the accent orb once it settled. The brand segment is derived from
+  // repl.html's own <title>, so the REPL needs no per-page config. The status
+  // element settles a beat after the image lands, hence the wait.
+  const BASE_TITLE = 'povrayer repl · a POV-Ray command line';
+  await page.waitForFunction((t) => document.title === t, BASE_TITLE, { timeout: 30_000 });
+  const tabTitles = await page.evaluate(() => globalThis.__tabTitles);
+  assert.deepEqual(
+    tabTitles,
+    [BASE_TITLE, 'rendering… · povrayer repl', BASE_TITLE],
+    `unexpected tab titles: ${JSON.stringify(tabTitles)}`
+  );
+  // The hexes are web/orb.js's ORB_BUSY_CORE (--dim) and ORB_CORE (--accent);
+  // matching on them keeps this from restating the whole data: URI.
+  const tabIcons = await page.evaluate(() => globalThis.__tabIcons);
+  assert.equal(tabIcons.length, 3, `favicon should swap out and back: ${tabIcons.length} states`);
+  assert.match(tabIcons[1], /98a1ab/, 'the mid-render favicon should be the dimmed orb');
+  assert.match(tabIcons[2], /ffd23f/, 'the settled favicon should be the accent orb');
 
   // 2. A bad entry rolls back: an error block appears, no image is added, and
   // :list still shows only the sphere.
@@ -904,6 +946,24 @@ try {
   assert.equal(await inputVal(), ':aa 0.5', 'empty-input ArrowUp recalls the newest entry');
   await page.keyboard.press('ArrowUp');
   assert.equal(await inputVal(), ':threads 3', 'empty-input ArrowUp walks linearly, unfiltered');
+
+  // Typing over a recalled entry mid-walk used to lose that text to the next
+  // arrow key. It now rides at the newest end of the walk instead: the walk keeps
+  // stepping, and ArrowDown past the newest match hands the typed text back.
+  await page.fill('#input', 'edited mid-walk');
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await inputVal(), ':aa off', 'a diverged buffer must not stall the walk');
+  await page.keyboard.press('ArrowDown');
+  assert.equal(await inputVal(), ':threads 3');
+  await page.keyboard.press('ArrowDown');
+  assert.equal(await inputVal(), ':aa 0.5');
+  await page.keyboard.press('ArrowDown');
+  assert.equal(
+    await inputVal(),
+    'edited mid-walk',
+    'text typed mid-walk must survive the arrow keys'
+  );
+
   await page.evaluate(() => {
     document.getElementById('input').value = '';
   });
