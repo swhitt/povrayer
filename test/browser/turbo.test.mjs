@@ -395,6 +395,16 @@ try {
   for (const p of presetState) assert.equal(p.pressed, p.on ? 'true' : 'false');
 
   // ---- one owner for editor visibility ---------------------------------------
+  // Kill transitions on this page too, for the same reason the phone and matrix
+  // contexts below do: toggling the sheet animates #editorWrap, and under headless
+  // GL that slide is slow enough that Playwright's "visible, enabled and stable"
+  // actionability wait on the toolbar never settles (measured: page.click('#toggle')
+  // times out at 30s on the Linux CI runner while passing locally). None of the
+  // assertions from here down are about the slide.
+  await page.addStyleTag({
+    content: '*, *::before, *::after { transition: none !important; animation: none !important; }',
+  });
+
   // "Hide UI" and { } used to write DIFFERENT classes and only one touched the
   // label, so the button could read "Show UI" over an already-hidden sheet.
   const visibilityRoundTrip = await page.evaluate(async () => {
@@ -425,7 +435,17 @@ try {
     assert.equal(s.shown, s.label === 'Hide UI', 'the sheet is visible iff the label says Hide UI');
     assert.equal(s.expanded, s.label === 'Hide UI' ? 'true' : 'false');
   }
-  await page.click('#toggle'); // back to visible for the layout matrix below
+  // Restore the sheet for the layout matrix below. Dispatched directly rather
+  // than via page.click: this line asserts nothing about clickability (the
+  // round-trip above already drove the toggle four times), and going through
+  // Playwright's actionability wait made it the single flakiest step in the
+  // suite on the CI runner.
+  await page.evaluate(() => document.getElementById('toggle')?.click());
+  await page.waitForFunction(
+    () => document.getElementById('toggle')?.textContent?.trim() === 'Hide UI',
+    null,
+    { timeout: 10_000 }
+  );
 
   // ---- phone context: the floors the 640x360 suite never covered -------------
   phone = await browser.newPage({ viewport: { width: 390, height: 844 } });
