@@ -78,7 +78,11 @@
          the two-column pane grid). -->
     <div id="onboard" hidden>
       <p>
-        New here? Type POV-Ray scene text on the left and the preview re-renders as you pause.
+        <!-- No "on the left": the two panes only sit side by side above 900px
+             (styles.css defaults main to a single column), so on a phone the
+             preview is BELOW the editor. Phrased by timing instead of geometry,
+             which is true in both layouts. -->
+        New here? Type POV-Ray scene text and the preview re-renders as you pause.
         <kbd>Ctrl/Cmd</kbd> <kbd>Enter</kbd> renders at full quality, Gallery has ready-made scenes,
         and <kbd>?</kbd> lists every shortcut.
       </p>

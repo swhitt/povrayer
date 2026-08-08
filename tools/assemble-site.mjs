@@ -29,12 +29,19 @@ if (!existsSync(join(dist, 'povray.wasm'))) {
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 
+// Build-time sources that must NOT ship: tools/gen-turbo.mjs inlines
+// web/turbo-app.js into web/turbo.html, so deploying the module too would serve
+// ~195KB of a second, byte-identical copy that nothing ever loads (and that would
+// go stale the moment someone edited it without regenerating).
+const BUILD_ONLY = new Set(['turbo-app.js']);
+
 // web/ overlays dist/ (web wins on any name clash, though today there are none).
 // povrayer turbo lives in web/ too (turbo.html + its self-contained PWA shell:
 // manifest, icons, offline service worker), so it rides along here and is served
 // at /turbo (cleanUrls strips the .html). No special-casing needed.
 for (const dir of [dist, web]) {
   for (const entry of readdirSync(dir)) {
+    if (dir === web && BUILD_ONLY.has(entry)) continue;
     cpSync(join(dir, entry), join(out, entry), { recursive: true });
   }
 }

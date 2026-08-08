@@ -271,10 +271,15 @@ reshaping the whole project.
 - [ ] Fix the god objects.
   - Now just `web/ui.js` (~3.4k lines, ~167 functions). `test/browser/ui.test.mjs`
     is done: it is an 84-line delegator over six drivers in `test/browser/ui/`.
-  - `web/turbo.html` is the bigger outlier by volume (~6.9k lines of inline script)
-    and is the only first-party code outside checkJs, eslint, and the coverage
-    gate. Splitting it is a separate problem from ui.js, since it cannot import
-    ESM modules (the `file://` constraint documented in `tools/gen-turbo.mjs`).
+  - Turbo is no longer the outlier it was. Its ~5.7k lines of app code now live in
+    `web/turbo-app.js`, which eslint and checkJs both cover, and
+    `tools/gen-turbo.mjs` inlines it into `web/turbo.html` between `gen:app`
+    markers so the shipped page stays one self-contained file that runs from
+    `file://` (it still cannot `import` ESM at runtime). The extraction alone
+    surfaced eight latent problems, including 1,870 lines of `Parser` methods that
+    were invisible to the type checker behind `Object.assign(Parser.prototype)`.
+    It is held out of the 100% COVERAGE gate only, via the named, argued
+    `COVERAGE_EXEMPT` allowlist in `test/node/coverage-config.test.mjs`.
   - Split only along stable seams: gallery/catalog UI, live preview/render
     orchestration, editor/source state, sharing/permalinks, and focused browser
     test drivers.
