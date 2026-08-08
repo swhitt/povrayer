@@ -140,8 +140,16 @@ pre {
 
 /* ---- chrome shared by both pages ---- */
 
+/* flex-wrap, not nowrap: the REPL chrome (wordmark + source button + two nav
+   links, with the coarse-pointer padding on the links) needs 396px on one row,
+   so every phone width overflowed the viewport (76px at 320, 36px at 360, 21px
+   at 375, 6px at 390) and pushed "turbo" 5.6px off the right edge, where it
+   can't be tapped. Wrapping drops the nav to a second right-aligned row (nav
+   keeps its margin-left: auto) instead of scrolling the page sideways. It is
+   inert above ~400px, so desktop stays a single row. */
 header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   padding: 12px;
@@ -620,14 +628,26 @@ body.ui main > * {
   width: 28px;
   height: 28px;
   padding: 0;
-  border: 1px solid var(--border);
+  /* --border-strong (the base button boundary), not the --border hairline this
+     used to name: it sits in the search row beside #example-search and the four
+     filter selects, which all draw --border-strong, and :root reserves that
+     token for interactive boundaries (WCAG 1.4.11). The old value made the one
+     control in the row that IS a button read as the weakest edge. */
+  border: 1px solid var(--border-strong);
   color: var(--dim);
   line-height: 1;
 }
 
+/* Quiet hover (dim glyph -> full text), not the button invert, so the search row
+   doesn't flash a white block. background:none is load-bearing: this rule
+   overrode only the invert's color, so `background: var(--text)` from
+   `button:hover` still landed under a --text glyph and the "x" measured at 1:1
+   contrast (invisible) while hovered. Same treatment as #shortcuts-hint, the
+   other button that opts out of the invert. The border-color this used to
+   restate is now the resting value, so it's dropped. */
 #example-clear:hover {
+  background: none;
   color: var(--text);
-  border-color: var(--border-strong);
 }
 
 .ex-filter-row {
@@ -1480,9 +1500,12 @@ body.ui main > * {
    mobile while a render runs, so this rides next to the live status line and JS
    keeps it in lockstep with the spinner (visible exactly while a render or live
    draft is in flight). A SECONDARY control: the base grey-bordered, square,
-   accent-free button treatment carries it (accent stays on Render), and the
-   @media (pointer: coarse) block already grows every button to a 44px tap
-   target. flex:none so the label never shrinks under the flexible status text. */
+   accent-free button treatment carries it (accent stays on Render), and it
+   inherits the 44px tap floor from the @media (pointer: coarse) button rule
+   (which sets min-height plus 10px 16px padding: enough on its own only for
+   buttons that don't override that padding, which is why the glyph chips need
+   an explicit min-width there). flex:none so the label never shrinks under the
+   flexible status text. */
 #stop-btn {
   flex: none;
 }
@@ -2148,6 +2171,50 @@ body.source-open #repl-source {
   #stop-btn {
     display: none;
   }
+
+  /* Keep the render controls reachable on a short laptop viewport. Measured at
+     1280x720 on the default scene (3 #declare params, so ui.js auto-opens
+     #scene-params): the mode toggle and the size fields ended at y=745 and
+     Render/Copy Link at y=781, so the ENTIRE row sat below a 720px fold on
+     first paint, with nothing on screen hinting that 148px of page scroll would
+     reveal it. The editor cap below (60vh) was supposed to prevent exactly this
+     and isn't enough once the params disclosure is open.
+     bottom, not top: top:0 only helps AFTER the row has been scrolled past,
+     while bottom:0 lifts the row to the viewport's bottom edge exactly while
+     its flow position is below the fold and hands it back to the flow the
+     moment scrolling brings that position into view (so on a tall viewport this
+     is inert). Opaque --bg because the row is transparent in flow and would
+     otherwise show the sliders through it while lifted. z-index 2 sits above the
+     transparent textarea layer (z-index 1) should the two ever meet, and below
+     the completion popup (5) and the example browser (20), which must keep
+     covering the row.
+     Two-column only: below the breakpoint the output pane sits BELOW this row,
+     where a permanently lifted 2-3 row toolbar would cover the rendered image
+     (that layout deliberately puts the mid-render control, #stop-btn, up next
+     to the status line instead). */
+  #controls {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    background: var(--bg);
+  }
+}
+
+/* The other half of the "exactly one stop control per viewport" rule above:
+   #stop-btn is hidden in two-column, so Cancel has to be hidden in one column,
+   or a phone mid-render shows both (measured 390x844: Cancel in the toolbar at
+   y=861 and Stop next to the status at y=986, two identical actions 125px
+   apart). Written as the negation of the block above, not `max-width: 899px`, so
+   the two can't both miss on a fractional viewport width (899.5px under browser
+   zoom) and show both controls again. This can only ADD display:none, which is
+   what lets it compose with ui.js: JS drives both buttons' `hidden` attribute
+   off the render lifecycle and knows nothing about the breakpoint, so a rule
+   that had to RE-SHOW Cancel above 900px would outrank [hidden] and pin it
+   on screen for good. */
+@media not all and (min-width: 900px) {
+  #cancel-btn {
+    display: none;
+  }
 }
 
 /* Cap the editor at every width so controls and the output pane stay within a
@@ -2261,6 +2328,17 @@ body.source-open #repl-source {
   #download-btn {
     min-height: 44px;
     padding: 10px 16px;
+  }
+
+  /* The two glyph chips carry their own narrower padding (.slider-reset 0 2px,
+     #swap-size 0 7px) at a specificity the rule above can't outrank, so the
+     44px floor was landing as HEIGHT ONLY: measured 11.2x44 and 23.8x44 on a
+     390px phone, the page's only sub-24px targets. A min-width floor
+     is the fix that doesn't touch their resting glyph metrics (the label stays
+     centered in the wider box) and doesn't fight their own padding. */
+  .slider-reset,
+  #swap-size {
+    min-width: 44px;
   }
 
   input,
