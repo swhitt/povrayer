@@ -1,6 +1,19 @@
-// Flat ESLint config for the vanilla-ESM sources. No framework, no TypeScript
-// linting here: wrapper/src/*.ts is type-checked by `tsc --noEmit` (see the
-// pre-commit hook) and only formatted by Prettier, so it is ignored below.
+// Flat ESLint config for the vanilla-ESM sources, JavaScript AND TypeScript.
+//
+// web/ is migrating to TypeScript, and the .ts files used to be ignored here on
+// the grounds that tsc already type-checks them. That was the wrong trade: tsc
+// checks TYPES, eslint checks the things a type checker has no opinion about
+// (no-self-assign, no-constant-condition, no-fallthrough, unreachable code), and
+// it was exactly `no-self-assign` that found a dead `f.pos = f.pos` in turbo.
+// Every module converted to .ts would have quietly dropped out of that net, so
+// each conversion would have traded lint coverage for type coverage instead of
+// gaining both. typescript-eslint is a dev-only dependency and the standard way
+// to lint the language, so the honest fix was to add it rather than shrink scope.
+//
+// Deliberately the SYNTACTIC preset, not the type-aware one: type-aware linting
+// would rebuild the whole program on every lint run to re-derive what
+// `npm run typecheck:strict` already proves. This keeps eslint fast and leaves
+// type truth to tsc, which owns it.
 //
 // Globals are scoped per directory: web/ runs in the browser, everything else
 // (CLI, tooling, test drivers, server) runs in Node. The Playwright test
@@ -8,34 +21,34 @@
 // page.evaluate(() => ...) callbacks, so they get both global sets.
 import js from '@eslint/js';
 import globals from 'globals';
+import tseslint from 'typescript-eslint';
 
 export default [
   {
     // Not first-party / not lintable here:
     // - dist/**: emscripten + tsc build output (generated)
     // - web/coi-serviceworker.js: vendored third-party (MIT, pinned)
-    // - **/*.ts: type-checked by tsc, formatted by Prettier. Same deal the
-    //   wrapper has always had: eslint here has no TS parser (adding one means a
-    //   new dev dep and a second rule set), and tsc under tsconfig.strict.json
-    //   already covers what js.configs.recommended would catch on these files,
-    //   no-undef via real resolution, no-unused-vars via noUnusedLocals /
-    //   noUnusedParameters, no-fallthrough via noFallthroughCasesInSwitch.
     // - coverage/**: generated reports
     ignores: [
       'dist/**',
       '_site/**', // assembled deploy output (dist/ + web/, see tools/assemble-site.mjs)
       '_build/**', // compiled web/ TypeScript (see tools/build-web.mjs)
+      '.claude/worktrees/**', // agent worktrees: full nested checkouts of this repo
       '.vercel/**', // Vercel CLI local state + prebuilt output
       'node_modules/**',
       'coverage/**',
       '.playwright-cli/**',
       'web/coi-serviceworker.js',
       'src/index.js', // gitignored symlink to the built wrapper (see tools/link-wrapper.mjs)
-      '**/*.ts',
     ],
   },
 
   js.configs.recommended,
+
+  // TypeScript sources: web/*.ts and the wrapper. The plugin's own recommended
+  // set replaces the base rules it supersedes (no-unused-vars in particular,
+  // whose base version cannot see type-only imports or parameter properties).
+  ...tseslint.configs.recommended.map((c) => ({ ...c, files: ['**/*.ts'] })),
 
   {
     files: ['**/*.{js,mjs}'],
