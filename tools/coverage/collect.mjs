@@ -11,6 +11,7 @@ import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { repoRoot, rawRoot, rawNodeDir, rawBrowserDir } from './paths.mjs';
+import { buildWeb } from '../build-web.mjs';
 
 // Deep requires into c8: deliberate. c8 has no exports map, the Report half of
 // the package is yargs-free, and only the yargs half is broken on Node >= 26.
@@ -35,6 +36,17 @@ export async function collectRaw(shard) {
   if (!cmd) {
     throw new Error(`collect: unknown shard '${shard}' (have: ${Object.keys(SHARDS).join(', ')})`);
   }
+
+  // Compile web/*.ts before spawning the shard. Necessary because this is the ONE
+  // entry point the npm pre-hooks do not cover: the browser shards run their
+  // drivers directly (`node test/browser/ui.test.mjs`, see SHARDS above), so no
+  // pretest hook fires, and the drivers STATICALLY import out of _build/web (e.g.
+  // test/browser/ui/deep-links.mjs imports permalink), which is evaluated before
+  // test/browser/serve.mjs gets the chance to build. CI caught this as
+  // ERR_MODULE_NOT_FOUND on a clean checkout while it passed locally purely
+  // because _build already existed. buildWeb() verifies freshness rather than
+  // rebuilding, so calling it here costs nothing when the output is current.
+  buildWeb();
   const root = rawRoot(shard);
   const nodeDir = rawNodeDir(root);
   const browserDir = rawBrowserDir(root);
