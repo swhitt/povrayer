@@ -113,6 +113,12 @@ jobs:
   shard:
     needs: build
     runs-on: ubuntu-latest
+    # A wedged WASM render or a starved headless GL context otherwise burns the
+    # 360-minute default before anyone finds out: one hung node shard cost two
+    # hours of runner time and had to be cancelled by hand. The slowest shard
+    # finishes well inside 10 minutes locally, so 30 is generous and still fails
+    # fast enough to be useful.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

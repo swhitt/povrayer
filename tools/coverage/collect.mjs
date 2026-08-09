@@ -24,7 +24,16 @@ const defaultExtension = require('@istanbuljs/schema/default-extension');
 // `npm run test:node` so its `pretest:node` link-wrapper still wires src/index.js
 // for the CLI tests. 'full' is the local one-shot used by run.mjs.
 export const SHARDS = {
-  node: ['npm', 'run', 'test:node'],
+  // SERIAL, like the node-20-compat lane and for the same measured reason:
+  // concurrent WASM renders exhaust POV-Ray's worker startup budget on a small
+  // runner. This shard is the heaviest thing in CI (it renders all 96 example
+  // scenes) and it hung for over two hours on a 4-core runner inside the
+  // animation tests, having passed the run before. Coverage is identical either
+  // way (the same files execute, just not at the same time), and the Node 20 lane
+  // already proves serial finishes in acceptable time, so the concurrency was
+  // buying wall-clock at the price of a flake class the repo had already
+  // diagnosed once.
+  node: ['npm', 'run', 'test:node:serial'],
   browser: ['npm', 'run', 'test:browser:core'],
   ui: ['node', 'test/browser/ui.test.mjs'],
   repl: ['node', 'test/browser/repl.test.mjs'],
