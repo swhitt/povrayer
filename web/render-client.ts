@@ -327,7 +327,7 @@ export async function renderAnimation(
 
 /** True for an abort rejection (DOMException named 'AbortError'). */
 export function isAbortError(err: unknown): boolean {
-  return err instanceof DOMException && err.name === 'AbortError';
+  return err instanceof Error && err.name === 'AbortError';
 }
 
 // --- stats distillation --------------------------------------------------------

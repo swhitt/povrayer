@@ -3276,10 +3276,9 @@ function hydrateFromState(state) {
 //
 // Cross-origin: the page is cross-origin isolated (COEP: require-corp). A CORS
 // fetch to api.github.com works (it sends Access-Control-Allow-Origin), but the
-// raw gist host (gist.githubusercontent.com) sends no CORS, so we read the file
-// text from the JSON API's files[name].content and never touch the raw_url. (A
-// file past the API's inline cap comes back `truncated` with only partial
-// content; v1 uses that partial text and doesn't chase raw_url.)
+// raw gist host (gist.githubusercontent.com) sends no CORS, so we read only
+// complete inline text from the JSON API. Files past the API's inline cap are
+// rejected instead of rendering a silently truncated scene.
 
 /**
  * Pull a gist id out of the ?gist= value. Returns null when the trailing path
@@ -3302,7 +3301,10 @@ function gistIdFrom(raw) {
  * @returns {string | null}
  */
 function pickGistSource(files) {
-  const text = Object.values(files).filter((f) => typeof f.content === 'string');
+  if (!files || typeof files !== 'object') return null;
+  const text = Object.values(files).filter(
+    (f) => f && f.truncated !== true && typeof f.content === 'string'
+  );
   const pov = text.find((f) => /\.pov$/i.test(f.filename));
   const chosen = pov ?? text[0];
   return chosen ? chosen.content : null;

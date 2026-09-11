@@ -39,7 +39,7 @@ const sourceToggle = document.getElementById('source-toggle');
 const sourcePanel = document.getElementById('repl-source');
 const sourceCode = document.getElementById('source-code');
 const sourceClose = document.getElementById('source-close');
-const editorLink = document.getElementById('open-in-editor');
+const editorLink = /** @type {HTMLAnchorElement} */ (document.getElementById('open-in-editor'));
 
 // --- state -----------------------------------------------------------------
 
@@ -1455,7 +1455,9 @@ editorLink.addEventListener('click', (e) => {
   // The static href is a bare ./index.html fallback (middle-click/copy still
   // reach the editor); a normal click encodes the scene first, then navigates.
   e.preventDefault();
-  openInEditor();
+  void openInEditor().catch(() => {
+    location.href = editorLink.href;
+  });
 });
 
 // Tap/click an echoed entry to copy it back into the input (the touch path to

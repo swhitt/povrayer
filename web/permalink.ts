@@ -54,6 +54,12 @@ export type PermalinkOrigin = 'turbo' | 'repl';
 // missing here would be silently dropped from an otherwise valid link.
 const ORIGINS: readonly PermalinkOrigin[] = ['turbo', 'repl'];
 
+// A URL fragment should stay comfortably below browser/proxy limits, and gzip
+// must not turn a tiny hostile link into an unbounded allocation. These limits
+// still leave ample room for ordinary hand-written scenes and settings.
+export const MAX_PERMALINK_CHARS = 1_048_576;
+export const MAX_PERMALINK_BYTES = 4_194_304;
+
 function isOrigin(value: unknown): value is PermalinkOrigin {
   return ORIGINS.includes(value as PermalinkOrigin);
 }
@@ -88,7 +94,8 @@ function base64urlToBytes(s: string): Uint8Array<ArrayBuffer> {
 async function pipe(
   bytes: Uint8Array<ArrayBuffer>,
   which: 'CompressionStream' | 'DecompressionStream',
-  format: 'gzip'
+  format: 'gzip',
+  maxOutputBytes = Number.POSITIVE_INFINITY
 ): Promise<Uint8Array<ArrayBuffer>> {
   const Ctor = which === 'CompressionStream' ? CompressionStream : DecompressionStream;
   const stream = new Ctor(format);
@@ -101,9 +108,27 @@ async function pipe(
     await writer.write(bytes);
     await writer.close();
   })().catch(() => {});
-  const buf = await new Response(stream.readable).arrayBuffer();
+  const reader = stream.readable.getReader();
+  const chunks: Uint8Array<ArrayBuffer>[] = [];
+  let size = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxOutputBytes) {
+      await reader.cancel('output limit exceeded');
+      throw new RangeError('permalink payload is too large');
+    }
+    chunks.push(value);
+  }
   await written;
-  return new Uint8Array(buf);
+  const out = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
 }
 
 /**
@@ -144,8 +169,9 @@ export async function encodeState(state: PermalinkState): Promise<string> {
  */
 export async function decodeState(payload: string): Promise<PermalinkState | null> {
   try {
+    if (payload.length > MAX_PERMALINK_CHARS) return null;
     const bytes = base64urlToBytes(payload);
-    const raw = await pipe(bytes, 'DecompressionStream', 'gzip'); // throws on non-gzip
+    const raw = await pipe(bytes, 'DecompressionStream', 'gzip', MAX_PERMALINK_BYTES);
     const obj = JSON.parse(new TextDecoder().decode(raw)); // throws on bad JSON
     if (!isPermalinkState(obj)) return null;
     // An `origin` this build doesn't recognize is DROPPED rather than rejected,

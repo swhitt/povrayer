@@ -232,6 +232,20 @@ test('a pre-aborted signal rejects with AbortError', async () => {
   );
 });
 
+test('a custom abort reason is normalized to AbortError and retained as its cause', async () => {
+  const controller = new AbortController();
+  const reason = new Error('stop now');
+  controller.abort(reason);
+  await assert.rejects(
+    renderAnimation(CLOCK_SCENE, { ...TINY, frames: 2, signal: controller.signal }),
+    /** @param {Error & {cause?: unknown}} err */ (err) => {
+      assert.equal(err.name, 'AbortError');
+      assert.equal(err.cause, reason);
+      return true;
+    }
+  );
+});
+
 test('a clock-driven example renders as an animation', async () => {
   // Guards that the new animated examples are clock-valid: orbit-moons must
   // produce one PNG per frame at a tiny size.

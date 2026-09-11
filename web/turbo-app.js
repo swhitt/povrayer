@@ -1425,7 +1425,7 @@
         case 'background': {
           this.next();
           this.expect('{');
-          this.eat('color') || this.eat('colour');
+          if (!this.eat('color')) this.eat('colour');
           this.scene.background = this.parseColorValue();
           this.expect('}');
           return;
@@ -2245,7 +2245,7 @@
 
     parseOptionalColor() {
       if (!this.isColorStart()) return null;
-      this.eat('color') || this.eat('colour');
+      if (!this.eat('color')) this.eat('colour');
       return this.parseColorValue();
     }
 
@@ -2369,7 +2369,7 @@
               if (this.eat('}')) break;
               this.expect('[');
               const pos = this.parseExpr();
-              this.eat('color') || this.eat('colour');
+              if (!this.eat('color')) this.eat('colour');
               const col = this.parseColorValue();
               this.expect(']');
               stops.push({ pos, col });
@@ -2919,7 +2919,7 @@
       this.expect('{');
       const pos = this.parseExpr();
       this.comma();
-      this.eat('color') || this.eat('colour');
+      if (!this.eat('color')) this.eat('colour');
       const light = {
         pos,
         color: this.parseColorValue(),
@@ -3134,7 +3134,7 @@
             this.parseExpr();
             break;
           case 'ambient_light': {
-            this.eat('color') || this.eat('colour');
+            if (!this.eat('color')) this.eat('colour');
             const c = this.parseColorValue();
             this.scene.ambient = lift((v) => asVec3(v), c);
             break;
@@ -4914,10 +4914,20 @@ void main(){
     editor.setSelectionRange(found.index, found.index + next.length);
     onSource();
   });
-  // tab inserts two spaces, like civilised people
+  // Tab inserts two spaces. Escape primes a one-shot focus escape so keyboard
+  // users can leave the editor without giving up ordinary indentation.
+  let escapePrimed = false;
   editor.addEventListener('keydown', (e) => {
     if (e.defaultPrevented) return; // completion popup accepted with Tab
+    if (e.key === 'Escape') {
+      escapePrimed = true;
+      return;
+    }
     if (e.key !== 'Tab') return;
+    if (escapePrimed) {
+      escapePrimed = false;
+      return;
+    }
     e.preventDefault();
     const s = editor.selectionStart,
       t = editor.selectionEnd;
@@ -5426,10 +5436,19 @@ blob {
     const payload = await encodePovrayerState();
     // deployed at povrayer.com/turbo the editor is a sibling; anywhere else
     // (the experiments dir, a saved copy) fall back to the public site
-    const base =
+    const requestedBase =
       new URLSearchParams(location.search).get('pov') ||
       (location.pathname.startsWith('/turbo') ? '/' : 'https://povrayer.com/');
-    window.open(base + '#' + payload, '_blank');
+    let target;
+    try {
+      target = new URL(requestedBase, location.href);
+      if (target.protocol !== 'http:' && target.protocol !== 'https:')
+        throw new Error('unsafe URL');
+    } catch {
+      target = new URL('https://povrayer.com/');
+    }
+    target.hash = payload;
+    window.open(target.href, '_blank', 'noopener,noreferrer');
     showToast(
       state.mode === 'animate'
         ? 'opening the real tracer in animate mode. bring a coffee.'

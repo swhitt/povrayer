@@ -119,9 +119,9 @@ export function createLiveDraftController<Options>(hooks: LiveDraftHooks<Options
     ctl = new AbortController();
     const active = ctl;
     draftingSource = source;
-    const options = hooks.draftOptions();
-    hooks.onStart(source, options);
     try {
+      const options = hooks.draftOptions();
+      hooks.onStart(source, options);
       const result = await hooks.renderDraft(source, options, active.signal);
       lastDraftMs = result.elapsedMs;
       lastAttemptedSource = source;
@@ -157,6 +157,7 @@ export function createLiveDraftController<Options>(hooks: LiveDraftHooks<Options
 
   function cancel() {
     clearTimer();
+    pendingFull = false;
     if (ctl) ctl.abort();
   }
 

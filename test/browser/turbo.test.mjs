@@ -261,8 +261,10 @@ try {
   });
   const opened = await page.evaluate(() => /** @type {TurboWindow} */ (window).__opened);
   assert.equal(opened?.target, '_blank');
-  assert.match(opened?.url ?? '', /^\/#[-_A-Za-z0-9]+$/);
-  const handoff = await decodeState((opened?.url ?? '').split('#')[1]);
+  const openedUrl = new URL(opened?.url ?? '', page.url());
+  assert.equal(openedUrl.pathname, '/');
+  assert.match(openedUrl.hash, /^#[-_A-Za-z0-9]+$/);
+  const handoff = await decodeState(openedUrl.hash.slice(1));
   assert.equal(handoff?.source, STRUCTURAL);
   assert.equal(handoff?.mode, 'still');
   assert.equal(handoff?.width, '800');

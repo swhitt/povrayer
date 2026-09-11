@@ -44,10 +44,9 @@ export interface RenderOptions {
      */
     files?: Record<string, string | Uint8Array>;
     /**
-     * Raw POV-Ray args appended last (escape hatch: `+UA`, `+AM2`, ...).
-     * Animation flags (`+KFI`/`+KFF`) belong on {@link renderAnimation}: passing
-     * them here puts POV-Ray in animation mode, which writes numbered
-     * `out<N>.png` frames that this single-file {@link render} can't collect.
+     * Additional POV-Ray args (escape hatch: `+UA`, `+AM2`, ...). Input,
+     * output-format, output-path, and animation-range options are rejected
+     * because the wrapper owns them and depends on their exact values.
      */
     args?: string[];
     /** Receives each output line (stdout + stderr) as it arrives. */
@@ -86,6 +85,20 @@ export class PovrayError extends Error {
 type PovrayFactory = typeof import("./povray.mjs").default;
 type PovrayModule = Awaited<ReturnType<PovrayFactory>>;
 type PovrayFS = PovrayModule["FS"];
+
+const RESERVED_ARG = /^[+-](?:I|O|F|K|SF|EF)/i;
+const RESERVED_SETTING =
+    /^(?:Input_File_Name|Output_File_Name|Output_File_Type|Initial_Frame|Final_Frame|Initial_Clock|Final_Clock|Subset_Start_Frame|Subset_End_Frame)=/i;
+
+function validateArgs(args: string[]): void {
+    for (const arg of args) {
+        if (RESERVED_ARG.test(arg) || RESERVED_SETTING.test(arg)) {
+            throw new RangeError(
+                `POV-Ray argument is managed by povrayer and cannot be overridden: ${arg}`,
+            );
+        }
+    }
+}
 
 // The factory is cached for the module lifetime (the engine caches the
 // compiled wasm bytes behind it), but every render() gets a fresh module
@@ -184,10 +197,10 @@ function mkdirParents(fs: PovrayFS, filePath: string): void {
 }
 
 function abortError(signal: AbortSignal | undefined): Error {
-    const reason: unknown = signal?.reason;
-    if (reason instanceof Error) return reason;
     const err = new Error("The render was aborted");
     err.name = "AbortError";
+    const reason: unknown = signal?.reason;
+    if (reason !== undefined) err.cause = reason;
     return err;
 }
 
@@ -234,7 +247,8 @@ async function runEngine<T>(
     } = options;
 
     validateRenderOptions(width, height, quality, threads, antialias);
-    signal?.throwIfAborted();
+    validateArgs(args);
+    if (signal?.aborted) throw abortError(signal);
 
     const factory = await loadFactory();
 
@@ -321,7 +335,7 @@ async function runEngine<T>(
     try {
         // Re-check now that the (asynchronous) instantiation is done; the
         // listener below won't fire for a signal that was already aborted.
-        signal?.throwIfAborted();
+        if (signal?.aborted) throw abortError(signal);
         signal?.addEventListener("abort", onSignalAbort, { once: true });
 
         // FS staging runs on this JS thread; pthread FS syscalls are proxied
@@ -515,6 +529,14 @@ export async function renderAnimation(
                 if (n >= 1 && n <= frames) numbered.push({ name, n });
             }
             numbered.sort((a, b) => a.n - b.n);
+            if (
+                numbered.length !== frames ||
+                numbered.some((entry, index) => entry.n !== index + 1)
+            ) {
+                throw new Error(
+                    `POV-Ray produced ${numbered.length} of ${frames} requested animation frames`,
+                );
+            }
             return numbered.map((e) => Uint8Array.from(fs.readFile("/work/" + e.name)));
         },
     );

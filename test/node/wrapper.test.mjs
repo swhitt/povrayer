@@ -32,6 +32,22 @@ const scene = await readFile(new URL('../fixtures/basic.pov', import.meta.url), 
 // callMain and POV-Ray bails almost immediately on the syntax error.
 const BAD_SCENE = 'sphere {';
 
+test('rejects raw arguments that override wrapper-owned files or animation ranges', async () => {
+  for (const arg of [
+    '+Iother.pov',
+    '+Oelsewhere.png',
+    '+FN8',
+    '+KFF99',
+    '+SF2',
+    'Output_File_Name=x',
+  ]) {
+    await assert.rejects(render(scene, { args: [arg] }), {
+      name: 'RangeError',
+      message: new RegExp(`cannot be overridden: ${arg.replace(/[+]/g, '\\+')}$`),
+    });
+  }
+});
+
 test('warmup preloads the factory without rendering and repeats share the cache', async () => {
   // Both calls must resolve (the second from the cached factory promise) and
   // neither may produce output or leave the runner hanging on stray workers.
@@ -188,7 +204,7 @@ test('a signal aborted during instantiation rejects at the post-instantiation re
   );
 });
 
-test('aborting mid-render with an Error reason rejects with that exact error', async () => {
+test('aborting mid-render normalizes an Error reason to AbortError with cause', async () => {
   // Defer the abort out of the print callback (setTimeout) so termination runs
   // on a clean event-loop tick; the 384x384 + AA render is slow enough that the
   // abort always wins the race against completion.
@@ -209,8 +225,10 @@ test('aborting mid-render with an Error reason rejects with that exact error', a
       signal: controller.signal,
       onProgress,
     }),
-    (err) => {
-      assert.equal(err, reason, 'an Error abort reason must propagate verbatim');
+    /** @param {unknown} err */ (err) => {
+      assert.ok(err instanceof Error);
+      assert.equal(err.name, 'AbortError');
+      assert.equal(err.cause, reason);
       return true;
     }
   );

@@ -149,6 +149,41 @@ test('cancel clears a pending schedule and aborts an active draft', async () => 
   assert.equal(h.controller.isDrafting(), false);
 });
 
+test('cancel clears a deferred full render before the draft settles', async () => {
+  const pending = deferred();
+  const h = harness({
+    renderDraft: (_source, _options, signal) => {
+      signal.addEventListener('abort', () => pending.reject(new Error('aborted')), { once: true });
+      return pending.promise;
+    },
+  });
+
+  h.controller.fire();
+  await tick();
+  assert.equal(h.controller.requestFullRender(), true);
+  h.controller.cancel();
+  await tick();
+
+  assert.equal(
+    h.events.some(([kind]) => kind === 'full'),
+    false
+  );
+  assert.equal(h.controller.isDrafting(), false);
+});
+
+test('a setup hook failure cannot leave the controller stuck drafting', async () => {
+  const h = harness({
+    draftOptions: () => {
+      throw new Error('bad options');
+    },
+  });
+
+  await h.controller.fire();
+
+  assert.equal(h.controller.isDrafting(), false);
+  assert.deepEqual(h.events, [['error', 'sphere', 'bad options'], ['settled']]);
+});
+
 test('sourceChanged aborts an active draft and schedules the next source', async () => {
   const pending = deferred();
   let aborted = false;

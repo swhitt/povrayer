@@ -6,7 +6,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { encodeState, decodeState } from '../../_build/web/permalink.js';
+import {
+  MAX_PERMALINK_BYTES,
+  MAX_PERMALINK_CHARS,
+  encodeState,
+  decodeState,
+} from '../../_build/web/permalink.js';
 
 /** @returns {import('../../_build/web/permalink.js').PermalinkState} */
 const fullState = () => ({
@@ -104,4 +109,11 @@ test('a large scene round-trips and the payload is far smaller than the source',
   assert.ok(decoded);
   assert.equal(decoded.source, source);
   assert.ok(p.length < source.length, 'gzip must shrink the repetitive scene');
+});
+
+test('rejects oversized encoded and decompressed payloads', async () => {
+  assert.equal(await decodeState('A'.repeat(MAX_PERMALINK_CHARS + 1)), null);
+  const bomb = await encodeState({ ...fullState(), source: 'x'.repeat(MAX_PERMALINK_BYTES + 1) });
+  assert.ok(bomb.length < MAX_PERMALINK_CHARS, 'fixture must exercise decompressed limit');
+  assert.equal(await decodeState(bomb), null);
 });

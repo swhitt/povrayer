@@ -8,7 +8,7 @@
 //
 // The equality check below is what makes that arrangement safe: turbo.html cannot
 // be committed stale, so the two editors can never silently diverge AND the app
-// code can never drift away from the file that eslint/prettier/tsc actually see.
+// code can never drift away from the file that Oxlint/Prettier/tsc actually see.
 //
 // The last two tests defend the arrangement itself. Every serious turbo bug (a
 // Space handler that cancelled activation on 16 buttons, a visibility deadlock, an
@@ -20,10 +20,19 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
+import { Script } from 'node:vm';
 
 import { render } from '../../tools/gen-turbo.mjs';
 
 const TURBO = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'web', 'turbo.html');
+const TURBO_APP = join(dirname(TURBO), 'turbo-app.js');
+
+test('turbo app remains valid as a classic script', () => {
+  assert.doesNotThrow(
+    () => new Script(readFileSync(TURBO_APP, 'utf8'), { filename: TURBO_APP }),
+    'turbo-app.js is inlined into a classic script and cannot contain import/export syntax'
+  );
+});
 
 test('the inlined lang bundle and app script are up to date with their sources', async () => {
   const committed = readFileSync(TURBO, 'utf8');
@@ -48,7 +57,7 @@ test('every script in turbo.html comes from a generated region', () => {
     .replace(/<!-- gen:app:start -->[\s\S]*?<!-- gen:app:end -->/, '');
   assert.ok(
     !/<script/i.test(outside),
-    'hand-written <script> in turbo.html is invisible to eslint, prettier, and checkJs. ' +
+    'hand-written <script> in turbo.html is invisible to Oxlint, Prettier, and checkJs. ' +
       'Put the code in web/turbo-app.js and run `npm run gen:turbo` instead.'
   );
   // Both regions must still be there to strip, or the check above passes vacuously.
