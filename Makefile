@@ -27,7 +27,7 @@ web: node_modules  ## serve the UI + REPL on :8080 (builds dist only if missing)
 	node test/browser/serve.mjs
 hooks:  ## wire git to the committed .githooks (pre-commit, pre-push)
 	git config core.hooksPath .githooks
-lint: node_modules  ## prettier --check + eslint
+lint: node_modules  ## prettier --check + oxlint
 	npm run format:check && npm run lint
 # Builds dist only if missing (coverage needs the wasm for the browser/node
 # render paths), then produces the merged node+browser report.

@@ -111,7 +111,7 @@ export function startServer(port = 0) {
       const close = () =>
         new Promise((resolveClose, rejectClose) => {
           server.closeIdleConnections();
-          server.close((err) => (err ? rejectClose(err) : resolveClose()));
+          server.close((err) => (err ? rejectClose(err) : resolveClose(undefined)));
         });
       resolveStart({ url, close });
     });

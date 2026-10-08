@@ -1,11 +1,11 @@
-# syntax=docker/dockerfile:1@sha256:87999aa3d42bdc6bea60565083ee17e86d1f3339802f543c0d03998580f9cb89
-ARG EMSDK_VERSION=5.0.7
-ARG POVRAY_COMMIT=c3ce13e5bb51892d8f59c1148b5f905a01ef82f3
-ARG POVRAY_SHA256=40e916f7e97a20c84eea5b4a36edb6ad0eaaf063dc142d5e7e460f355ec80eee
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
+ARG EMSDK_VERSION=6.0.12
+ARG POVRAY_COMMIT=8f9ace11e6587d67c96a3bdfe67893ffbcd5c95e
+ARG POVRAY_SHA256=aa04553f7899cebdb1e6de6e40eedf46401c15aad03db9fcf3c75525e368b6d2
 
 # --platform=$BUILDPLATFORM: the wasm output is arch-independent, so this stage
 # always runs natively on the build host; only the runtime stage is per-platform.
-FROM --platform=$BUILDPLATFORM emscripten/emsdk:${EMSDK_VERSION}@sha256:4e332f7343b6f66320bf72f7ecc01a3d9f3866721a13b0e5c7b96505d6ab148a AS builder
+FROM --platform=$BUILDPLATFORM emscripten/emsdk:${EMSDK_VERSION}@sha256:77638e6c215a65f25a704c0c831d5c2463a8c0468a58c6cb82489dbe621dfa05 AS builder
 ARG POVRAY_COMMIT
 ARG POVRAY_SHA256
 
@@ -37,7 +37,7 @@ RUN curl -fsSL --retry 3 -o /tmp/povray.tar.gz \
 # Patches: applied to pristine source, BEFORE prebuild.sh (so bootstrap
 # regenerates configure from the patched m4 macros).
 COPY patches/ /build/patches/
-RUN cd povray && for p in /build/patches/*.patch; do patch -p1 < "$p"; done
+RUN cd povray && for p in /build/patches/*.patch; do patch --batch --forward --fuzz=0 -p1 < "$p"; done
 
 # Tree surgery, also pre-prebuild:
 #  - povmain.cpp has a main() whose ALTMAIN guard is frontend-config-blind; remove the file.
@@ -113,7 +113,7 @@ RUN curl -fsSL --retry 3 --retry-delay 2 -o /tmp/lightsys.zip "${LIGHTSYS_URL}" 
 # Final link, hand-rolled for full control of -s flags and .mjs output.
 # libvfe.a listed twice: cyclic deps with libpovray.a (same as upstream LDADD).
 # PTHREAD_POOL_SIZE budget: proxied main + vfe worker + backend main +
-# scene/view control + N render tasks = N+5; the navigator guard is required
+# scene/view control + N render tasks = N+6; the navigator guard is required
 # because the expression also evaluates in Node (< 21 has no navigator global).
 #
 # The link-only tuning knobs are declared HERE, right before their only use, NOT
@@ -139,7 +139,7 @@ RUN mkdir -p /out && cd povray && em++ \
       -sPROXY_TO_PTHREAD \
       -sALLOW_MEMORY_GROWTH -sINITIAL_MEMORY=256MB -sMAXIMUM_MEMORY=${WASM_MAX_MEMORY} \
       -sSTACK_SIZE=8MB -sDEFAULT_PTHREAD_STACK_SIZE=8MB \
-      -sPTHREAD_POOL_SIZE="(typeof navigator!=='undefined'&&navigator.hardwareConcurrency?navigator.hardwareConcurrency:8)+6" \
+      -sPTHREAD_POOL_SIZE="Math.min(typeof navigator!=='undefined'&&navigator.hardwareConcurrency?navigator.hardwareConcurrency:8,32)+6" \
       -sINVOKE_RUN=0 -sEXIT_RUNTIME=1 \
       -sEXPORTED_FUNCTIONS=_main \
       -sEXPORTED_RUNTIME_METHODS=callMain,FS,PThread \
@@ -148,7 +148,7 @@ RUN mkdir -p /out && cd povray && em++ \
       --embed-file distribution/include@/usr/share/povray-3.8/include
 
 # Arch-independent JS output; same native-platform treatment as the builder.
-FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS wrapper-build
+FROM --platform=$BUILDPLATFORM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS wrapper-build
 WORKDIR /wrapper
 # package-lock.json is committed to the repo; npm ci requires it,
 # and BuildKit fails the COPY without it.
@@ -162,7 +162,7 @@ COPY --from=builder /out/povray.mjs /out/povray.wasm /
 COPY --from=wrapper-build /wrapper/dist/index.js /wrapper/dist/index.d.ts /
 COPY --from=wrapper-build /wrapper/package.json /package.json
 
-FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS runtime
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS runtime
 LABEL org.opencontainers.image.source="https://github.com/swhitt/povrayer" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
       org.opencontainers.image.description="POV-Ray 3.8 compiled to WebAssembly (pthreads, wasm EH)"

@@ -16,10 +16,10 @@
 // an allowlist rather than a loophole.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
-import ts from 'typescript';
 
 import { FIRST_PARTY, rel, servedPath } from '../../tools/coverage/paths.mjs';
 
@@ -65,12 +65,17 @@ const c8Included = new Set(c8.include);
 const c8Excluded = new Set(c8.exclude);
 const c8Listed = new Set([...c8.include, ...c8.exclude]);
 
-// Parse tsconfig's JSONC with TypeScript itself so comments stay legal while
-// membership checks remain exact (a prose mention cannot satisfy the guard).
+// Ask the pinned compiler to resolve tsconfig's JSONC so comments and `extends`
+// stay legal while membership checks remain exact. TypeScript 7's native CLI no
+// longer exposes the old JavaScript compiler API, so the CLI is the stable seam.
 function readTsconfigInclude(name) {
-  const parsed = ts.parseConfigFileTextToJson(name, readFileSync(resolve(root, name), 'utf8'));
-  assert.equal(parsed.error, undefined, `${name} should parse`);
-  return parsed.config.include;
+  const tsc = resolve(root, 'node_modules/typescript/bin/tsc');
+  const config = JSON.parse(
+    execFileSync(process.execPath, [tsc, '--showConfig', '-p', resolve(root, name)], {
+      encoding: 'utf8',
+    })
+  );
+  return config.include;
 }
 
 const tsIncluded = new Set(readTsconfigInclude('tsconfig.checkjs.json'));

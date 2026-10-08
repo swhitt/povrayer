@@ -11,8 +11,8 @@ say() { printf '\npre-commit: %s\n' "$1"; }
 say 'prettier --check'
 npx prettier --check .
 
-say 'eslint'
-npx eslint .
+say 'oxlint'
+npm run lint
 
 say 'tsc --noEmit (wrapper)'
 npx tsc --noEmit -p wrapper/tsconfig.json

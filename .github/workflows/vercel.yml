@@ -28,14 +28,15 @@ jobs:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          persist-credentials: false
           # Deploy the exact commit ci tested: workflow_run otherwise defaults to
           # the default-branch HEAD, which can drift past the triggering run.
           ref: ${{ github.event.workflow_run.head_sha || github.ref }}
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
       - name: Build wasm artifact
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
         with:
           context: .
           target: artifact
@@ -44,11 +45,11 @@ jobs:
           # a warm cache makes this a few seconds. The buildCommand in vercel.json
           # (tools/assemble-site.mjs) needs dist/ to exist, so this runs first.
           cache-from: type=gha
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: 22
+          node-version: 24
       - name: Install Vercel CLI
-        run: npm install --global vercel@58.7.1
+        run: npm install --global vercel@63.1.2
       - name: Pull Vercel project settings (production)
         run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
       - name: Build (assembles _site from dist/ + web/ via buildCommand)

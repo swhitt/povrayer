@@ -16,8 +16,8 @@
     "test:node:serial": "node --test --test-concurrency=1 test/node/*.test.mjs",
     "test:browser:core": "node test/browser/browser.test.mjs; b=$?; node test/browser/turbo.test.mjs; t=$?; exit $((b||t))",
     "test:browser": "npm run test:browser:core; b=$?; node test/browser/ui.test.mjs; u=$?; node test/browser/repl.test.mjs; r=$?; exit $((b||u||r))",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
+    "lint": "oxlint --disable-unicorn-plugin --deny-warnings .",
+    "lint:fix": "oxlint --disable-unicorn-plugin --fix .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit -p wrapper/tsconfig.json",
@@ -36,18 +36,16 @@
     "prepare": "node tools/install-hooks.mjs"
   },
   "devDependencies": {
-    "@eslint/js": "10.0.1",
-    "@types/node": "22.20.1",
+    "@types/node": "^26.6.5",
     "c8": "12.0.0",
-    "eslint": "10.8.0",
-    "globals": "17.9.0",
     "istanbul-lib-coverage": "3.2.2",
     "istanbul-lib-report": "3.0.1",
     "istanbul-reports": "3.2.0",
-    "playwright": "1.61.1",
-    "prettier": "3.9.6",
-    "typescript": "6.0.3",
-    "typescript-eslint": "8.66.0",
+    "oxlint": "^1.87.0",
+    "oxlint-tsgolint": "^7.0.2004",
+    "playwright": "^1.64.0",
+    "prettier": "^3.9.10",
+    "typescript": "^7.0.2",
     "v8-to-istanbul": "9.3.0"
   }
 }

@@ -11,7 +11,7 @@ say() { printf '\npre-push: %s\n' "$1"; }
 say 'prettier --check'
 npm run format:check
 
-say 'eslint'
+say 'oxlint'
 npm run lint
 
 say 'tsc --noEmit (wrapper)'

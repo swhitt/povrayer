@@ -40,16 +40,12 @@
 // MIGRATION ORDER: this split puts a real constraint on what can convert next.
 // A module may only become .ts once nothing that Node loads OUT OF web/ imports
 // it, because the compiled copy lives in a different directory and the importer's
-// `./foo.js` would no longer resolve. That is why web/{gif,apng,anim-export}.js
-// are still JavaScript: web/player.js imports them and a Node test loads
-// player.js from web/. Convert the importer in the same pass, or wait.
+// `./foo.js` would no longer resolve. Convert the importer in the same pass, or
+// wait until that whole runtime-loaded group can move together.
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, rmSync, mkdirSync, statSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-
-const require = createRequire(import.meta.url);
 
 export const repoRoot = resolve(fileURLToPath(import.meta.url), '../..');
 export const WEB_SRC = join(repoRoot, 'web');
@@ -135,7 +131,7 @@ export function buildWeb() {
   // shell.
   const run = spawnSync(
     process.execPath,
-    [require.resolve('typescript/bin/tsc'), '-p', 'tsconfig.build.json'],
+    [join(repoRoot, 'node_modules/typescript/bin/tsc'), '-p', 'tsconfig.build.json'],
     { cwd: repoRoot, stdio: 'inherit' }
   );
   if (run.status !== 0) {
