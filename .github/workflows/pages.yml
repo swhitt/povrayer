@@ -45,7 +45,7 @@ jobs:
           # No cache-to here: ci.yml owns the gha cache (10GB budget); this job
           # only reads it, so a main push reuses the layers ci just wrote.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with: { node-version: 24 }
+        with: { node-version: 26.11.1 }
       - name: Install deps (pinned via root lockfile)
         run: npm ci
       - name: Assemble site (dist + web, flat)

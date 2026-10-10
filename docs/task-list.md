@@ -272,7 +272,7 @@ reshaping the whole project.
   - Now just `web/ui.js` (~3.4k lines, ~167 functions). `test/browser/ui.test.mjs`
     is done: it is an 84-line delegator over six drivers in `test/browser/ui/`.
   - Turbo is no longer the outlier it was. Its ~5.7k lines of app code now live in
-    `web/turbo-app.js`, which eslint and checkJs both cover, and
+    `web/turbo-app.js`, which Oxlint and checkJs both cover, and
     `tools/gen-turbo.mjs` inlines it into `web/turbo.html` between `gen:app`
     markers so the shipped page stays one self-contained file that runs from
     `file://` (it still cannot `import` ESM at runtime). The extraction alone

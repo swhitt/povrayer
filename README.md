@@ -201,7 +201,7 @@ rendering starts.
 
 ### Node
 
-Works from `dist/` on Node 20+. Each `render()` call gets its own module
+Works from `dist/` on Node 22.13+. Each `render()` call gets its own module
 instance and the runtime exits with the render, so leftover worker threads don't
 keep the process alive.
 
@@ -297,10 +297,9 @@ file explains why). The `.ts` modules are checked by `tsconfig.strict.json` in
 full strict mode, enforced in CI. `test/node/coverage-config.test.mjs` fails if
 a module is in neither.
 
-`tools/build-web.mjs` compiles the `.ts` modules into `_build/web/`, since
-neither the browser nor Node 20 (still in `engines`, and without
-`--experimental-strip-types`) can load TypeScript. Filenames stay the same, so
-`index.html` keeps loading `./ui.js`. `test/browser/serve.mjs` serves
+`tools/build-web.mjs` compiles the `.ts` modules into `_build/web/` because the
+browser loads plain JavaScript. Filenames stay the same, so `index.html` keeps
+loading `./ui.js`. `test/browser/serve.mjs` serves
 `_build/web/` ahead of `web/`, and `tools/assemble-site.mjs` copies it over
 `_site`. Both run the build first and it checks its output against the sources,
 so a stale module can't be served or shipped. Coverage reports against the `.ts`

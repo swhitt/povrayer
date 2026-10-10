@@ -4,7 +4,7 @@
   "description": "POV-Ray 3.8 compiled to WebAssembly (pthreads, wasm EH); render() returns PNG bytes",
   "type": "module",
   "engines": {
-    "node": "^20.19.0 || ^22.13.0 || >=24"
+    "node": "^22.13.0 || >=24"
   },
   "exports": {
     ".": "./index.js"
