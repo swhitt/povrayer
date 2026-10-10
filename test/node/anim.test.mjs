@@ -11,6 +11,7 @@
 // we verify (EXIT_RUNTIME=1 must reap the pthread workers).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 
 import { renderAnimation, PovrayError } from '../../dist/index.js';
 import { getExample } from '../../web/examples.js';
@@ -34,6 +35,38 @@ const CLOCK_SCENE = [
 const BAD_SCENE = 'sphere {';
 
 const TINY = { width: 64, height: 48, antialias: false };
+
+test('rejects an incomplete animation even when the engine exits successfully', () => {
+  // A normal engine cannot reliably produce this failure on demand. Isolate a
+  // mocked factory in a child process so other tests still use the real WASM.
+  const script = `
+    import { mock } from 'node:test';
+    import assert from 'node:assert/strict';
+    mock.module(${JSON.stringify(new URL('../../dist/povray.mjs', import.meta.url).href)}, {
+      defaultExport: async (options) => ({
+        FS: {
+          mkdir() {},
+          writeFile() {},
+          readdir() { return ['.', '..', 'scene.pov', 'out1.png']; },
+          readFile() { throw new Error('must reject before reading partial output'); }
+        },
+        PThread: { terminateAllThreads() {} },
+        callMain() { options.onExit(0); }
+      })
+    });
+    const { renderAnimation } = await import(${JSON.stringify(new URL('../../dist/index.js', import.meta.url).href)});
+    await assert.rejects(renderAnimation('sphere {}', { frames: 2 }),
+      /produced 1 of 2 requested animation frames/);
+  `;
+  execFileSync(
+    process.execPath,
+    ['--experimental-test-module-mocks', '--input-type=module', '-e', script],
+    {
+      timeout: 30_000,
+      stdio: 'pipe',
+    }
+  );
+});
 
 function assertPng(bytes, label) {
   assert.ok(bytes instanceof Uint8Array, `${label}: not a Uint8Array`);

@@ -1514,6 +1514,19 @@ try {
   await backToRepl();
 
   // --- PART 6: persistence restore -------------------------------------------
+  // If sharing cannot encode the scene, the link still opens the editor.
+  await page.evaluate(() => {
+    window.CompressionStream = class {
+      constructor() {
+        throw new Error('compression unavailable');
+      }
+    };
+  });
+  await page.click('#open-in-editor');
+  await page.waitForURL(/index\.html$/, { timeout: 30_000 });
+  assert.equal(new URL(page.url()).hash, '', 'failed encoding uses the plain editor link');
+  await backToRepl();
+
   const seedReload = async (blob) => {
     await page.addInitScript((b) => {
       localStorage.setItem('povrayer.repl.v1', b);

@@ -529,10 +529,9 @@ export async function renderAnimation(
                 if (n >= 1 && n <= frames) numbered.push({ name, n });
             }
             numbered.sort((a, b) => a.n - b.n);
-            if (
-                numbered.length !== frames ||
-                numbered.some((entry, index) => entry.n !== index + 1)
-            ) {
+            // readdir returns unique names; exact padding and the range check
+            // above mean this count also proves every requested frame exists.
+            if (numbered.length !== frames) {
                 throw new Error(
                     `POV-Ray produced ${numbered.length} of ${frames} requested animation frames`,
                 );

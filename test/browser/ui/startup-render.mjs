@@ -3,6 +3,41 @@ import assert from 'node:assert/strict';
 export async function runStartupRender(ctx) {
   const { page, selAdvanced } = ctx;
 
+  // Exercise legacy carriage-return output separately from the current WASM,
+  // which now flushes progress as newline-delimited messages.
+  await page.route('**/event-fixture/render-client.js', async (route) => {
+    const response = await route.fetch({ url: new URL('/render-client.js', page.url()).href });
+    await route.fulfill({ response });
+  });
+  await page.route('**/event-fixture/index.js', (route) =>
+    route.fulfill({
+      contentType: 'text/javascript',
+      body: `
+        export async function render(source, options) {
+          options.onProgress('Rendered 1 of 2 pixels (50%)\\r');
+          options.onProgress('');
+          return new Uint8Array();
+        }
+        export async function renderAnimation() {}
+        export async function warmup() {}
+        export class PovrayError extends Error {}
+      `,
+    })
+  );
+  const legacyEvents = await page.evaluate(async () => {
+    const client = await import('/event-fixture/render-client.js');
+    const events = [];
+    const result = await client.renderScene('', { onEvent: (event) => events.push(event) });
+    URL.revokeObjectURL(result.blobUrl);
+    return events;
+  });
+  assert.deepEqual(legacyEvents, [
+    { kind: 'progress', percent: 50, text: 'Rendered 1 of 2 pixels (50%)' },
+    { kind: 'line', text: '' },
+  ]);
+  await page.unroute('**/event-fixture/render-client.js');
+  await page.unroute('**/event-fixture/index.js');
+
   // FIRST: cross-origin isolation, so a header regression fails distinctly
   // from a UI regression.
   const iso = await page.evaluate(() => globalThis.crossOriginIsolated);
