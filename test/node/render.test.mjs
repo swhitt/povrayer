@@ -18,7 +18,21 @@ const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const scene = await readFile(new URL('../fixtures/basic.pov', import.meta.url), 'utf8');
 
 test('renders the fixture to a 320x240 PNG', async () => {
-  const png = await render(scene, { width: 320, height: 240, antialias: false });
+  const progress = [];
+  const png = await render(scene, {
+    width: 320,
+    height: 240,
+    antialias: false,
+    onProgress: (line) => {
+      if (/^Rendered \d+ of \d+ pixels/.test(line)) progress.push(line);
+    },
+  });
+
+  assert.ok(progress.length > 0, 'renderer must deliver pixel progress');
+  assert.ok(
+    progress.every((line) => !line.includes('\r')),
+    'progress updates must arrive individually, rather than a buffered carriage-return burst'
+  );
 
   assert.ok(png instanceof Uint8Array, 'render() must resolve to a Uint8Array');
   assert.deepEqual([...png.subarray(0, 8)], PNG_SIGNATURE, 'PNG signature mismatch');

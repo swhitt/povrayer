@@ -97,9 +97,13 @@ static void PrintStatus (vfeSession *session, FILE *stream = stderr)
         }
         else
         {
+            // fflush drains libc's buffer, but Emscripten's TTY keeps its own
+            // buffer until a newline. Deliver each update to onProgress now.
+#ifdef __EMSCRIPTEN__
+            fprintf (stream, "%s\n", str.c_str());
+#else
             fprintf (stream, "%s\r", str.c_str());
-            // Emscripten's TTY otherwise waits for a newline and delivers a
-            // render's entire carriage-return progress stream at completion.
+#endif
             fflush(stream);
         }
         lastType = type;

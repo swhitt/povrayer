@@ -144,14 +144,9 @@ export function prewarm(): void {
 
 // --- output normalization ----------------------------------------------------
 //
-// POV-Ray's status writer emits percent updates as `\r`-terminated segments
-// and the emscripten TTY flushes only on `\n`, so with the current dist the
-// whole percent history of a trace arrives as ONE `\r`-joined wrapper line
-// (with a trailing `\r`) only after tracing completes. The normalizer below
-// splits each wrapper line on `\r` and coalesces the percent segments into a
-// single `progress` event, so pages never see the raw burst; if a future dist
-// flushes on `\r`, percent events simply start arriving live with no page
-// changes.
+// The WASM console emits newline-terminated progress updates so Emscripten's
+// TTY delivers them during tracing. Splitting carriage returns also supports
+// older bundles that buffered several updates into one output line.
 
 const PROGRESS_SEGMENT = /^Rendered \d+ of \d+ pixels \((\d+)%\)/;
 
