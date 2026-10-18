@@ -104,3 +104,16 @@ test('honors threads and raw args options', async () => {
   });
   assert.deepEqual([...png.subarray(0, 8)], PNG_SIGNATURE, 'PNG signature mismatch');
 });
+
+test('duplicated spline keeps its type (patches/0004)', async () => {
+  // Upstream master demotes `spline { S }` to linear_spline; at t=1.5 these
+  // points give 0.5 linear vs 0.5625 cubic.
+  const sdl = `#version 3.8;
+#declare S = spline { cubic_spline 0,<0,0> 1,<0,0> 2,<1,0> 3,<0,0> }
+#declare D = spline { S }
+#if (abs(D(1.5).x - 0.5625) > 1e-6) #error "duplicated spline lost its type" #end
+camera { location <0, 0, -3> look_at 0 }
+sphere { 0, 1 pigment { rgb 1 } }`;
+  const png = await render(sdl, { width: 16, height: 16, antialias: false });
+  assert.deepEqual([...png.subarray(0, 8)], PNG_SIGNATURE, 'PNG signature mismatch');
+});

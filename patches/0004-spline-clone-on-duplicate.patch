@@ -1,0 +1,11 @@
+--- a/source/parser/parser_expressions.cpp
++++ b/source/parser/parser_expressions.cpp
+@@ -3242,7 +3242,7 @@ GenericSpline *Parser::Parse_Spline()
+     if (!New)
+     {
+         if (Old)
+-            New = new LinearSpline(*Old);
++            New = Old->Clone();
+         else
+             New = new LinearSpline();
+     }
