@@ -793,6 +793,24 @@ export async function runCatalogEditor(ctx) {
     'Escape returns focus to the trigger'
   );
 
+  // Escape with focus on a filter SELECT (not the search box, which handles its
+  // own) closes the picker through the document-level handler. It used to fall
+  // through that handler's arms to "cancel the render".
+  await openBrowser();
+  await page.focus('#example-type');
+  assert.equal(await browserExpanded(), 'true', 'moving focus to a filter keeps the panel open');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(
+    () => document.getElementById('example-trigger').getAttribute('aria-expanded') === 'false',
+    null,
+    { timeout: 5_000 }
+  );
+  assert.equal(
+    await page.evaluate(() => document.activeElement?.id),
+    'example-trigger',
+    'Escape on a picker filter closes the picker and returns focus to the trigger'
+  );
+
   // Open via Enter on the focused trigger: its keydown handler sees a
   // non-ArrowDown key (the default arm) and the native button click opens.
   await page.evaluate(() => document.getElementById('example-trigger').focus());
@@ -874,6 +892,18 @@ export async function runCatalogEditor(ctx) {
     };
   });
   assert.equal(galleryOpen.count, galleryOpen.batch, 'gallery renders only its first batch');
+  // aria-modal promises the rest of the page is unreachable; the siblings are
+  // actually inert while the dialog is open (and only then, see the Esc close
+  // below), so Tab cannot walk out of it into the editor.
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      main: document.querySelector('main').inert,
+      header: document.querySelector('header').inert,
+      gallery: document.getElementById('gallery').inert,
+    })),
+    { main: true, header: true, gallery: false },
+    'an open gallery makes everything behind it inert, never itself'
+  );
   assert.deepEqual(
     galleryOpen,
     {
@@ -989,6 +1019,11 @@ export async function runCatalogEditor(ctx) {
       shortcuts: true,
     },
     'Esc closes the gallery, preserves filters, and returns focus'
+  );
+  assert.equal(
+    await page.evaluate(() => document.querySelector('main').inert),
+    false,
+    'closing the gallery lifts the inert state off the page behind it'
   );
   await page.click('#gallery-btn');
   assert.deepEqual(
@@ -1149,6 +1184,26 @@ export async function runCatalogEditor(ctx) {
     'a freshly loaded example is marked current and cannot be reset'
   );
 
+  // A setRangeText edit (Tab indent here; the line ops, sliders and completion
+  // share the path) fires no input event, so it has to refresh the chip itself.
+  // It used to leave `current` / Reset-disabled standing over modified text.
+  await page.evaluate(() => {
+    const ed = document.getElementById('editor');
+    ed.focus();
+    ed.setSelectionRange(0, 0);
+  });
+  await page.keyboard.press('Tab');
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      state: document.getElementById('scene-dirty').textContent,
+      dirty: document.getElementById('scene-dirty').dataset.dirty,
+      resetDisabled: document.getElementById('reset-scene-btn').disabled,
+      indented: document.getElementById('editor').value.startsWith('  '),
+    })),
+    { state: 'modified', dirty: 'true', resetDisabled: false, indented: true },
+    'a Tab indent marks the scene modified and arms Reset like a keystroke would'
+  );
+
   // Editor affordances: a typed edit flips the dirty state, Copy Scene copies
   // the raw source, Reset restores the loaded example through the same undoable
   // replacement path as a drop/history load, and Restore brings the edit back.
@@ -1214,6 +1269,23 @@ export async function runCatalogEditor(ctx) {
     'a rejected example switch must keep the edited editor'
   );
   assert.equal(await triggerName(), 'blobs', 'a rejected switch must not change the loaded scene');
+
+  // The same rejection from a GALLERY card leaves the gallery open where the
+  // visitor was browsing (it used to close on a load that never happened).
+  await page.click('#gallery-btn');
+  await page.fill('#gallery-search', 'wine glass');
+  await page.click('.gallery-card[data-name="sourced-wineglass"]');
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      hidden: document.getElementById('gallery').hidden,
+      editor: document.getElementById('editor').value,
+      trigger: document.getElementById('example-trigger').dataset.name,
+    })),
+    { hidden: false, editor: 'EDITED scene one', trigger: 'blobs' },
+    'a declined gallery load keeps the gallery open and the scene untouched'
+  );
+  await page.click('#gallery-clear');
+  await page.keyboard.press('Escape');
 
   // Edited editor + confirm() accepted -> stash the edit (in memory), offer to
   // restore it, and load the new example.

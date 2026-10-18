@@ -32,7 +32,8 @@ export interface GalleryOptions {
   categories: readonly KeyedLabel[];
   difficulties: readonly KeyedLabel[];
   tiers: readonly KeyedLabel[];
-  onSelect: (name: string) => void;
+  /** Load the named example; false when the load was declined (a dirty-scene confirm). */
+  onSelect: (name: string) => boolean;
 }
 
 /** One record paired with the lowercased text the search box matches against. */
@@ -117,14 +118,12 @@ export function createGallery(options: GalleryOptions) {
     }
   }
 
-  function createCard(entry: SearchableEntry, position: number) {
+  function createCard(entry: SearchableEntry) {
     const { example } = entry;
     const card = document.createElement('button');
     card.type = 'button';
     card.className = 'gallery-card';
     card.dataset.name = example.name;
-    card.setAttribute('aria-posinset', String(position + 1));
-    card.setAttribute('aria-setsize', String(matches.length));
     markLoaded(card, example.name === selectedName);
 
     const img = document.createElement('img');
@@ -161,7 +160,7 @@ export function createGallery(options: GalleryOptions) {
     const fragment = document.createDocumentFragment();
     const end = Math.min(rendered + GALLERY_BATCH_SIZE, matches.length);
     for (let index = rendered; index < end; index += 1) {
-      const card = createCard(matches[index], index);
+      const card = createCard(matches[index]);
       cards.push(card);
       fragment.appendChild(card);
     }
@@ -218,12 +217,24 @@ export function createGallery(options: GalleryOptions) {
       render();
     }
     panel.hidden = false;
+    setBackgroundInert(true);
     search.focus();
   }
 
   function close() {
     panel.hidden = true;
+    setBackgroundInert(false);
     trigger.focus();
+  }
+
+  // The panel is aria-modal, which tells assistive tech the rest of the page is
+  // unreachable while it is open. Make that true for everyone: without `inert`
+  // on the siblings, Tab walked straight out of the last filter into the editor
+  // behind the dialog.
+  function setBackgroundInert(on: boolean) {
+    for (const el of document.body.children) {
+      if (el !== panel) (el as HTMLElement).inert = on;
+    }
   }
 
   function setSelected(name: string) {
@@ -256,9 +267,9 @@ export function createGallery(options: GalleryOptions) {
     const target = event.target as Element;
     const card = target.closest<HTMLElement>('.gallery-card');
     if (!card) return;
-    // Every card is built by createCard, which always sets data-name.
-    onSelect(card.dataset.name as string);
-    close();
+    // Every card is built by createCard, which always sets data-name. A declined
+    // load (the dirty-scene confirm) leaves the gallery where the visitor was.
+    if (onSelect(card.dataset.name as string)) close();
   });
 
   return { open, close, setSelected };

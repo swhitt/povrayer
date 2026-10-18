@@ -577,6 +577,28 @@ export async function runEditorTools(ctx) {
     'a code edit updates the slider to the new default value'
   );
 
+  // A setRangeText edit (Tab indent) fires no input event, so the slider spans
+  // have to be re-parsed by that path itself: indenting a line ABOVE the declare
+  // shifts its literal by two, and the slider used to keep writing into the old
+  // offsets, splicing its value into the wrong characters.
+  await setSceneSource('x\n#declare T = 5;');
+  await page.evaluate(() => {
+    const e = document.getElementById('editor');
+    e.focus();
+    e.setSelectionRange(0, 0);
+  });
+  await page.keyboard.press('Tab');
+  await page.evaluate(() => {
+    const inp = document.querySelector('#sliders input');
+    inp.value = '8';
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  assert.equal(
+    await page.evaluate(() => document.getElementById('editor').value),
+    '  x\n#declare T = 8.0;',
+    'a slider dragged after a Tab indent still rewrites its own literal'
+  );
+
   // Inline Alt+drag scrub of a numeric literal, plus the no-scrub guards. The
   // line is TAB-indented so offsetFromPoint's tab-expansion path is exercised.
   const scrubbed = await page.evaluate(() => {

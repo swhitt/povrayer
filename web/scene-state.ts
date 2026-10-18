@@ -109,13 +109,16 @@ export function createSceneState({ selectedExample, loadedSource = '' }: SceneSt
    * example name standing is exactly how a handed-off scene got labeled with
    * whatever the recipient last picked and then armed Reset to destroy it.
    *
-   * @param detail the gist id, which the 'gist' label carries
+   * @param detail the gist id, which the 'gist' label carries. Typed `unknown`
+   *   because the boot path reads it straight out of the persisted blob, which is
+   *   visitor-editable and may predate the field; anything but a string is read
+   *   as "no detail" rather than printed into the label.
    */
-  function adoptSource(source: string, origin: Provenance, detail = '') {
+  function adoptSource(source: string, origin: Provenance, detail: unknown = '') {
     exampleName = '';
     exampleSource = source;
     provenance = origin;
-    originDetail = detail;
+    originDetail = typeof detail === 'string' ? detail : '';
   }
 
   function isDirty(source: string) {
@@ -204,6 +207,11 @@ export function createSceneState({ selectedExample, loadedSource = '' }: SceneSt
     },
     get provenance() {
       return provenance;
+    },
+    // Persisted alongside provenance so a reloaded gist scene keeps its id in
+    // the label (a blob without it came back reading "gist ").
+    get originDetail() {
+      return originDetail;
     },
     loadExample,
     adoptSource,

@@ -521,6 +521,8 @@ function saveState() {
         // scene the visitor received from a scene they loaded out of the catalog,
         // so it re-pinned every one to `example` and handed it an armed Reset.
         provenance: sceneState.provenance,
+        // The gist id the 'gist' label carries; without it a reload read "gist ".
+        originDetail: sceneState.originDetail,
         mode,
         liveDraft,
         onboarded,
@@ -651,7 +653,7 @@ window.addEventListener('pagehide', () => {
     // at is how a reload plus one Reset click used to destroy it. Only the text
     // is persisted, not the as-received baseline, so a reload treats the scene in
     // hand as unmodified rather than storing a second copy of it.
-    sceneState.adoptSource(savedSource, origin);
+    sceneState.adoptSource(savedSource, origin, saved.originDetail);
     editor.value = savedSource;
   } else {
     const example =
@@ -714,15 +716,19 @@ applyUrlParams();
 function selectExample(name) {
   const record = getExampleRecord(name);
   const source = record.source;
-  if (sceneState.isDirty(editor.value)) {
-    if (!confirm('Replace your edited scene?')) return; // scene provenance stays unchanged
-    stashScene();
-  }
+  const dirty = sceneState.isDirty(editor.value);
+  if (dirty && !confirm('Replace your edited scene?')) return false; // provenance stays unchanged
+  // A pristine catalog example is one click away in this same picker, so it
+  // needs no recovery copy. An edit does, and so does an UNEDITED foreign scene
+  // (a turbo/REPL handoff, a shared link, a dropped .pov): it is "as received",
+  // never dirty, and this editor can hold its only copy.
+  if (dirty || sceneState.provenance !== 'example') stashScene();
   editor.value = source;
   sceneState.loadExample(name, source);
   applyExampleClock(record); // BEFORE scheduleDraft
   renderSceneIdentity(); // trigger text + data-name + re-mark loaded option
   reflectSceneReplaced({ autoDraft: shouldAutoDraftExample(record) });
+  return true;
 }
 
 function sceneIsDirty() {
@@ -1172,16 +1178,22 @@ function outdentSelection() {
 // (setRangeText fires none), so each successful edit runs refreshAfterEdit for
 // the same bookkeeping a keystroke gets via the input handler.
 
-// The post-edit refresh for setRangeText keyboard edits: same supersede/cleanup
-// the input handler does (a fresh edit replaces the restore offer and may well
-// fix the blamed error line), then the standard repaint + slider re-parse (the
-// edit shifted literal spans) + save/draft debounces.
+// The post-edit refresh for EVERY setRangeText edit (Tab indent, the line ops,
+// number stepping, a completion accept, a dropped-asset insert): same
+// supersede/cleanup the input handler does (a fresh edit replaces the restore
+// offer, may well fix the blamed error line, and stales the find bar's match
+// offsets), then the standard repaint + slider re-parse + dirty-chip refresh +
+// save/draft debounces. The slider re-parse is not optional: every one of these
+// edits shifts the literal spans after the caret, and a slider dragged against a
+// stale span writes its value into the wrong characters.
 function refreshAfterEdit() {
   restoreNote.hidden = true;
   clearErrorLine();
+  closeFind(false);
   renderGutter();
   paintHighlight();
   buildSliders();
+  updateSceneActions();
   scheduleSave();
   scheduleDraft();
 }
@@ -1310,10 +1322,7 @@ editor.addEventListener('keydown', (e) => {
     e.preventDefault();
     if (e.shiftKey) outdentSelection();
     else indentSelection();
-    renderGutter();
-    paintHighlight();
-    scheduleSave();
-    scheduleDraft();
+    refreshAfterEdit();
     return;
   }
   if (e.key === '/' && (e.ctrlKey || e.metaKey) && !e.altKey) {
@@ -1583,10 +1592,7 @@ function acceptActive() {
   editor.selectionStart = editor.selectionEnd = out.caret;
   closeComplete();
   suppressedFrom = -1;
-  renderGutter();
-  paintHighlight();
-  scheduleSave();
-  scheduleDraft();
+  refreshAfterEdit();
 }
 
 // Returns true when the key was consumed by completion (so the caller stops).
@@ -1694,18 +1700,15 @@ function replaceScene(text, origin) {
   reflectSceneReplaced();
 }
 
-// Insert text at the caret, advancing past it, and resync the overlay/gutter and
-// the save + live-draft schedules (setRangeText fires no input event). A
-// newline is prefixed unless the caret is already at the start of a line, so a
-// dropped declare never splits a token mid-line.
+// Insert text at the caret, advancing past it, then run the setRangeText
+// post-edit refresh (no input event fires). A newline is prefixed unless the
+// caret is already at the start of a line, so a dropped declare never splits a
+// token mid-line.
 function insertAtCaret(text) {
   const at = editor.selectionStart;
   const atLineStart = at === 0 || editor.value[at - 1] === '\n';
   editor.setRangeText(atLineStart ? text : '\n' + text, at, editor.selectionEnd, 'end');
-  renderGutter();
-  paintHighlight();
-  scheduleSave();
-  scheduleDraft();
+  refreshAfterEdit();
 }
 
 // Drag-and-drop asset import lives in its own module; it owns the staged-asset
@@ -1869,8 +1872,10 @@ function writeLiteralText(model, literal) {
     }
   }
   if (model.readout) model.readout.textContent = literal;
+  closeFind(false); // the rewrite shifted every match offset after it
   renderGutter();
   paintHighlight();
+  updateSceneActions(); // a drag edits the scene like a keystroke: the chip and Reset must say so
   scheduleSave();
   scheduleDraft();
 }
@@ -2227,6 +2232,11 @@ outputPlate.addEventListener('click', (e) => {
 let panState = null;
 
 outputPlate.addEventListener('pointerdown', (e) => {
+  // A new press is a new verdict. The flag only exists to swallow the click the
+  // browser synthesizes for the press that set it; a hold-to-peek released OFF
+  // the plate (pointerleave, no capture at fit) never produces that click, and
+  // the leftover flag used to eat the next real zoom click instead.
+  suppressClick = false;
   if (zoomLevel === 0 || e.pointerType === 'touch' || e.button !== 0) return;
   panState = {
     x: e.clientX,
@@ -3377,10 +3387,11 @@ async function loadGistScene(raw) {
   // was simply never revisited).
   sceneState.adoptSource(source, 'gist', id);
   renderSceneIdentity();
-  updateSceneActions();
-  renderGutter();
-  paintHighlight();
-  scheduleSave();
+  // The full replacement replay, not a hand-picked subset: without the slider
+  // rebuild in here the scene-params panel kept listing the RESTORED scene's
+  // declares over the gist text, with spans into text that was no longer there.
+  // startRender() below supersedes the draft this schedules.
+  reflectSceneReplaced();
   startRender();
 }
 
@@ -3649,6 +3660,12 @@ document.addEventListener('keydown', (e) => {
     } else if (!shortcutsPanel.hidden) {
       e.preventDefault();
       closeShortcuts();
+    } else if (!exampleBrowser.hidden) {
+      // Reached with focus on one of the picker's filter selects: the search box
+      // handles (and stops) its own Escape, the selects don't, and falling through
+      // used to cancel a running render instead of closing the picker.
+      e.preventDefault();
+      closeBrowser(true);
     } else if (!findBar.hidden) {
       e.preventDefault();
       closeFind(false);

@@ -22,7 +22,10 @@ export async function runDeepLinks(ctx) {
     '',
   ].join('\n');
   const GIST_TXT = GIST_POV.replace('.pov file', '.txt file (no .pov present)');
-  const FALLBACK_SCENE = '// saved fallback scene\nsphere { 0, 1 }\n';
+  // Carries a scene param so a gist load can be seen to REBUILD the slider panel
+  // (the gist scenes below declare none): it used to keep the fallback's slider,
+  // whose span pointed into text that was no longer in the editor.
+  const FALLBACK_SCENE = '// saved fallback scene\n#declare FallbackR = 1;\nsphere { 0, 1 }\n';
 
   // Mock the gist JSON API, keyed on the hex id in the request URL. Every
   // fulfilled response carries Access-Control-Allow-Origin so the cross-origin
@@ -111,6 +114,18 @@ export async function runDeepLinks(ctx) {
     })),
     { label: 'gist abc1', selected: '', chip: 'as received', resetDisabled: true },
     'a loaded gist labels itself and cannot be Reset into an example'
+  );
+  assert.equal(
+    await page.evaluate(() => document.getElementById('scene-params').hidden),
+    true,
+    'a gist load rebuilds the scene-params panel for the gist text, not the fallback'
+  );
+  // The id rides along with the provenance into the saved blob, so a reload can
+  // keep calling the scene `gist abc1` (see the ?seed reload below).
+  await page.waitForFunction(
+    () => JSON.parse(localStorage.getItem('povrayer.ui.v1') ?? '{}').originDetail === 'abc1',
+    null,
+    { timeout: 5_000 }
   );
 
   // Pinned permalink: while the gist scene is unmodified, Copy Link copies the
@@ -654,6 +669,22 @@ export async function runDeepLinks(ctx) {
     'with no catalog record loaded the empty state has no scene to point at'
   );
   await page.keyboard.press('Escape');
+
+  // A reloaded gist scene (edited, so ?gist is gone from the bar and nothing
+  // refetches it) keeps its id in the label from the saved blob. Without the
+  // persisted detail it came back as a trailing-space "gist ".
+  const gistBlob = JSON.stringify({
+    source: '// EDITED GIST\nbox {}\n',
+    provenance: 'gist',
+    originDetail: 'abc1',
+    liveDraft: false,
+  });
+  await plBootGoto('?seed=' + encodeURIComponent(gistBlob));
+  assert.equal(
+    await page.evaluate(() => document.getElementById('example-trigger-text').textContent),
+    'gist abc1',
+    'a reloaded gist scene keeps the gist id in its label'
+  );
 
   // The other two foreign origins: a plain shared link (no origin field, which is
   // every link the editor's own Copy Link mints) and the REPL handoff.

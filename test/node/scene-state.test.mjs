@@ -151,6 +151,20 @@ test('restoring a stash rewinds the scene identity, not just the text', () => {
   assert.equal(state.canReset('my edited sphere'), true, 'Reset is armed again, for the example');
 });
 
+test('the origin detail is readable for persistence and tolerates a blob without one', () => {
+  // saveState writes `originDetail` next to `provenance` and the boot path hands
+  // it straight back to adoptSource. A blob written before the field existed (or
+  // a hand-edited one) must degrade to "no detail", never print into the label.
+  const state = createSceneState({ selectedExample: 'one', loadedSource: 'sphere' });
+  assert.equal(state.originDetail, '', 'a catalog example carries no detail');
+  state.adoptSource('gist scene', 'gist', 'a1b2c3');
+  assert.equal(state.originDetail, 'a1b2c3', 'the gist id is exposed for the saved blob');
+  state.adoptSource('gist scene', 'gist', undefined);
+  assert.equal(state.originLabel(), 'gist ', 'a missing detail reads as empty (legacy blob)');
+  state.adoptSource('gist scene', 'gist', { id: 'a1b2c3' });
+  assert.equal(state.originDetail, '', 'a non-string detail is dropped, not stringified');
+});
+
 test('gist pins survive pristine reads and clear on divergence', () => {
   const state = createSceneState({ selectedExample: 'one', loadedSource: 'sphere' });
   assert.equal(state.pinnedGistId('sphere'), null);
