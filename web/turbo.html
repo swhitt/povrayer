@@ -3318,7 +3318,9 @@
             let best = null,
               bd = 3;
             for (const c of pool) {
-              if (Math.abs(c.length - name.length) > 2) continue;
+              // the pool is every known word, so a known word in the wrong place
+              // (`sphere` inside camera {}) must not suggest itself
+              if (c === name || Math.abs(c.length - name.length) > 2) continue;
               const d = lev(name, c);
               if (d < bd) {
                 bd = d;
@@ -3500,6 +3502,18 @@
           }
           parseIdentExpr() {
             const tk = this.next();
+            // call arguments are a fresh expression context, like parentheses:
+            // `<1, select(a > b, 0, 1), 3>` must still see the comparison even
+            // though the vector literal around it has switched `<`/`>` off
+            const save = this.noRel || 0;
+            if (this.peek().t === 'p' && this.peek().v === '(') this.noRel = 0;
+            try {
+              return this.parseIdentExprBody(tk);
+            } finally {
+              this.noRel = save;
+            }
+          }
+          parseIdentExprBody(tk) {
             const name = tk.v;
             if (name === 'clock') {
               this.usesClock = true;
@@ -3800,7 +3814,13 @@
               case 'warning':
               case 'error': {
                 this.next();
-                const s = this.peek().t === 'str' ? this.next().v : '';
+                let s = '';
+                if (this.peek().t === 'str') s = this.next().v;
+                else if (this.peek().t === 'id' && this.peek(1).v === '(') {
+                  // concat()/str()/vstr(): strings aren't values in turbo, skip the call
+                  this.next();
+                  this.skipParens();
+                }
                 if (tk.v === 'error') this.err(`#error: ${s}`, tk.ln);
                 return true;
               }
@@ -3973,17 +3993,19 @@
                 this.next();
                 this.expect('{');
                 let tex = { pigment: null, finish: null, pxf: [] };
+                let ior = null;
                 for (;;) {
                   if (this.tryDirective()) continue;
                   if (this.eat('}')) break;
                   const w = this.next();
                   if (w.v === 'texture') tex = this.parseTexture();
-                  else if (w.v === 'interior') {
-                    this.warn('interior (ior/refraction) is CPU-only');
-                    this.skipBlock();
-                  } else this.skipBlock();
+                  else if (w.v === 'interior') ior = this.parseInterior();
+                  else if (w.t === 'id' && this.lookup(w.v)?.kind === 'texture')
+                    tex = this.lookup(w.v).tex;
+                  else this.skipBlock();
                 }
-                return { kind: 'texture', tex };
+                // the ior rides along so `material { M }` refracts like the inline form
+                return { kind: 'texture', tex, ior };
               }
               if (tk.v === 'pigment') {
                 this.next();
@@ -4013,6 +4035,12 @@
                 this.warn("normal{} bump maps aren't in turbo");
                 this.skipBlock();
                 return { kind: 'normal' };
+              }
+              // #declare Copy = Original; for a declared object/texture/pigment/finish
+              const val = this.lookup(tk.v);
+              if (val && val.kind) {
+                this.next();
+                return val;
               }
             }
             return this.parseExpr();
@@ -4058,25 +4086,36 @@
             return asNum(v) !== 0;
           }
 
-          handleIf(kind) {
+          ifCondition(kind) {
+            this.expect('(');
             let cond;
-            if (kind === 'if') {
-              this.expect('(');
-              cond = this.truthy(this.parseExpr());
-              this.expect(')');
-            } else {
-              this.expect('(');
+            if (kind === 'if') cond = this.truthy(this.parseExpr());
+            else {
               const id = this.next();
               cond = this.lookup(id.v) !== undefined || this.macros.has(id.v);
-              this.expect(')');
               if (kind === 'ifndef') cond = !cond;
             }
-            if (cond) {
-              const stop = this.parseUntilDir(['else', 'end']);
-              if (stop === 'else') this.skipToDir(['end']);
-            } else {
-              const stop = this.skipToDir(['else', 'end']);
-              if (stop === 'else') this.parseUntilDir(['end']);
+            this.expect(')');
+            return cond;
+          }
+
+          handleIf(kind) {
+            let cond = this.ifCondition(kind);
+            // #elseif chains: a taken branch skips everything to #end; an untaken
+            // one hands the decision to the next #elseif/#else at this depth.
+            for (;;) {
+              if (cond) {
+                if (this.parseUntilDir(['elseif', 'else', 'end']) !== 'end')
+                  this.skipToDir(['end']);
+                return;
+              }
+              const stop = this.skipToDir(['elseif', 'else', 'end']);
+              if (stop === 'end') return;
+              if (stop === 'else') {
+                this.parseUntilDir(['end']);
+                return;
+              }
+              cond = this.ifCondition('if');
             }
           }
 
@@ -4236,6 +4275,7 @@
             for (const p of mac.params) if (!locals.map.has(p)) locals.map.set(p, 0);
             this.frames.push({ toks: mac.body, pos: 0, locals });
             if (ctx === 'expr') {
+              while (this.tryDirective()); // `#macro F(a) #local b = a*2; b #end`
               const v = this.parseExpr();
               this.normalize();
               if (this.f.toks === mac.body) this.frames.pop();
@@ -4316,6 +4356,18 @@
                 this.err('unclosed { } block, no matching } before the scene ran out');
               if (tk.t === 'p' && tk.v === '{') depth++;
               if (tk.t === 'p' && tk.v === '}') depth--;
+            }
+          }
+
+          // consume a balanced ( ... ) group, for calls whose result turbo can't use
+          skipParens() {
+            this.expect('(');
+            let depth = 1;
+            while (depth > 0) {
+              const tk = this.next();
+              if (tk.t === 'eof') this.err('unclosed ( ), no matching ) before the scene ran out');
+              if (tk.t === 'p' && tk.v === '(') depth++;
+              if (tk.t === 'p' && tk.v === ')') depth--;
             }
           }
 
@@ -4471,8 +4523,11 @@
                 node = { ...base, csg: kw === 'merge' ? 'union' : kw, children: [] };
                 // objects produced while a macro frame drains (Face(1) Face(2) ... in
                 // a union) must land HERE, not at scene level: csgSink redirects them.
-                const prevSink = this.csgSink;
+                // modSink likewise, for `#if (X) translate y #end` after the children.
+                const prevSink = this.csgSink,
+                  prevMod = this.modSink;
                 this.csgSink = node.children;
+                this.modSink = node;
                 for (;;) {
                   this.normalize();
                   if (this.tryDirective()) continue;
@@ -4500,6 +4555,7 @@
                   break;
                 }
                 this.csgSink = prevSink;
+                this.modSink = prevMod;
                 if (node.children.length === 0)
                   this.warn(`empty ${kw} (all of its children were skipped?)`);
                 break;
@@ -4600,9 +4656,11 @@
                     const ior = this.parseInterior();
                     if (ior !== null) node.ior = ior;
                   } else if (w.t === 'id' && this.lookup(w.v)?.kind === 'texture') {
-                    const t2 = this.lookup(w.v).tex;
+                    const val = this.lookup(w.v),
+                      t2 = val.tex;
                     if (t2.pigment) node.tex.pigment = t2.pigment;
                     if (t2.finish) node.tex.finish = { ...(node.tex.finish || {}), ...t2.finish };
+                    if (val.ior != null) node.ior = val.ior; // a #declared material{}
                   } else {
                     this.warn(`${w.v} in material{} is CPU-only`);
                     this.skipBlock();
@@ -4667,6 +4725,7 @@
                   if (val.tex.pigment) node.tex.pigment = val.tex.pigment;
                   if (val.tex.finish)
                     node.tex.finish = { ...(node.tex.finish || {}), ...val.tex.finish };
+                  if (val.ior != null) node.ior = val.ior;
                   break;
                 }
                 if (val && val.kind === 'normal') break; // normal{} stand-in from a macro arg
@@ -5702,10 +5761,12 @@
                 phase: 0,
                 wave: 0,
               };
+            // A child with its own pigment{} has its own texture in POV, so the CSG
+            // parent's finish never reaches it; only a bare leaf inherits the finish.
             const fin = {
               ...FIN_DEFAULTS,
               ...(defaults.finish || {}),
-              ...(inherited.finish || {}),
+              ...(tex.pigment ? {} : inherited.finish || {}),
               ...(tex.finish || {}),
             };
             // pigments ride along with the object: pattern space = inverse(world * pigmentXf).
@@ -5734,9 +5795,13 @@
             if (node.csg) {
               const tex = {
                 pigment: node.tex.pigment || inhTex.pigment,
+                // same rule as resolveMaterial: a pigment{} of its own cuts the
+                // grandparent's finish off at this level
                 finish: node.tex.finish
-                  ? { ...(inhTex.finish || {}), ...node.tex.finish }
-                  : inhTex.finish,
+                  ? { ...(node.tex.pigment ? {} : inhTex.finish || {}), ...node.tex.finish }
+                  : node.tex.pigment
+                    ? null
+                    : inhTex.finish,
                 ior: node.ior ?? inhTex.ior,
               };
               // dOp() does the negating for difference children; leaf.neg is only for
@@ -5791,15 +5856,17 @@
           // Group homogeneous leaf runs anywhere in the CSG forest: the top-level
           // roots are an implicit union, and a Menger sponge's 1000 cutter boxes
           // inside a difference qualify just the same (kids[0] of a difference is the
-          // base and must stay put; everything after it commutes).
-          function collectGroups(kids, isDiff) {
+          // base and must stay put; everything after it commutes). A group is a min()
+          // over its members, i.e. a union, so an intersection's own kids never
+          // group (A & (B | C) is not A & B & C); only the subtrees beneath them do.
+          function collectGroups(kids, op) {
             const cand = new Map();
             kids.forEach((t, i) => {
               if (t.leafIdx === undefined) {
-                if (t.kids) collectGroups(t.kids, t.op === 'difference');
+                if (t.kids) collectGroups(t.kids, t.op);
                 return;
               }
-              if (isDiff && i === 0) return;
+              if (op === 'intersection' || (op === 'difference' && i === 0)) return;
               const lf = leaves[t.leafIdx];
               if (
                 lf.neg ||
@@ -5829,7 +5896,7 @@
             }
             for (let i = kids.length - 1; i >= 0; i--) if (kids[i] === null) kids.splice(i, 1);
           }
-          collectGroups(roots, false);
+          collectGroups(roots, 'union');
 
           top += materials.length * MAT_STRIDE;
           const leafBase = new Array(leaves.length);
@@ -6402,16 +6469,37 @@ void main(){
           gl.compileShader(sh);
           return sh;
         }
-        const vertShader = gl ? glCompile(gl.VERTEX_SHADER, VERT_SRC) : null;
+        let vertShader = null;
         // the parameter texture: 1024 texels wide, one row per 1024 vec4 slots
-        const paramTex = gl ? gl.createTexture() : null;
-        if (gl) {
+        let paramTex = null;
+        // (re)create the GL objects that outlive any one scene; a restored context
+        // starts from nothing, so this runs again from webglcontextrestored
+        function initGL() {
+          vertShader = glCompile(gl.VERTEX_SHADER, VERT_SRC);
+          paramTex = gl.createTexture();
           gl.activeTexture(gl.TEXTURE0);
           gl.bindTexture(gl.TEXTURE_2D, paramTex);
           gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32F, 1024, MAX_VEC4 / 1024);
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
         }
+        if (gl) initGL();
+        // GPU reset (sleep/wake, driver crash): without preventDefault the browser
+        // never restores the context, and the page sits on "compiling…" forever.
+        // Every GL object dies with the context, so drop the live and pending builds,
+        // then rebuild from the editor once the context is back.
+        canvas.addEventListener('webglcontextlost', (e) => {
+          e.preventDefault();
+          pending = null;
+          cur = null;
+          setPill('err', '✗ gpu context lost');
+        });
+        canvas.addEventListener('webglcontextrestored', () => {
+          initGL();
+          post = makePost();
+          showToast('gpu context restored, rebuilding');
+          onSource();
+        });
         function uploadParams(data) {
           gl.texSubImage2D(
             gl.TEXTURE_2D,
@@ -6705,20 +6793,19 @@ void main(){
           uploadParams(cur.data);
           gl.drawArrays(gl.TRIANGLES, 0, 3);
         }
-        const post = gl
-          ? (() => {
-              const linkPost = (frag) => {
-                const p = gl.createProgram();
-                const fs = glCompile(gl.FRAGMENT_SHADER, frag);
-                gl.attachShader(p, vertShader);
-                gl.attachShader(p, fs);
-                gl.linkProgram(p);
-                if (!gl.getProgramParameter(p, gl.LINK_STATUS))
-                  console.error('post link:', gl.getShaderInfoLog(fs), gl.getProgramInfoLog(p));
-                return p;
-              };
-              // bright pass: de-gamma so only true highlights bloom, threshold, halve res
-              const PRE = linkPost(`#version 300 es
+        function makePost() {
+          const linkPost = (frag) => {
+            const p = gl.createProgram();
+            const fs = glCompile(gl.FRAGMENT_SHADER, frag);
+            gl.attachShader(p, vertShader);
+            gl.attachShader(p, fs);
+            gl.linkProgram(p);
+            if (!gl.getProgramParameter(p, gl.LINK_STATUS))
+              console.error('post link:', gl.getShaderInfoLog(fs), gl.getProgramInfoLog(p));
+            return p;
+          };
+          // bright pass: de-gamma so only true highlights bloom, threshold, halve res
+          const PRE = linkPost(`#version 300 es
 precision highp float; out vec4 o; uniform sampler2D src; uniform vec2 res;
 void main(){
   vec3 c = texture(src, gl_FragCoord.xy / res).rgb;
@@ -6726,8 +6813,8 @@ void main(){
   float l = max(lin.r, max(lin.g, lin.b));
   o = vec4(lin * smoothstep(0.5, 0.9, l), 1.0);
 }`);
-              // 9-tap gaussian via linear sampling, one axis per draw
-              const BLUR = linkPost(`#version 300 es
+          // 9-tap gaussian via linear sampling, one axis per draw
+          const BLUR = linkPost(`#version 300 es
 precision highp float; out vec4 o; uniform sampler2D src; uniform vec2 res; uniform vec2 dir;
 void main(){
   vec2 uv = gl_FragCoord.xy / res;
@@ -6737,7 +6824,7 @@ void main(){
   s += (texture(src, uv + d * 3.2308).rgb + texture(src, uv - d * 3.2308).rgb) * 0.0702703;
   o = vec4(s, 1.0);
 }`);
-              const COMP = linkPost(`#version 300 es
+          const COMP = linkPost(`#version 300 es
 precision highp float; out vec4 o;
 uniform sampler2D scene; uniform sampler2D bloom; uniform vec2 res; uniform float time;
 // FXAA (Lottes, compact form): smooths the edge jaggies the resolution governor
@@ -6777,105 +6864,105 @@ void main(){
   float g = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233)) + time) * 43758.5453);
   o = vec4(col + (g - 0.5) * 0.03, 1.0);
 }`);
-              // sampler bindings are constant: scene on unit 1, bloom on unit 2
-              gl.useProgram(PRE);
-              gl.uniform1i(gl.getUniformLocation(PRE, 'src'), 1);
-              gl.useProgram(BLUR);
-              gl.uniform1i(gl.getUniformLocation(BLUR, 'src'), 1);
-              gl.useProgram(COMP);
-              gl.uniform1i(gl.getUniformLocation(COMP, 'scene'), 1);
-              gl.uniform1i(gl.getUniformLocation(COMP, 'bloom'), 2);
-              const uPreRes = gl.getUniformLocation(PRE, 'res');
-              const uBlurRes = gl.getUniformLocation(BLUR, 'res');
-              const uBlurDir = gl.getUniformLocation(BLUR, 'dir');
-              const uCompRes = gl.getUniformLocation(COMP, 'res');
-              const uCompTime = gl.getUniformLocation(COMP, 'time');
+          // sampler bindings are constant: scene on unit 1, bloom on unit 2
+          gl.useProgram(PRE);
+          gl.uniform1i(gl.getUniformLocation(PRE, 'src'), 1);
+          gl.useProgram(BLUR);
+          gl.uniform1i(gl.getUniformLocation(BLUR, 'src'), 1);
+          gl.useProgram(COMP);
+          gl.uniform1i(gl.getUniformLocation(COMP, 'scene'), 1);
+          gl.uniform1i(gl.getUniformLocation(COMP, 'bloom'), 2);
+          const uPreRes = gl.getUniformLocation(PRE, 'res');
+          const uBlurRes = gl.getUniformLocation(BLUR, 'res');
+          const uBlurDir = gl.getUniformLocation(BLUR, 'dir');
+          const uCompRes = gl.getUniformLocation(COMP, 'res');
+          const uCompTime = gl.getUniformLocation(COMP, 'time');
 
-              let fbW = 0,
-                fbH = 0,
-                sceneTex,
-                sceneFBO,
-                bA,
-                bAF,
-                bB,
-                bBF;
-              const mkTex = (w, h) => {
-                const t = gl.createTexture();
-                gl.bindTexture(gl.TEXTURE_2D, t);
-                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-                return t;
-              };
-              const mkFBO = (t) => {
-                const f = gl.createFramebuffer();
-                gl.bindFramebuffer(gl.FRAMEBUFFER, f);
-                gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
-                return f;
-              };
-              const ensure = (w, h) => {
-                if (w === fbW && h === fbH) return;
-                fbW = w;
-                fbH = h;
-                [sceneFBO, bAF, bBF].forEach((f) => f && gl.deleteFramebuffer(f));
-                [sceneTex, bA, bB].forEach((t) => t && gl.deleteTexture(t));
-                const w2 = Math.max(1, w >> 1),
-                  h2 = Math.max(1, h >> 1);
-                sceneTex = mkTex(w, h);
-                sceneFBO = mkFBO(sceneTex);
-                bA = mkTex(w2, h2);
-                bAF = mkFBO(bA);
-                bB = mkTex(w2, h2);
-                bBF = mkFBO(bB);
-              };
-              return {
-                on: localStorage.getItem('turbo-glow') === '1', // off until you ask for it
-                render(w, h, timeS) {
-                  ensure(w, h);
-                  const w2 = Math.max(1, w >> 1),
-                    h2 = Math.max(1, h >> 1);
-                  // 1) scene -> offscreen
-                  gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO);
-                  gl.viewport(0, 0, w, h);
-                  drawScene();
-                  // 2) bright pass -> half res
-                  gl.activeTexture(gl.TEXTURE1);
-                  gl.bindFramebuffer(gl.FRAMEBUFFER, bAF);
-                  gl.viewport(0, 0, w2, h2);
-                  gl.useProgram(PRE);
-                  gl.bindTexture(gl.TEXTURE_2D, sceneTex);
-                  gl.uniform2f(uPreRes, w2, h2);
-                  gl.drawArrays(gl.TRIANGLES, 0, 3);
-                  // 3) separable blur, twice, for a wider glow
-                  gl.useProgram(BLUR);
-                  gl.uniform2f(uBlurRes, w2, h2);
-                  for (let i = 0; i < 2; i++) {
-                    gl.bindFramebuffer(gl.FRAMEBUFFER, bBF);
-                    gl.bindTexture(gl.TEXTURE_2D, bA);
-                    gl.uniform2f(uBlurDir, 1, 0);
-                    gl.drawArrays(gl.TRIANGLES, 0, 3);
-                    gl.bindFramebuffer(gl.FRAMEBUFFER, bAF);
-                    gl.bindTexture(gl.TEXTURE_2D, bB);
-                    gl.uniform2f(uBlurDir, 0, 1);
-                    gl.drawArrays(gl.TRIANGLES, 0, 3);
-                  }
-                  // 4) composite -> screen
-                  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-                  gl.viewport(0, 0, w, h);
-                  gl.useProgram(COMP);
-                  gl.activeTexture(gl.TEXTURE1);
-                  gl.bindTexture(gl.TEXTURE_2D, sceneTex);
-                  gl.activeTexture(gl.TEXTURE2);
-                  gl.bindTexture(gl.TEXTURE_2D, bA);
-                  gl.uniform2f(uCompRes, w, h);
-                  gl.uniform1f(uCompTime, timeS);
-                  gl.drawArrays(gl.TRIANGLES, 0, 3);
-                },
-              };
-            })()
-          : null;
+          let fbW = 0,
+            fbH = 0,
+            sceneTex,
+            sceneFBO,
+            bA,
+            bAF,
+            bB,
+            bBF;
+          const mkTex = (w, h) => {
+            const t = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, t);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            return t;
+          };
+          const mkFBO = (t) => {
+            const f = gl.createFramebuffer();
+            gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+            return f;
+          };
+          const ensure = (w, h) => {
+            if (w === fbW && h === fbH) return;
+            fbW = w;
+            fbH = h;
+            [sceneFBO, bAF, bBF].forEach((f) => f && gl.deleteFramebuffer(f));
+            [sceneTex, bA, bB].forEach((t) => t && gl.deleteTexture(t));
+            const w2 = Math.max(1, w >> 1),
+              h2 = Math.max(1, h >> 1);
+            sceneTex = mkTex(w, h);
+            sceneFBO = mkFBO(sceneTex);
+            bA = mkTex(w2, h2);
+            bAF = mkFBO(bA);
+            bB = mkTex(w2, h2);
+            bBF = mkFBO(bB);
+          };
+          return {
+            on: localStorage.getItem('turbo-glow') === '1', // off until you ask for it
+            render(w, h, timeS) {
+              ensure(w, h);
+              const w2 = Math.max(1, w >> 1),
+                h2 = Math.max(1, h >> 1);
+              // 1) scene -> offscreen
+              gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO);
+              gl.viewport(0, 0, w, h);
+              drawScene();
+              // 2) bright pass -> half res
+              gl.activeTexture(gl.TEXTURE1);
+              gl.bindFramebuffer(gl.FRAMEBUFFER, bAF);
+              gl.viewport(0, 0, w2, h2);
+              gl.useProgram(PRE);
+              gl.bindTexture(gl.TEXTURE_2D, sceneTex);
+              gl.uniform2f(uPreRes, w2, h2);
+              gl.drawArrays(gl.TRIANGLES, 0, 3);
+              // 3) separable blur, twice, for a wider glow
+              gl.useProgram(BLUR);
+              gl.uniform2f(uBlurRes, w2, h2);
+              for (let i = 0; i < 2; i++) {
+                gl.bindFramebuffer(gl.FRAMEBUFFER, bBF);
+                gl.bindTexture(gl.TEXTURE_2D, bA);
+                gl.uniform2f(uBlurDir, 1, 0);
+                gl.drawArrays(gl.TRIANGLES, 0, 3);
+                gl.bindFramebuffer(gl.FRAMEBUFFER, bAF);
+                gl.bindTexture(gl.TEXTURE_2D, bB);
+                gl.uniform2f(uBlurDir, 0, 1);
+                gl.drawArrays(gl.TRIANGLES, 0, 3);
+              }
+              // 4) composite -> screen
+              gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+              gl.viewport(0, 0, w, h);
+              gl.useProgram(COMP);
+              gl.activeTexture(gl.TEXTURE1);
+              gl.bindTexture(gl.TEXTURE_2D, sceneTex);
+              gl.activeTexture(gl.TEXTURE2);
+              gl.bindTexture(gl.TEXTURE_2D, bA);
+              gl.uniform2f(uCompRes, w, h);
+              gl.uniform1f(uCompTime, timeS);
+              gl.drawArrays(gl.TRIANGLES, 0, 3);
+            },
+          };
+        }
+        let post = gl ? makePost() : null;
         function renderToScreen(now) {
           const w = canvas.width,
             h = canvas.height;
@@ -6933,9 +7020,13 @@ void main(){
           }
           if (cur && cur.program) {
             const clockV = transport.tick(now);
-            // structure-from-clock scenes (clock in #while/#if bounds) re-parse cheaply
+            // structure-from-clock scenes (clock in #while/#if bounds) re-parse cheaply.
+            // Not while an edit is debouncing or linking: this rebuilds the OLD source,
+            // and handing that to scheduleStructural would overwrite the user's build.
             if (
               cur.build.structClock &&
+              !latestStructural &&
+              !pending &&
               (transport.playing || transport.dirty) &&
               now - lastReparse > 120
             ) {
@@ -7137,7 +7228,10 @@ void main(){
           // Reveal BEFORE filling: while display:none the region is out of the a11y
           // tree, so a fill-then-show would land its first message unannounced.
           errDetail.classList.add('show');
-          errDetail.textContent = `Parse Error: ${e.message}\n  line ${ln}: ${srcLine.trim()}\n(kept your last good scene running)`;
+          // A shared link or first load can fail before anything ever compiled, and
+          // then there is no last good scene to keep.
+          const kept = cur ? '\n(kept your last good scene running)' : '';
+          errDetail.textContent = `Parse Error: ${e.message}\n  line ${ln}: ${srcLine.trim()}${kept}`;
         }
         pill.addEventListener('click', () => {
           if (lastError) errDetail.classList.toggle('show');
@@ -7854,6 +7948,9 @@ blob {
         // string, and a missing one makes the whole payload decode to null.
         function currentPovrayerState() {
           const usesClock = cur ? cur.build.usesClock : /\bclock\b/.test(editor.value);
+          // A paused clock IS the frame the user is looking at: trace that one frame
+          // at the same clock (+K is POV-Ray's own switch) instead of a 24-frame loop.
+          const paused = usesClock && !transport.playing;
           return {
             source: currentPovSource(),
             width: '800',
@@ -7861,8 +7958,8 @@ blob {
             quality: '9',
             antialias: '0.3',
             threads: '',
-            flags: '',
-            mode: usesClock ? 'animate' : 'still',
+            flags: paused ? `+K${transport.value.toFixed(3)}` : '',
+            mode: usesClock && !paused ? 'animate' : 'still',
             frames: '24',
             fps: '12',
             // Stamp where this scene came from. The editor reads it to label the
@@ -8128,7 +8225,10 @@ blob {
           recBtn.textContent = '● rec';
           buzz(20);
           showToast('recording one ' + transport.periodMs / 1000 + 's loop…');
-          setTimeout(() => recorder && recorder.stop(), transport.periodMs + 150);
+          // bound to THIS recorder: a loop cut short by hand must not have its stale
+          // timer stop the next recording early
+          const me = recorder;
+          setTimeout(() => recorder === me && me.stop(), transport.periodMs + 150);
         }
         recBtn.addEventListener('click', recordLoop);
 

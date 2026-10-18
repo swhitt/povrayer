@@ -33,7 +33,7 @@ in the automated Turbo Playwright suite; broader gallery sweeps remain manual.
   phong_size/metallic/emission/reflection{min,max fresnel falloff metallic},
   rgbt transparency (straight-through tint unless an `interior { ior }` enables
   the refraction path),
-  `#declare/#local/#while/#for/#if/#ifdef/#else/#macro/#include/array`,
+  `#declare/#local/#while/#for/#if/#ifdef/#elseif/#else/#macro/#include/array`,
   full expression eval (vectors, dot-members, rand/seed, vrotate, the lot),
   `clock` everywhere.
 - **POV semantics that matter**: left-handed coords with `cross(sky, dir)`
@@ -46,7 +46,9 @@ in the automated Turbo Playwright suite; broader gallery sweeps remain manual.
   (clamp + 1/2.2, dithered).
 - **The twin trick**: "Ray-trace it →" gzips the same source into povrayer's
   own permalink format and opens povrayer.com (override target with
-  `?pov=<url>`). Verified end-to-end against a local `make web` serving the
+  `?pov=<url>`). A paused clock travels too: the handoff switches to a still
+  render with `+K<clock>` so the traced frame is the one on screen; a playing
+  clock hands off as an animation. Verified end-to-end against a local `make web` serving the
   real editor: scene hydrates and draft-renders. Side-by-side GPU vs real
   POV-Ray renders of the hello preset match in framing, checker phase, fog,
   sky, and materials.
@@ -141,14 +143,18 @@ until the GPU process silently zombied, `isContextLost()` still false), and
 giant scenes taking their FIRST frame at full resolution could trip the macOS
 GPU watchdog, killing the process the same way. Now: pending builds are
 deleted on overtake, and scenes over 250 leaves clamp the render scale before
-their first frame (the governor climbs back within a per-scene cap).
+their first frame (the governor climbs back within a per-scene cap). A real
+context loss (sleep/wake, driver reset) is handled too: the lost event is
+accepted so the browser restores the context, the dead builds are dropped, and
+the scene rebuilds from the editor when it comes back.
 
 ## Refraction (added after the sweep)
 
 `interior { ior 1.5 }` is real now: the bounce loop refracts in, marches the
 interior to the far surface, refracts out (one total-internal-reflection leg
 allowed) and tints by Beer's law over the path. glass.inc interior names
-(I_Glass, I_Diamond, ...) map to their indices. The hello preset's glass
+(I_Glass, I_Diamond, ...) map to their indices, inline or through a
+`#declare`d `material { ... interior { I_Glass } }`. The hello preset's glass
 sphere bends the checkerboard, and the GPU result matches the real tracer's
 render side by side. Pigment transmit WITHOUT an interior stays straight-
 through, which is also what POV does. All 5 gallery glass scenes render lit.
@@ -183,6 +189,10 @@ no lathe/prism/sor/height_field/mesh/text/isosurface (warn + skip), merge
 behaves as union (identical for opaque), fog is exponential type-1 only,
 color_map capped at 8 stops, ≤8 lights, parameter budget 16384 vec4 with a
 512-leaf real-time ceiling. POV's `rotate` on cameras is warned-and-skipped.
+Pattern space follows ALL of an object's transforms, not just the ones written
+after the texture (POV leaves `sphere { 0, 1 scale 2 pigment { checker } }`'s
+checker unscaled; turbo scales it), so put textures before transforms for a
+faithful twin.
 
 ## Screenshots
 

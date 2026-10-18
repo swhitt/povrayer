@@ -64,6 +64,13 @@ test('Turbo service worker installs assets, cleans old caches, and falls back of
       configurable: true,
       value: async () => {
         if (fetchMode === 'offline') throw new Error('offline');
+        if (fetchMode === 'error') return new Response('deploying', { status: 503 });
+        if (fetchMode === 'redirected') {
+          // `redirected` is set by fetch internals; pin it on the instance
+          const r = new Response('online');
+          Object.defineProperty(r, 'redirected', { value: true });
+          return r;
+        }
         return new Response('online');
       },
     },
@@ -130,6 +137,17 @@ test('Turbo service worker installs assets, cleans old caches, and falls back of
     assert.equal(put.length, 1, 'a successful network response should refresh the cache');
     assert.equal(put[0].request, online.request);
     assert.equal(await put[0].response.text(), 'online');
+
+    // a 5xx mid-deploy and a cleanUrls redirect both pass through to the page
+    // but must never replace the good cached copy
+    for (const mode of ['error', 'redirected']) {
+      fetchMode = mode;
+      const r = await dispatchFetch('https://povrayer.test/turbo').response;
+      assert.equal(r.redirected, mode === 'redirected');
+      assert.equal(r.status, mode === 'error' ? 503 : 200);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(put.length, 1, `a ${mode} response must not be cached`);
+    }
 
     fetchMode = 'offline';
     const offline = dispatchFetch('https://povrayer.test/turbo?scene=two');

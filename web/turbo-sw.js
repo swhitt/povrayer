@@ -42,8 +42,14 @@ sw.addEventListener('fetch', (e) => {
   e.respondWith(
     fetch(e.request)
       .then((r) => {
-        const copy = r.clone();
-        caches.open(CACHE).then((c) => c.put(e.request, copy));
+        // Only a good, direct response refreshes the cache: a 5xx mid-deploy
+        // would otherwise become the offline page, and Chrome refuses to serve
+        // a redirected response (cleanUrls' /turbo.html -> /turbo) to a later
+        // navigation.
+        if (r.ok && !r.redirected) {
+          const copy = r.clone();
+          caches.open(CACHE).then((c) => c.put(e.request, copy));
+        }
         return r;
       })
       .catch(() => caches.match(e.request, { ignoreSearch: true }))
