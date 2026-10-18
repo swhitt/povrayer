@@ -729,6 +729,10 @@ try {
       timeout: 60_000,
     });
     await page.keyboard.press('Enter'); // submit while busy -> flashHint
+    // The graduation link is inert mid-render (a click would abandon the
+    // render and carry its un-settled scene into the editor). Dispatched
+    // directly: the panel is closed, so the link is off-screen.
+    await page.evaluate(() => document.getElementById('open-in-editor').click());
     await page.waitForFunction(
       (n) => document.querySelectorAll('#scrollback img.preview').length > n,
       before,
@@ -736,6 +740,7 @@ try {
         timeout: 120_000,
       }
     );
+    assert.match(page.url(), /repl\.html$/, 'open in editor must not navigate mid-render');
   }
 
   // cancel a fresh entry mid-render -> rollback + 'render cancelled' (cancel btn)
@@ -745,6 +750,13 @@ try {
   await page.waitForFunction(() => document.getElementById('input').readOnly === true, null, {
     timeout: 60_000,
   });
+  // A fresh entry is persisted only once its render settles: a reload during
+  // this window must not restore an entry that is about to roll back.
+  assert.equal(
+    await page.evaluate(() => JSON.parse(localStorage.getItem('povrayer.repl.v1')).entries.length),
+    0,
+    'an in-flight fresh entry must not be in localStorage yet'
+  );
   await page.click('#cancel-render');
   await page.waitForFunction(
     () =>

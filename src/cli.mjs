@@ -20,7 +20,7 @@ const HELP = `Usage: povrayer <scene.pov | -> [options] [-- raw POV-Ray args...]
   --clock-initial F  clock value at the first frame (default 0)
   --clock-final F    clock value at the final frame (default 1)
   --help         show this help
-  --             pass everything after verbatim to POV-Ray (+KFF, +UA, ...)
+  --             pass everything after verbatim to POV-Ray (+UA, +K0.5, ...)
 
 File mode stages every regular file in the scene's directory (non-recursive)
 alongside the scene, so local .inc files and textures resolve. In stdin mode
@@ -161,7 +161,10 @@ function buildFrameNamer(out, scene, frames) {
 // Maps a thrown render error to a process exit code + a terse stderr line.
 // The full log already streamed to stderr via onProgress, so keep this short.
 function reportError(err) {
-  if (typeof err?.exitCode === 'number' && err.exitCode !== 0) {
+  // Only a real POV-Ray status is forwarded: the wrapper's -1 (wasm runtime
+  // abort) would come out as 255, and 0 (exited clean but wrote no image) is
+  // not a success.
+  if (typeof err?.exitCode === 'number' && err.exitCode > 0) {
     process.exitCode = err.exitCode;
     process.stderr.write(`povrayer: render failed (exit code ${err.exitCode})\n`);
   } else {

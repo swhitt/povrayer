@@ -10,9 +10,12 @@
 // exists and fails loudly if it doesn't.
 import { existsSync, rmSync, mkdirSync, cpSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { buildWeb, WEB_OUT } from './build-web.mjs';
 
-const root = new URL('..', import.meta.url).pathname;
+// fileURLToPath, not URL.pathname: the latter stays percent-encoded, so a
+// checkout under a path with a space would report dist/povray.wasm missing.
+const root = fileURLToPath(new URL('..', import.meta.url));
 const dist = join(root, 'dist');
 const web = join(root, 'web');
 const out = join(root, '_site');

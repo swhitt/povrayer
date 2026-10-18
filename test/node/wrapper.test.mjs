@@ -38,14 +38,50 @@ test('rejects raw arguments that override wrapper-owned files or animation range
     '+Oelsewhere.png',
     '+FN8',
     '+KFF99',
+    '+KFI2',
+    '+KI0.5',
+    '+KF2',
     '+SF2',
     'Output_File_Name=x',
+    'Output_To_File=off',
   ]) {
     await assert.rejects(render(scene, { args: [arg] }), {
       name: 'RangeError',
       message: new RegExp(`cannot be overridden: ${arg.replace(/[+]/g, '\\+')}$`),
     });
   }
+});
+
+test('a plain clock (+K<n>, Clock=) and +KC pass through: a still owns no clock', async () => {
+  // Regression: the reserved-arg regex used to reject every +K*, so the one
+  // way to set `clock` for a still render was the INI spelling. Each renders.
+  for (const arg of ['+K0.42', 'Clock=0.42', '+KC']) {
+    const png = await render(scene, { width: 16, height: 12, threads: 1, args: [arg] });
+    assert.deepEqual([...png.subarray(0, 8)], PNG_SIGNATURE, `${arg} should render`);
+  }
+});
+
+test('exit 0 with no output image is a PovrayError, not a bare FS error', async () => {
+  // Output_To_File= itself is reserved now, but an INI file named in `args`
+  // can still switch the output off; MEMFS then throws a message-less
+  // ErrnoError on readFile. The wrapper names the real failure and keeps the
+  // log, with exit code 0 so a CLI never mistakes it for a POV-Ray status.
+  await assert.rejects(
+    render(scene, {
+      width: 16,
+      height: 12,
+      threads: 1,
+      files: { 'noout.ini': 'Output_To_File=off\n' },
+      args: ['/work/noout.ini'],
+    }),
+    /** @param {PovrayError} err */ (err) => {
+      assert.ok(err instanceof PovrayError);
+      assert.equal(err.exitCode, 0);
+      assert.match(err.message, /exited with code 0 but wrote no output image/);
+      assert.match(err.log, /Parser Statistics/, 'the full log rides along');
+      return true;
+    }
+  );
 });
 
 test('warmup preloads the factory without rendering and repeats share the cache', async () => {
@@ -125,6 +161,21 @@ test('rejects a files key that escapes /work', async () => {
   );
 });
 
+test('a files name collision names the offending key', async () => {
+  // "a" is staged as a file, then "a/b" needs it as a directory: MEMFS throws
+  // a message-less ErrnoError, which the wrapper rewraps around the key.
+  await assert.rejects(
+    render(scene, { files: { a: 'x', 'a/b': 'y' } }),
+    /** @param {Error} err */ (err) => {
+      assert.ok(!(err instanceof PovrayError), 'should be a plain staging Error, not PovrayError');
+      assert.match(err.message, /Cannot stage extra file "a\/b"/);
+      assert.match(err.message, /collides with another files entry/);
+      assert.ok(err.cause, 'the original FS error is kept as cause');
+      return true;
+    }
+  );
+});
+
 test('rejects a files key that is only dot/slash segments', async () => {
   await assert.rejects(
     render(scene, { files: { './/': 'nope' } }),
@@ -187,14 +238,31 @@ test('a pre-aborted signal rejects before any work', async () => {
   );
 });
 
-test('a signal aborted during instantiation rejects at the post-instantiation re-check', async () => {
+test('a signal aborted during the glue-module import rejects before instantiation', async () => {
   // Abort synchronously after the call: render() has already passed the first
-  // throwIfAborted and is suspended awaiting the factory, so the SECOND
-  // throwIfAborted (after instantiation, before the abort listener is wired) is
-  // what rejects.
+  // throwIfAborted and is suspended awaiting loadFactory(), so the SECOND check
+  // (after the import, before the factory is instantiated) is what rejects. No
+  // instance is created, so there is no worker pool to reap.
   const controller = new AbortController();
   const promise = render(scene, { signal: controller.signal });
   controller.abort();
+  await assert.rejects(
+    promise,
+    /** @param {Error} err */ (err) => {
+      assert.equal(err.name, 'AbortError');
+      return true;
+    }
+  );
+});
+
+test('a signal aborted during instantiation rejects at the post-instantiation re-check', async () => {
+  // A timer fires after the (cached) import resolves in a microtask but while
+  // the factory is still instantiating (wasm instantiate + worker pool startup
+  // span several tasks), so the THIRD check, after instantiation and before the
+  // abort listener is wired, is what rejects.
+  const controller = new AbortController();
+  const promise = render(scene, { signal: controller.signal });
+  setTimeout(() => controller.abort(), 0);
   await assert.rejects(
     promise,
     /** @param {Error} err */ (err) => {

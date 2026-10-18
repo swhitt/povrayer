@@ -44,9 +44,11 @@ export interface RenderOptions {
      */
     files?: Record<string, string | Uint8Array>;
     /**
-     * Additional POV-Ray args (escape hatch: `+UA`, `+AM2`, ...). Input,
-     * output-format, output-path, and animation-range options are rejected
-     * because the wrapper owns them and depends on their exact values.
+     * Additional POV-Ray args (escape hatch: `+UA`, `+AM2`, `+K0.5`, ...).
+     * Input, output-format, output-path, output-enable, and animation-range
+     * options (`+KFI`/`+KFF`/`+KI`/`+KF`) are rejected because the wrapper
+     * owns them and depends on their exact values. A plain clock (`+K<n>` or
+     * `Clock=`) is fine: a still render has no clock of its own.
      */
     args?: string[];
     /** Receives each output line (stdout + stderr) as it arrives. */
@@ -86,9 +88,11 @@ type PovrayFactory = typeof import("./povray.mjs").default;
 type PovrayModule = Awaited<ReturnType<PovrayFactory>>;
 type PovrayFS = PovrayModule["FS"];
 
-const RESERVED_ARG = /^[+-](?:I|O|F|K|SF|EF)/i;
+// `KF` also covers +KFI/+KFF; a bare `K` would reject the legitimate +K<n>
+// (Clock) and +KC, which the wrapper does not depend on.
+const RESERVED_ARG = /^[+-](?:I|O|F|KF|KI|SF|EF)/i;
 const RESERVED_SETTING =
-    /^(?:Input_File_Name|Output_File_Name|Output_File_Type|Initial_Frame|Final_Frame|Initial_Clock|Final_Clock|Subset_Start_Frame|Subset_End_Frame)=/i;
+    /^(?:Input_File_Name|Output_File_Name|Output_File_Type|Output_To_File|Initial_Frame|Final_Frame|Initial_Clock|Final_Clock|Subset_Start_Frame|Subset_End_Frame)=/i;
 
 function validateArgs(args: string[]): void {
     for (const arg of args) {
@@ -251,6 +255,10 @@ async function runEngine<T>(
     if (signal?.aborted) throw abortError(signal);
 
     const factory = await loadFactory();
+    // Re-check before paying for instantiation: an abort that landed during the
+    // glue-module import would otherwise spin up the whole worker pool only to
+    // be caught by the post-instantiation check below.
+    if (signal?.aborted) throw abortError(signal);
 
     const logLines: string[] = [];
 
@@ -346,7 +354,18 @@ async function runEngine<T>(
             for (const [name, data] of Object.entries(files)) {
                 const path = stagedPath(name);
                 mkdirParents(FS, path);
-                FS.writeFile(path, data);
+                try {
+                    FS.writeFile(path, data);
+                } catch (err) {
+                    // MEMFS throws a bare ErrnoError (no message) when a path
+                    // segment is already staged as a file, or vice versa; name
+                    // the colliding key instead.
+                    throw new Error(
+                        `Cannot stage extra file ${JSON.stringify(name)}: ` +
+                            `its path collides with another files entry`,
+                        { cause: err },
+                    );
+                }
             }
         }
         // Staged LAST so the documented scene source always wins: a `files`
@@ -398,7 +417,21 @@ async function runEngine<T>(
         // Collect runs with the instance still alive: it copies the output
         // PNG(s) into fresh, non-shared buffers (callers must never hold a
         // view into growable, shared wasm memory) before `finally` reaps it.
-        return collect(FS);
+        try {
+            return collect(FS);
+        } catch (err) {
+            // collect's own Errors (the animation frame-count check) carry
+            // their message. Anything else is MEMFS's ErrnoError (not an Error,
+            // no message) from reading an output POV-Ray never wrote: it exited
+            // 0 but something in `args` (an INI file, say) disabled the output.
+            if (err instanceof Error) throw err;
+            throw new PovrayError(
+                "POV-Ray exited with code 0 but wrote no output image " +
+                    "(an option in `args` may have disabled file output)",
+                0,
+                logLines.join("\n"),
+            );
+        }
     } finally {
         signal?.removeEventListener("abort", onSignalAbort);
         // Safety net on every exit path: a no-op after a clean EXIT_RUNTIME

@@ -25,6 +25,8 @@ test('every example scene is ready (the gate is not over-eager)', () => {
 
 test('ready:true returns reason:null for a minimal complete scene', () => {
   assert.deepEqual(validateScene('#version 3.8;\nbox{}'), { ready: true, reason: null });
+  // POV-Ray accepts whitespace between '#' and the directive keyword.
+  assert.deepEqual(validateScene('#  version 3.8;\nbox{}'), { ready: true, reason: null });
 });
 
 test("'empty' covers blank, whitespace-only, and (closed) comment-only buffers", () => {

@@ -151,6 +151,24 @@ test('a scene that fails to parse maps PovrayError exit code to the process (exi
   assert.match(r.stderr.toString(), /render failed \(exit code \d+\)/);
 });
 
+test('exit 0 with no output image is a generic error (exit 1), not a render status', () => {
+  const dir = tmp();
+  try {
+    // File mode stages the sibling INI into /work; naming it after `--` turns
+    // the output off, so the wrapper rejects with a PovrayError whose exitCode
+    // is 0. That must not be forwarded as a (successful) process status.
+    writeFileSync(join(dir, 'scene.pov'), SCENE);
+    writeFileSync(join(dir, 'noout.ini'), 'Output_To_File=off\n');
+    const r = runCli([join(dir, 'scene.pov'), '-w', '16', '-h', '12', '--', '/work/noout.ini']);
+    assert.equal(r.status, 1);
+    const err = r.stderr.toString();
+    assert.match(err, /povrayer: POV-Ray exited with code 0 but wrote no output image/);
+    assert.doesNotMatch(err, /render failed \(exit code/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('a write failure after a successful render is a generic error (exit 1)', () => {
   const dir = tmp();
   try {
@@ -177,6 +195,9 @@ test('--help documents the animation flags and naming', () => {
   assert.match(help, /--frames N/, '--help should document --frames');
   assert.match(help, /--clock-initial/, '--help should document --clock-initial');
   assert.match(help, /--clock-final/, '--help should document --clock-final');
+  // The `--` example must only name switches the wrapper actually lets through.
+  assert.match(help, /\+K0\.5/, '--help should show a plain clock as a pass-through example');
+  assert.doesNotMatch(help, /\+KFF/, '--help must not advertise a reserved animation switch');
 });
 
 test("'-o -' with --frames is a usage error before any render (exit 2)", () => {

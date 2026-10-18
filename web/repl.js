@@ -386,14 +386,14 @@ const tab = createTabState({
 
 // Prints only non-defaults: `idle · 320×240`, gaining `· q 9 · aa 0.3 ·
 // threads 4 · args +UA` only when set. Busy: `rendering… · 320×240`, with a
-// percent suffix only once a percent event has arrived (rare today; the TTY
-// flushes percent lines at trace completion).
+// percent suffix once percents are streaming (the console emits one line per
+// progress step during tracing, so any render past a few hundred pixels gets
+// there).
 function updateStatus() {
   statusStamp = performance.now();
   const busy = abortCtl !== null;
   // Bare head carries no trailing ellipsis: the busy-state ::after owns the
   // animated one, so "rendering…" would render a double "rendering……".
-  /* c8 ignore next -- renderPct only reaches >=0 after a second progress event; the dist emits one progress burst per render, so the determinate percent in the head is unreachable */
   const head = busy ? (renderPct >= 0 ? `rendering ${renderPct}%` : 'rendering') : 'idle';
   const parts = [head, `${settings.width}×${settings.height}`];
   if (settings.quality !== undefined) parts.push(`q ${settings.quality}`);
@@ -424,7 +424,9 @@ function flashHint(text) {
 // (radiosity scenes flush one pretrace, 0% or 1%) would otherwise freeze a thin
 // sliver for the whole trace, reading as hung. So the first percent only
 // primes; the second (and beyond) drives the determinate width. Percents are
-// clamped monotonic because render threads interleave their status lines.
+// clamped monotonic because render threads interleave their status lines; an
+// animation resets the clamp per frame (see runAnimRender), since each frame's
+// percents start over from 0.
 function startProgress() {
   renderPct = -1;
   renderPrimed = false;
@@ -447,14 +449,12 @@ function handleRenderEvent(ev) {
     renderPrimed = true;
     return; // one lone percent never leaves the sweep; wait for a second
   }
-  /* c8 ignore start -- the dist emits one progress burst per render, so the second-percent determinate path never runs */
   if (ev.percent <= renderPct) return; // monotonic clamp
   renderPct = ev.percent;
   progressEl.classList.add('determinate');
   progressEl.style.setProperty('--pct', String(renderPct));
   // Live-region hygiene: the bar moves freely, the text at most once per second.
   if (performance.now() - statusStamp >= 1000) updateStatus();
-  /* c8 ignore stop -- closes the ignore block opened above */
 }
 
 // --- SDL vocabulary (completion pool + include manifest) -----------------------
@@ -661,8 +661,15 @@ async function runAnimRender(frames) {
       signal: abortCtl.signal,
       keepFrames: false,
       onEvent: (ev) => {
-        if (ev.kind === 'frame') pendingCap.textContent = `rendering frame ${ev.index}/${ev.total}`;
-        else handleRenderEvent(ev);
+        if (ev.kind === 'frame') {
+          pendingCap.textContent = `rendering frame ${ev.index}/${ev.total}`;
+          // Each frame's percents restart from 0; without this the monotonic
+          // clamp would pin the bar (and the status head) at 100% from frame 2
+          // onward. Stays primed: the next frame's first percent drives the bar.
+          renderPct = -1;
+        } else {
+          handleRenderEvent(ev);
+        }
       },
     };
     if (settings.quality !== undefined) opts.quality = settings.quality;
@@ -1233,7 +1240,8 @@ function dispatchCommand(text) {
     }
 
     // Raw POV-Ray switches, whitespace-split into the wrapper's opts.args
-    // pass-through (+UA, +AM2, +K0.5, ...). No arg clears.
+    // pass-through (+UA, +AM2, +K0.5, ...; the wrapper rejects the input,
+    // output, and animation-range switches it owns). No arg clears.
     case 'args': {
       if (!arg) {
         settings.args = undefined;
@@ -1388,8 +1396,9 @@ function submitInput() {
     dispatchCommand(text);
     return;
   }
+  // Not persisted here: runRender's finally saves the SETTLED scene, so a
+  // reload mid-render never restores an entry that would have rolled back.
   entries.push({ source: text });
-  saveState();
   runRender({ rollback: () => entries.pop(), echoNode, entrySource: text });
 }
 
@@ -1455,6 +1464,9 @@ editorLink.addEventListener('click', (e) => {
   // The static href is a bare ./index.html fallback (middle-click/copy still
   // reach the editor); a normal click encodes the scene first, then navigates.
   e.preventDefault();
+  // Inert mid-render, like every other mutating path: navigating away would
+  // abandon the render with a fresh entry still un-rolled-back.
+  if (input.readOnly) return;
   void openInEditor().catch(() => {
     location.href = editorLink.href;
   });

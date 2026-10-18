@@ -16,8 +16,9 @@
 // throw off the balance and a `#version` inside a comment or string can't
 // falsely satisfy the version check.
 
-/** Anchored at a chosen index (lastIndex) to spot a `#version` directive in code. */
-const VERSION_RE = /version(?!\w)/y;
+/** Anchored at a chosen index (lastIndex) to spot a `#version` directive in code.
+ * POV-Ray allows whitespace between `#` and the keyword, so `#  version` counts. */
+const VERSION_RE = /\s*version(?!\w)/y;
 
 /** Opening bracket -> the closer we expect for it. Angle brackets are absent on
  * purpose: `<` and `>` are both vector delimiters AND comparison operators, so
