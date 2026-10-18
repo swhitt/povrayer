@@ -148,7 +148,7 @@ RUN mkdir -p /out && cd povray && em++ \
       --embed-file distribution/include@/usr/share/povray-3.8/include
 
 # Arch-independent JS output; same native-platform treatment as the builder.
-FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a AS wrapper-build
+FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS wrapper-build
 WORKDIR /wrapper
 # package-lock.json is committed to the repo; npm ci requires it,
 # and BuildKit fails the COPY without it.
@@ -162,7 +162,7 @@ COPY --from=builder /out/povray.mjs /out/povray.wasm /
 COPY --from=wrapper-build /wrapper/dist/index.js /wrapper/dist/index.d.ts /
 COPY --from=wrapper-build /wrapper/package.json /package.json
 
-FROM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a AS runtime
+FROM node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS runtime
 LABEL org.opencontainers.image.source="https://github.com/swhitt/povrayer" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
       org.opencontainers.image.description="POV-Ray 3.8 compiled to WebAssembly (pthreads, wasm EH)"

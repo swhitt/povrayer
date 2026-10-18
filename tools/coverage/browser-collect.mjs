@@ -4,8 +4,9 @@
 // driver into POVRAYER_COVERAGE_DIR for tools/coverage to convert + merge.
 //
 // playwright is deliberately pinned to 1.61.1: its Chromium reports V8 function
-// coverage for every function in a module, while 1.62.1 and 1.64.0 under-report
-// (web/ui.js 168 functions -> 167 found / 115 hit, web/repl.js 61 -> 51 / 7),
+// coverage for every function in a module, while 1.62.1, 1.64.0 and 1.64.1
+// under-report (web/ui.js 168 functions -> 167 found / 115 hit, web/repl.js
+// 61 -> 51 / 7; on 1.64.1 repl.js reported 9 of 54 functions hit),
 // which drops the 100% gate below threshold even though the same tests pass and
 // line coverage is unchanged. The tests are not at fault; the dumps themselves
 // are missing the functions. Re-check on a future Playwright before unpinning:
