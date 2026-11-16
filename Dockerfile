@@ -1,11 +1,11 @@
 # syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
-ARG EMSDK_VERSION=6.0.12
-ARG POVRAY_COMMIT=8f9ace11e6587d67c96a3bdfe67893ffbcd5c95e
-ARG POVRAY_SHA256=aa04553f7899cebdb1e6de6e40eedf46401c15aad03db9fcf3c75525e368b6d2
+ARG EMSDK_VERSION=7.0.0
+ARG POVRAY_COMMIT=6f9408566a12f12a97642d113e1278693c6f6099
+ARG POVRAY_SHA256=ab4e3debd81f68808beac46ecd55d30485de466071b3ce75d6cf98dcf6005033
 
 # --platform=$BUILDPLATFORM: the wasm output is arch-independent, so this stage
 # always runs natively on the build host; only the runtime stage is per-platform.
-FROM --platform=$BUILDPLATFORM emscripten/emsdk:${EMSDK_VERSION}@sha256:77638e6c215a65f25a704c0c831d5c2463a8c0468a58c6cb82489dbe621dfa05 AS builder
+FROM --platform=$BUILDPLATFORM emscripten/emsdk:${EMSDK_VERSION}@sha256:6bd7aef93408b10bf7b36642cb7c91119b302f720b9ec2d20439f73cf07fe894 AS builder
 ARG POVRAY_COMMIT
 ARG POVRAY_SHA256
 
@@ -148,7 +148,7 @@ RUN mkdir -p /out && cd povray && em++ \
       --embed-file distribution/include@/usr/share/povray-3.8/include
 
 # Arch-independent JS output; same native-platform treatment as the builder.
-FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS wrapper-build
+FROM --platform=$BUILDPLATFORM node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS wrapper-build
 WORKDIR /wrapper
 # package-lock.json is committed to the repo; npm ci requires it,
 # and BuildKit fails the COPY without it.
@@ -162,7 +162,7 @@ COPY --from=builder /out/povray.mjs /out/povray.wasm /
 COPY --from=wrapper-build /wrapper/dist/index.js /wrapper/dist/index.d.ts /
 COPY --from=wrapper-build /wrapper/package.json /package.json
 
-FROM node:26-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb26ab8be9a517dbd5 AS runtime
+FROM node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS runtime
 LABEL org.opencontainers.image.source="https://github.com/swhitt/povrayer" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
       org.opencontainers.image.description="POV-Ray 3.8 compiled to WebAssembly (pthreads, wasm EH)"
