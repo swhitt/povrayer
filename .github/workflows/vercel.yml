@@ -47,9 +47,9 @@ jobs:
           cache-from: type=gha
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: 26.12.0
+          node-version: 26.13.1
       - name: Install Vercel CLI
-        run: npm install --global vercel@63.1.2
+        run: npm install --global vercel@65.16.0
       - name: Pull Vercel project settings (production)
         run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
       - name: Build (assembles _site from dist/ + web/ via buildCommand)

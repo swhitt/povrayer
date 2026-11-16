@@ -55,6 +55,10 @@ export const RENDER_TIERS = [
 
 export const FEATURED_EXAMPLE_NAMES = [
   'csg-die',
+  'orbital-reliquary',
+  'ribbon-atrium',
+  'tidal-observatory',
+  'luminous-grove',
   'steinmetz',
   'lathe-vase',
   'sourced-pawns',
@@ -130,6 +134,10 @@ const FEATURED_EXAMPLE_SET = new Set(FEATURED_EXAMPLE_NAMES);
  * @type {Record<string, { difficulty: string, renderTier: string }>}
  */
 const EXAMPLE_META = {
+  'orbital-reliquary': { difficulty: 'intermediate', renderTier: 'fast' },
+  'ribbon-atrium': { difficulty: 'advanced', renderTier: 'fast' },
+  'tidal-observatory': { difficulty: 'intermediate', renderTier: 'fast' },
+  'luminous-grove': { difficulty: 'intermediate', renderTier: 'fast' },
   'csg-die': { difficulty: 'intro', renderTier: 'fast' },
   'sunset-sea': { difficulty: 'intro', renderTier: 'fast' },
   isosurface: { difficulty: 'advanced', renderTier: 'heavy' },
@@ -2459,6 +2467,304 @@ object { GearB rotate z * (10 - clock * 360 * Na/Nb)  translate < PitchB, 0, 0> 
   finish { ambient 0.1 diffuse 0.4 specular 0.5 roughness 0.04 metallic } }
 cylinder { <-PitchA, 0, -0.3>, <-PitchA, 0, 2.8>, 0.40 texture { AxleTex } }
 cylinder { < PitchB, 0, -0.3>, < PitchB, 0, 2.8>, 0.40 texture { AxleTex } }
+`,
+  },
+  {
+    name: 'orbital-reliquary',
+    title: 'Orbital reliquary',
+    category: 'modeling',
+    tags: ['astronomy', 'orrery', 'brass', 'procedural', 'sphere'],
+    description: 'A patinated celestial globe suspended inside engraved brass orbits',
+    author: 'povrayer',
+    sourceUrl: '',
+    license: 'CC0-1.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `#version 3.8;
+// A miniature astronomical instrument in a dark exhibition room.
+#declare OrbitTilt = 28; // 0..75
+#declare MoonCount = 11; // 3..20
+#declare CoreSize = 1.05; // 0.5..1.4
+
+global_settings { assumed_gamma 1 max_trace_level 8 }
+camera { location <6.5,4,-9.5> look_at <0,1.5,0> angle 39 right x*image_width/image_height }
+background { rgb <0.012,0.026,0.033> }
+light_source { <-5,7,-6> rgb <1.5,1.12,0.76> area_light x*3,z*3,3,3 adaptive 1 }
+light_source { <5,5,2> rgb <0.22,0.85,1.2> area_light x*2,y*2,3,3 adaptive 1 }
+light_source { <0,6,-2> rgb <0.38,0.48,0.6> shadowless }
+#declare Brass = texture { pigment { rgb <0.68,0.38,0.12> } finish { diffuse 0.5 metallic specular 0.85 roughness 0.018 reflection 0.22 } }
+#declare Stone = texture { pigment { rgb <0.035,0.08,0.095> } finish { diffuse 0.7 specular 0.28 roughness 0.06 } }
+plane { y,-0.06 texture { Stone } }
+cylinder { <0,0,0>,<0,0.35,0>,2.05 texture { Stone } }
+cylinder { <0,0.35,0>,<0,0.40,0>,1.98 texture { Brass } }
+cylinder { <0,0.40,0>,<0,0.58,0>,1.87 texture { Stone } }
+cylinder { <0,0.58,0>,<0,1.4,0>,0.08 texture { Brass } }
+#declare Center = <0,2.1,0>;
+sphere { Center,CoreSize
+ pigment { bozo turbulence 0.25 color_map { [0 rgb <0.025,0.12,0.19>] [0.42 rgb <0.08,0.42,0.47>] [0.48 rgb <0.7,0.77,0.61>] [0.54 rgb <0.06,0.33,0.36>] [1 rgb <0.015,0.1,0.16>] } scale 0.5 }
+ normal { bumps 0.06 scale 0.08 }
+ finish { diffuse 0.75 specular 0.65 roughness 0.025 reflection 0.08 }
+}
+union {
+ torus { 1.65,0.035 texture { Brass } }
+ torus { 1.70,0.012 texture { Brass } }
+ #for (I,0,71)
+   #local A=I*5;
+   cylinder { <1.70,0,0>,<1.70+select(mod(I,6)-0.5,0.15,0.06),0,0>,0.008 rotate y*A texture { Brass } }
+ #end
+ rotate z*OrbitTilt rotate x*18 translate Center
+}
+union {
+ torus { 1.45,0.025 texture { Brass } }
+ #for (I,0,MoonCount-1)
+  sphere { <1.45*cos(2*pi*I/MoonCount),0,1.45*sin(2*pi*I/MoonCount)>,0.08+0.035*mod(I,3) texture { Brass } }
+ #end
+ rotate x*75 rotate z*-32 translate Center
+}
+torus { 1.34,0.018 rotate x*90 rotate y*25 translate Center texture { Brass } }
+// Fine engraved circles echo the instrument on its pedestal.
+#for (I,0,3)
+ torus { 1.3+I*0.15,0.008 translate y*0.586 texture { Brass } }
+#end
+`,
+  },
+  {
+    name: 'ribbon-atrium',
+    title: 'Ribbon atrium',
+    category: 'generative',
+    tags: ['ribbon', 'mesh', 'twist', 'sculpture', 'triangles'],
+    description:
+      'Teal and coral ribbons twist through a ruled-surface sculpture with fine metallic edges',
+    author: 'povrayer',
+    sourceUrl: '',
+    license: 'CC0-1.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `#version 3.8;
+// Folded paper architecture: a family of ruled surfaces made from triangles.
+#declare Twist = 140; // 20..180
+#declare Ribbons = 9; // 5..15
+#declare Spread = 0.32; // 0.2..0.5
+
+global_settings { assumed_gamma 1 }
+camera { location <7,4,-10> look_at <0,2.4,0> angle 39 right x*image_width/image_height }
+background { rgb <0.025,0.06,0.065> }
+fog { distance 45 color rgb <0.025,0.06,0.065> }
+light_source { <-4,9,-6> rgb <1.0,0.9,0.78> area_light x*4,z*4,4,4 adaptive 1 }
+light_source { <5,4,-2> rgb <0.15,0.25,0.3> shadowless }
+light_source { <0,7,5> rgb <0.4,0.35,0.3> }
+plane { y,0 pigment { rgb <0.045,0.10,0.11> } finish { ambient 0.15 diffuse 0.65 } }
+cylinder { <0,0,0>,<0,0.20,0>,2.1 pigment { rgb <0.18,0.27,0.27> } finish { diffuse 0.7 specular 0.2 } }
+#macro Point(T,Side,K)
+ #local Angle=radians(T*Twist-0.5*Twist);
+ #local Radius=(K-(Ribbons-1)/2)*Spread+Side*0.14;
+ <Radius*cos(Angle),0.23+T*4.4,Radius*sin(Angle)+0.25*sin(T*pi*2)>
+#end
+#for (K,0,Ribbons-1)
+ #local Mix=K/(Ribbons-1);
+ mesh {
+  #for (J,0,63)
+   #local T=J/64;
+   #local U=(J+1)/64;
+   triangle { Point(T,-1,K),Point(T,1,K),Point(U,1,K) }
+   triangle { Point(T,-1,K),Point(U,1,K),Point(U,-1,K) }
+  #end
+  pigment { rgb <0.08,0.40,0.43>*(1-Mix)+<0.95,0.28,0.15>*Mix }
+  finish { ambient 0.06 diffuse 0.8 specular 0.55 roughness 0.04 }
+  double_illuminate
+ }
+ // Fine metallic edges reveal every fold against neighboring ribbons.
+ #for (Side,-1,1,2)
+  #for (J,0,63)
+   cylinder { Point(J/64,Side,K),Point((J+1)/64,Side,K),0.012
+    pigment { rgb <0.89,0.70,0.37> }
+    finish { diffuse 0.6 specular 0.6 roughness 0.025 }
+   }
+  #end
+ #end
+#end
+`,
+  },
+  {
+    name: 'tidal-observatory',
+    title: 'Tidal observatory',
+    category: 'environment',
+    tags: ['architecture', 'ocean', 'sun', 'csg', 'reflection'],
+    description: 'A sunlit circular sanctuary rises from tidal water beneath an amber disk',
+    author: 'povrayer',
+    sourceUrl: '',
+    license: 'CC0-1.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `#version 3.8;
+// An ocean observatory: monumental circles, small doors, and an amber sun.
+#declare SunHeight = 0.8; // -1..4
+#declare RingCount = 6; // 3..9
+#declare WaterRipples = 0.07; // 0..0.4
+
+global_settings { assumed_gamma 1 max_trace_level 8 }
+camera { location <8,5.5,-12> look_at <0,1.15,1> angle 43 right x*image_width/image_height }
+background { rgb <0.46,0.65,0.68> }
+light_source { <-8,9,-5> rgb <1.4,0.94,0.6> area_light x*3,z*3,3,3 adaptive 1 }
+light_source { <5,8,-3> rgb <0.38,0.64,0.72> shadowless }
+#declare Plaster = texture { pigment { rgb <0.82,0.72,0.53> } normal { bumps 0.05 scale 0.08 } finish { ambient 0.07 diffuse 0.8 } }
+plane { y,-0.15 pigment { rgb <0.035,0.24,0.28> } normal { ripples WaterRipples frequency 3 scale 3 } finish { diffuse 0.25 reflection {0.22,0.55} specular 0.6 roughness 0.025 } }
+#for (I,0,RingCount-1)
+ #local R=3.6-I*0.38;
+ cylinder { <0,0.04*I,0>,<0,0.15+0.11*I,0>,R texture { Plaster } }
+#end
+// Two pierced walls frame the inner sanctum.
+difference {
+ cylinder { <0,0.5,0>,<0,2.4,0>,2.08 }
+ cylinder { <0,0.49,0>,<0,2.41,0>,1.85 }
+ #for (I,0,11)
+  union {
+   box { <-0.22,0.45,-2.4>,<0.22,1.5,-1.5> }
+   cylinder { <0,1.5,-2.4>,<0,1.5,-1.5>,0.22 }
+   rotate y*I*30
+  }
+ #end
+ texture { Plaster }
+}
+cylinder { <0,0.6,0>,<0,0.75,0>,1.3 texture { Plaster } }
+sphere { <0,1.35,0>,0.6 pigment { rgb <0.18,0.34,0.33> } finish { metallic specular 0.8 roughness 0.02 reflection 0.35 diffuse 0.3 } }
+// An offset entrance bridge gives the circular composition a directional axis.
+box { <-0.42,0.07,-7>,<0.42,0.23,-2.4> texture { Plaster } }
+#for (I,0,6)
+ cylinder { <-0.55,0.23,-2.8-I*0.55>,<-0.55,0.65,-2.8-I*0.55>,0.035 texture { Plaster } }
+ cylinder { <0.55,0.23,-2.8-I*0.55>,<0.55,0.65,-2.8-I*0.55>,0.035 texture { Plaster } }
+#end
+// Large distant disk: no light source needed for its luminous surface.
+sphere { <-9,SunHeight,28>,3.6 pigment { rgb <1,0.38,0.13> } finish { emission 0.65 diffuse 0 } no_shadow }
+fog { fog_type 2 distance 95 color rgb <0.48,0.64,0.65> fog_offset 0 fog_alt 0.5 }
+`,
+  },
+  {
+    name: 'luminous-grove',
+    title: 'Luminous grove',
+    category: 'generative',
+    tags: ['mushrooms', 'botanical', 'glow', 'emission', 'procedural'],
+    description:
+      'Sculpted mushroom caps, luminous radial gills and drifting spores on a botanical plinth',
+    author: 'povrayer',
+    sourceUrl: '',
+    license: 'CC0-1.0',
+    animated: false,
+    frames: null,
+    fps: null,
+    source: `#version 3.8;
+// Luminous grove: sculpted caps, radial gills and tiny spores.
+#declare Glow = 1.4; // 0.2..3
+#declare CapSpread = 1.0; // 0.7..1.3
+#declare SporeCount = 34; // 0..64
+#declare ViewAngle = 0; // -30..30
+
+global_settings { assumed_gamma 1.0 max_trace_level 6 }
+background { color rgb <0.008,0.022,0.035> }
+fog { distance 28 color rgb <0.008,0.022,0.035> }
+camera {
+  location vrotate(<5.5,3.6,-8.7>,y*ViewAngle)
+  look_at <0,1.5,0> angle 38
+  right x*image_width/image_height
+}
+light_source { <-4,7,-4> color rgb <0.48,0.80,1.0> area_light <2,0,0>,<0,0,2>,3,3 adaptive 1 }
+light_source { <4,5,3> color rgb <1.0,0.28,0.12>*1.8 shadowless }
+light_source { <0,2.1,-1.8> color rgb <0.12,0.9,0.8>*Glow shadowless }
+
+#macro Mushroom(Pos, Size, Tint)
+union {
+  sphere_sweep {
+    cubic_spline 6,
+    <0,-0.2,0>,0.20, <0,0,0>,0.18,
+    <-0.12,0.7,0>,0.13, <0.10,1.5,0>,0.12,
+    <0,2.25,0>,0.20, <0,2.50,0>,0.24
+    pigment { color rgb <0.55,0.72,0.66> }
+    finish { diffuse 0.65 phong 0.45 }
+  }
+  intersection {
+    sphere { 0,1 scale <1.12*CapSpread,0.57,1.12*CapSpread> translate y*2.20 }
+    box { <-2,2.16,-2>,<2,3,2> }
+    pigment {
+      gradient y
+      color_map {
+        [0 color rgb <0.10,0.24,0.26>]
+        [0.15 color rgb Tint*0.48]
+        [0.65 color rgb Tint]
+        [1 color rgb Tint*0.65]
+      }
+      scale 0.65 translate y*2.16
+    }
+    finish { diffuse 0.7 phong 0.7 phong_size 55 }
+  }
+  sphere {
+    0,1 scale <1.08*CapSpread,0.07,1.08*CapSpread> translate y*2.16
+    pigment { color rgb <0.06,0.48,0.44> }
+    finish { emission <0.03,0.35,0.28>*Glow diffuse 0.3 }
+  }
+  torus {
+    1.075*CapSpread,0.018 translate y*2.185
+    pigment { color rgb <0.25,1,0.75> }
+    finish { emission <0.18,0.8,0.50>*Glow diffuse 0.2 }
+  }
+  #for (G,0,35)
+    cylinder {
+      <0.20,2.13,0>,<1.04*CapSpread,2.13,0>,0.012
+      pigment { color rgb <0.26,0.9,0.72> }
+      finish { emission <0.10,0.45,0.3>*Glow diffuse 0.3 }
+      rotate y*G*10
+    }
+  #end
+  #local R = seed(17);
+  #for (S,0,30)
+    #local A = rand(R)*2*pi;
+    #local Rad = sqrt(rand(R))*0.95;
+    sphere {
+      <cos(A)*Rad*CapSpread,2.20+0.57*sqrt(1-Rad*Rad/(1.12*1.12)),sin(A)*Rad*CapSpread>,0.022+rand(R)*0.024
+      pigment { color rgb <1,0.86,0.64> }
+      finish { emission 0.16 diffuse 0.8 }
+    }
+  #end
+  scale Size translate Pos
+}
+#end
+
+Mushroom(<0,0,0>,1.15,<1.0,0.24,0.22>)
+Mushroom(<-1.5,0,-0.45>,0.66,<0.50,0.28,0.78>)
+Mushroom(<1.25,0,-0.8>,0.52,<1.0,0.50,0.12>)
+Mushroom(<0.5,0,1.05>,0.78,<0.26,0.52,0.70>)
+Mushroom(<-0.8,0,-1.25>,0.30,<0.95,0.45,0.20>)
+
+// A floating botanical specimen, with a bevelled display plinth.
+cylinder {
+  <0,-0.26,0>,<0,-0.04,0>,2.55
+  pigment { color rgb <0.035,0.065,0.070> }
+  finish { diffuse 0.6 reflection 0.10 phong 0.5 }
+}
+torus { 2.51,0.045 translate y*-0.05 pigment { color rgb <0.12,0.30,0.28> } finish { phong 0.7 } }
+#declare GrassRand = seed(23);
+#for (I,0,110)
+  #local A = rand(GrassRand)*2*pi;
+  #local R = sqrt(rand(GrassRand))*2.35;
+  cone {
+    <cos(A)*R,-0.02,sin(A)*R>,0.028,
+    <cos(A)*R+0.05,0.08+rand(GrassRand)*0.16,sin(A)*R>,0
+    pigment { color rgb <0.12,0.32+rand(GrassRand)*0.12,0.26> }
+    finish { diffuse 0.7 }
+  }
+#end
+#declare SporeRand = seed(42);
+#for (I,1,int(SporeCount))
+  sphere {
+    <(rand(SporeRand)-0.5)*4.4,0.4+rand(SporeRand)*3.0,(rand(SporeRand)-0.5)*3>,0.012+rand(SporeRand)*0.018
+    pigment { color rgb <0.35,1,0.75> }
+    finish { emission <0.25,1,0.6>*Glow diffuse 0 }
+    no_shadow
+  }
+#end
+plane { y,-0.32 pigment { color rgb <0.012,0.030,0.040> } finish { diffuse 0.65 reflection 0.12 } }
 `,
   },
   ...SOURCED_EXAMPLES,

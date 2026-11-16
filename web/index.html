@@ -31,7 +31,7 @@
     />
     <meta
       property="og:image:alt"
-      content="The povrayer editor: a sunset seascape ray-traced live in the browser"
+      content="The povrayer editor: a sculptural glass orb ray-traced in the browser"
     />
     <meta name="twitter:card" content="summary_large_image" />
     <link
@@ -56,6 +56,7 @@
            /povrayer/ subpath (200, no redirect, where a bare /repl is a 404),
            `python3 -m http.server`, and file://. See .github/workflows/pages.yml.
            Do not "tidy" these to /repl and /turbo. -->
+      <span class="workspace-note">Ray tracing, right here.</span>
       <nav aria-label="povrayer surfaces">
         <a href="./repl.html">repl</a>
         <a href="./turbo.html">turbo</a>
@@ -90,6 +91,10 @@
     </div>
     <main>
       <section id="editor-pane" aria-label="scene editor">
+        <div class="pane-heading">
+          <h2>Scene source</h2>
+          <span>POV-Ray SDL</span>
+        </div>
         <div id="example-field">
           <span id="example-label">example</span>
           <button
@@ -266,23 +271,6 @@
           replaced your scene <span aria-hidden="true">·</span>
           <button id="restore-btn" type="button" class="linkish">restore</button>
         </p>
-        <!-- Scene params: auto-generated sliders, one per top-level
-             `#declare NAME = <number>`. A labeled disclosure so the scene's own
-             knobs read as scene CONTENT, set apart from the app's render settings
-             below. ui.js fills #sliders, sets the count, hides the region when the
-             scene has none, and starts it collapsed when there are many.
-             (Alt+drag a number in the editor scrubs the same literal.) -->
-        <details id="scene-params" hidden>
-          <summary>
-            <span class="disclosure-label">scene params</span>
-            <span id="scene-params-count" class="disclosure-count"></span>
-          </summary>
-          <div
-            id="sliders"
-            aria-label="scene parameter sliders"
-            title="Drag to adjust; add a `// min..max` comment after a #declare to set its slider range"
-          ></div>
-        </details>
         <div id="controls">
           <span class="ctl-group">
             <span class="seg-group" id="mode-toggle" role="group" aria-label="render mode">
@@ -366,6 +354,23 @@
             </button>
           </span>
         </div>
+        <!-- Scene params: auto-generated sliders, one per top-level
+             `#declare NAME = <number>`. A labeled disclosure so the scene's own
+             knobs read as scene CONTENT, set apart from the app's render settings
+             below. ui.js fills #sliders, sets the count, hides the region when the
+             scene has none, and starts it collapsed when there are many.
+             (Alt+drag a number in the editor scrubs the same literal.) -->
+        <details id="scene-params" hidden>
+          <summary>
+            <span class="disclosure-label">scene params</span>
+            <span id="scene-params-count" class="disclosure-count"></span>
+          </summary>
+          <div
+            id="sliders"
+            aria-label="scene parameter sliders"
+            title="Drag to adjust; add a `// min..max` comment after a #declare to set its slider range"
+          ></div>
+        </details>
         <details id="advanced">
           <summary>advanced</summary>
           <div class="advanced-body">
@@ -462,6 +467,10 @@
         title="drag to resize · double-click to reset"
       ></div>
       <section id="output-pane" aria-label="render output">
+        <div class="pane-heading">
+          <h2>Render preview</h2>
+          <span>On your device</span>
+        </div>
         <div id="status-row">
           <div id="status" role="status" data-state="idle">no render yet</div>
           <span id="status-spinner" class="spinner" aria-hidden="true" hidden></span>

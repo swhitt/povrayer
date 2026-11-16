@@ -8,8 +8,8 @@
      which web/orb.js owns). Everything else is grey. This is why turbo's
      handoff button is NOT accent: it navigates, it does not render.
    - Square corners everywhere; the .orb brand mark is the only circle.
-   - The rendered image is the hero: the only shadow, the only textured
-     (checker mat) background.
+   - The rendered image is the hero: its shadow lifts it off the dark viewing
+     stage, and its checker mat identifies transparent pixels.
    - Every transition/animation declaration lives inside
      @media (prefers-reduced-motion: no-preference); outside it, states
      still apply, instantly. */
@@ -204,6 +204,49 @@ h1 .orb {
 
 .brand-page {
   color: var(--dim);
+}
+
+body.ui > header {
+  min-height: 72px;
+  padding: 18px 24px;
+  gap: 20px;
+}
+
+body.ui .brand-page {
+  display: inline-block;
+  margin-left: 10px;
+  padding-left: 14px;
+  border-left: 1px solid var(--border-strong);
+  font-size: var(--fs-chrome);
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.workspace-note {
+  color: var(--dim);
+  font-size: var(--fs-out);
+}
+
+body.ui header nav {
+  gap: 6px;
+}
+
+body.ui header nav a {
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  color: var(--text);
+  text-decoration: none;
+}
+
+body.ui header nav a:hover {
+  border-color: var(--border-strong);
+  background: var(--panel);
+}
+
+body.ui > footer {
+  padding: 12px 24px calc(12px + env(safe-area-inset-bottom, 0px));
 }
 
 footer {
@@ -528,18 +571,47 @@ body.ui {
   flex-direction: column; /* pins the footer to the viewport bottom */
 }
 
+body.ui #onboard {
+  padding-inline: 24px;
+  background: transparent;
+}
+
 body.ui main {
   flex: 1;
   display: grid;
   grid-template-columns: 1fr;
   gap: 16px;
-  padding: 16px;
+  padding: 24px;
 }
 
 /* Grid items default to min-width auto (= min-content), so a long example
    title in the select would push the column past a narrow viewport. */
 body.ui main > * {
   min-width: 0;
+}
+
+.pane-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pane-heading h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.pane-heading > span {
+  color: var(--dim);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 /* ---- example browser (editable-combobox popover replacing the select) ----
@@ -553,16 +625,17 @@ body.ui main > * {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   /* min-height, not a hard height: the @media (pointer: coarse) block grows
      #example-trigger to a 44px tap target, and a locked 28px row would clip it
      and eat the margin-bottom. align-items:center keeps the taller row centered. */
   min-height: 28px;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
 
 #example-label {
   color: var(--dim);
+  font-size: var(--fs-chrome);
 }
 
 /* Secondary-button treatment; truncates a long scene title like the old select. */
@@ -596,9 +669,11 @@ body.ui main > * {
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
-  margin-bottom: 8px;
-  padding: 4px 0;
-  border-block: 1px solid var(--border);
+  padding: 8px 10px;
+  margin: 0;
+  border: 1px solid var(--border-strong);
+  border-bottom: 0;
+  background: var(--panel);
 }
 
 .scene-dirty {
@@ -620,10 +695,21 @@ body.ui main > * {
   font-size: var(--fs-chrome);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  border-color: transparent;
 }
 
 /* Opaque popover panel: strong hairline, square, no shadow. z-index clears the
    textarea's z-index:1. */
+body.ui #example-trigger,
+body.ui #gallery-btn {
+  min-height: 32px;
+}
+
+body.ui #scene-toolbar button:hover:not(:disabled),
+body.ui #scene-toolbar button:focus-visible {
+  border-color: var(--border-strong);
+}
+
 #example-browser {
   position: absolute;
   top: calc(100% + 4px);
@@ -862,7 +948,7 @@ body.ui main > * {
 #editor-wrap {
   display: flex;
   align-items: stretch;
-  background: var(--panel);
+  background: #11151a;
   border: 1px solid var(--border-strong);
 }
 
@@ -877,6 +963,7 @@ body.ui main > * {
   line-height: 1.45;
   overflow: hidden; /* scroll position driven from the textarea via JS */
   user-select: none;
+  background: var(--panel);
 }
 
 #gutter:empty {
@@ -1289,9 +1376,9 @@ body.ui main > * {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
-  margin-top: 8px;
-  padding: 8px 0;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 14px 0;
   border-block: 1px solid var(--border);
 }
 
@@ -1387,6 +1474,22 @@ body.ui main > * {
    short, calm row (these matter every few renders to a power user, ~never to a
    newcomer). ui.js persists the open state, so a power user opens it once and it
    stays. Same quiet dim marker as the log disclosure. */
+body.ui #controls .actions {
+  flex: 1 0 100%;
+  margin-left: 0;
+}
+
+body.ui #render-btn {
+  flex: 1;
+  min-height: 36px;
+  letter-spacing: 0.08em;
+}
+
+body.ui #copy-link-btn,
+body.ui #cancel-btn {
+  min-height: 36px;
+}
+
 #advanced {
   margin-top: 12px;
 }
@@ -1507,7 +1610,8 @@ body.ui main > * {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
+  min-height: 32px;
 }
 
 #status {
@@ -1577,13 +1681,13 @@ body.ui main > * {
   flex-direction: column;
 }
 
-/* The plate: the one shadow and the one textured background in the app. */
+/* Quiet viewing stage; the image carries its own shadow and alpha mat. */
 #output-plate {
-  background: var(--mat) 0 0 / 16px 16px;
+  background: #101318;
   border: 1px solid var(--border);
-  padding: 12px;
-  box-shadow: 6px 6px 0 rgb(0 0 0 / 0.55);
-  margin-bottom: 16px; /* clears the shadow */
+  padding: 24px;
+  box-shadow: none;
+  margin-bottom: 12px;
   overflow: auto; /* 1:1/4x zoom scrolls inside the plate */
   /* flex-basis auto + no shrink floor the plate at its content height, so an
      opening render log or stats row never squeezes the hero (the page grows
@@ -1595,6 +1699,7 @@ body.ui main > * {
      reachable at scroll origin. */
   display: flex;
   flex-direction: column;
+  min-height: 300px;
 }
 
 #output {
@@ -1619,6 +1724,12 @@ body.ui main > * {
   padding: 16px;
   color: var(--dim);
   text-align: center;
+}
+
+body.ui #output,
+body.ui #player-canvas {
+  background: var(--mat) 0 0 / 16px 16px;
+  box-shadow: 0 12px 36px rgb(0 0 0 / 0.35);
 }
 
 #output-plate:has(img:not([hidden])) .hint {
@@ -2241,22 +2352,9 @@ body.source-open #repl-source {
     display: none;
   }
 
-  /* NOT sticky, deliberately, though the control row does sit below the fold on a
-     short laptop viewport. Measured at 1280x720 on the default scene (3 #declare
-     params, so ui.js auto-opens #scene-params): the mode toggle and size fields
-     end at y=745 and Render/Copy Link at y=781, all below a 720px fold.
-     `position: sticky; bottom: 0` fixes that and was tried, but it trades the
-     problem rather than solving it: an opaque row pinned to the viewport bottom
-     covers whatever is there on first paint, which at exactly this viewport is
-     the whole slider panel (row spans 638-720, the three .slider-row rects sit
-     at 628-660/628-660/668-700, and elementFromPoint over each slider returns
-     #controls, so a real pointer hits the toolbar). Reserving space with
-     padding-bottom does not help either: that restores reachability by scrolling,
-     not the first paint, which is the actual complaint.
-     Fixing this properly means deciding what wins the bottom of a short viewport,
-     so it is a layout decision rather than a CSS tweak. Candidates: only stick
-     while #scene-params is closed, or don't auto-open the params disclosure when
-     the viewport is short. */
+  /* Render precedes the parameter disclosure and the source height yields
+     space on short screens, keeping the action reachable without covering
+     the parameters with a sticky toolbar. */
 }
 
 /* The other half of the "exactly one stop control per viewport" rule above:
@@ -2383,6 +2481,14 @@ body.source-open #repl-source {
 }
 
 @media (pointer: coarse) {
+  body.ui #example-trigger,
+  body.ui #gallery-btn,
+  body.ui #render-btn,
+  body.ui #copy-link-btn,
+  body.ui #cancel-btn {
+    min-height: 44px;
+  }
+
   button,
   #download-btn {
     min-height: 44px;
@@ -2492,6 +2598,65 @@ body.source-open #repl-source {
 
 /* ---- motion (the full census: progress, busy pulse, image settle,
         error entrance, link color) ---- */
+
+@media (min-width: 900px) {
+  body.ui #editor,
+  body.ui #gutter {
+    max-height: clamp(180px, calc(100dvh - 600px), 500px);
+  }
+
+  body.ui #editor {
+    min-height: 180px;
+    height: clamp(180px, calc(100dvh - 600px), 500px);
+  }
+}
+
+@media (max-width: 899px) {
+  body.ui > header {
+    padding: 16px;
+    gap: 12px;
+  }
+
+  .workspace-note {
+    display: none;
+  }
+
+  body.ui main {
+    padding: 16px;
+    gap: 24px;
+  }
+
+  body.ui #onboard {
+    padding-inline: 16px;
+  }
+
+  body.ui #output-plate {
+    padding: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  body.ui #example-field {
+    flex-wrap: wrap;
+  }
+
+  body.ui #example-label {
+    flex-basis: 100%;
+  }
+
+  body.ui #example-trigger {
+    flex-basis: 0;
+  }
+
+  .pane-heading > span {
+    font-size: 9px;
+  }
+
+  body.ui #output-plate {
+    padding: 10px;
+    min-height: 220px;
+  }
+}
 
 @media (prefers-reduced-motion: no-preference) {
   a {
