@@ -8,7 +8,7 @@ Docker CLI. Rendering runs locally on CPU threads.
 
 [![CI](https://github.com/swhitt/povrayer/actions/workflows/ci.yml/badge.svg)](https://github.com/swhitt/povrayer/actions/workflows/ci.yml)
 
-[![The editor rendering a sunset](docs/screenshots/hero.png)](https://povrayer.com/)
+[![The editor rendering an orbital reliquary](docs/screenshots/hero.png)](https://povrayer.com/)
 
 - **Editor**: live preview as you type, SDL completion, local textures and
   includes, render history, and `clock` animation exported as GIF, APNG, WebM,
