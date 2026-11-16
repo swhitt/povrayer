@@ -442,7 +442,7 @@ export async function runCatalogEditor(ctx) {
 
   // restore-on-clear: clearing the search restores the prior collapse state (the
   // search auto-expand was temporary), so only Solid Modeling is expanded again,
-  // its five rows show, and csg-die is the active row.
+  // its rows show, and csg-die is the active row.
   await page.fill('#example-search', '');
   await page.waitForFunction(
     (count) =>
@@ -502,8 +502,13 @@ export async function runCatalogEditor(ctx) {
   assert.equal(await activeDesc(), 'exgrp-modeling', 'ArrowUp clamps at the first nav item');
   await page.keyboard.press('ArrowDown'); // head -> its first row
   assert.equal(await activeName(), 'csg-die', 'ArrowDown from a head enters its first row');
+  const nextRowName = await page.evaluate(() =>
+    document.querySelector('.ex-option.is-active').nextElementSibling?.getAttribute('data-name')
+  );
+  assert.ok(nextRowName, 'the first row has an adjacent scene to navigate to');
+  assert.notEqual(nextRowName, await activeName(), 'the adjacent scene is a different row');
   await page.keyboard.press('ArrowDown'); // row -> next row
-  assert.equal(await activeName(), 'steinmetz', 'ArrowDown walks the rows');
+  assert.equal(await activeName(), nextRowName, 'ArrowDown walks to the adjacent scene row');
   await page.keyboard.press('ArrowLeft'); // row -> its category head
   assert.equal(await activeDesc(), 'exgrp-modeling', 'ArrowLeft on a row jumps to its head');
   await page.keyboard.press('ArrowLeft'); // expanded head -> collapse
@@ -545,7 +550,7 @@ export async function runCatalogEditor(ctx) {
   // (commitOption, selectExample pristine path, applyExampleClock animated arm,
   // closeBrowser(returnFocus=true), renderSceneIdentity re-mark.)
   await selAdvanced('#quality', '4');
-  await page.fill('#example-search', 'orbit');
+  await page.fill('#example-search', 'two moons');
   await page.waitForFunction(
     () => {
       const v = [...document.querySelectorAll('.ex-option')].filter(
@@ -1097,7 +1102,7 @@ export async function runCatalogEditor(ctx) {
   await page.keyboard.press('Escape');
 
   // ---------------------------------------------------------------------------
-  // The picker holds a curated 34 of the 96 shipped scenes, so a search for a
+  // The picker holds a curated subset of the shipped scenes, so a search for a
   // gallery-only name (photon, god rays, mandel, abyss, pavement, gyroid) matches
   // nothing here. Its empty state therefore has to HAND OFF to the gallery
   // carrying the query, instead of confidently reporting that a scene the app
@@ -1115,9 +1120,12 @@ export async function runCatalogEditor(ctx) {
     /^No featured scene matches\./,
     'a gallery-only query is a curation miss, not a nonexistent scene'
   );
-  assert.match(
+  const catalogCount = await page.evaluate(
+    async () => (await import('/examples.js')).EXAMPLES.length
+  );
+  assert.equal(
     await page.evaluate(() => document.querySelector('#example-empty button').textContent),
-    /search all 96 in the Gallery/,
+    `search all ${catalogCount} in the Gallery`,
     'the empty state offers the whole catalog by count'
   );
   await page.click('#example-empty button');
